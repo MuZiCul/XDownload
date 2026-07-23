@@ -24,17 +24,29 @@ public class ProcessHelper {
     }
 
     /**
-     * 执行命令，实时回调每行输出
+     * 执行命令，实时回调每行输出（不暴露 Process 引用）
      */
     public static CommandResult execute(List<String> command,
                                          Consumer<String> stdoutCallback,
                                          Consumer<String> stderrCallback)
+            throws IOException, InterruptedException {
+        return execute(command, stdoutCallback, stderrCallback, null);
+    }
+
+    /**
+     * 执行命令，实时回调每行输出，可选暴露 Process 引用（供取消下载）
+     */
+    public static CommandResult execute(List<String> command,
+                                         Consumer<String> stdoutCallback,
+                                         Consumer<String> stderrCallback,
+                                         java.util.concurrent.atomic.AtomicReference<Process> processRef)
             throws IOException, InterruptedException {
 
         ProcessBuilder pb = new ProcessBuilder(command);
         pb.redirectErrorStream(false);
 
         Process process = pb.start();
+        if (processRef != null) processRef.set(process);
         List<String> stdout = new ArrayList<>();
         List<String> stderr = new ArrayList<>();
 

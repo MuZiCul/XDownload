@@ -26,9 +26,18 @@ public class YtDlpDownloader {
     private final String ytDlpPath;
     private String cookiesFromBrowser;   // 全局：从浏览器读取 cookies
     private String cookiesFile;          // 全局：cookies 文件路径
+    private volatile Process currentProcess; // 当前运行的 yt-dlp 进程，供取消使用
 
     public YtDlpDownloader() {
         this.ytDlpPath = ProcessHelper.findYtDlp();
+    }
+
+    /** 取消当前下载（强制终止 yt-dlp 进程） */
+    public void cancel() {
+        Process p = currentProcess;
+        if (p != null && p.isAlive()) {
+            p.destroyForcibly();
+        }
     }
 
     public YtDlpDownloader(String ytDlpPath) {
@@ -196,9 +205,10 @@ public class YtDlpDownloader {
 
         cmd.add(config.getUrl());
 
+        java.util.concurrent.atomic.AtomicReference<Process> processRef =
+                new java.util.concurrent.atomic.AtomicReference<>();
         CommandResult result = ProcessHelper.execute(cmd,
                 stdoutLine -> {
-                    // 新版 yt-dlp 将 --newline 进度输出到 stdout，解析进度行
                     if (progressCallback != null && stdoutLine.contains("|")) {
                         try {
                             DownloadProgress progress = parseProgress(stdoutLine);
@@ -207,11 +217,12 @@ public class YtDlpDownloader {
                     }
                 },
                 stderrLine -> {
-                    // stderr 只保留错误信息
                     if (stderrLine.contains("ERROR") || stderrLine.contains("error")) {
                         System.err.println(stderrLine);
                     }
-                });
+                },
+                processRef);
+        currentProcess = processRef.get();
 
         if (!result.isSuccess()) {
             System.err.println("[错误] 下载失败 (退出码: " + result.exitCode + ")");

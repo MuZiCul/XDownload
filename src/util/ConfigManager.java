@@ -164,6 +164,18 @@ public class ConfigManager {
         save(cfg);
     }
 
+    /** 保存语言设置 */
+    public static void saveLang(String lang) {
+        Map<String, String> cfg = load();
+        cfg.put("lang", lang);
+        save(cfg);
+    }
+
+    /** 加载语言设置 */
+    public static String loadLang() {
+        return load().get("lang");
+    }
+
     /**
      * 配置文件的路径（供外部显示用）
      */

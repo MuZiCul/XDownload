@@ -13,7 +13,7 @@ cd /d "%PROJECT%"
 echo [1/5] Compiling...
 if exist out\classes rmdir /s /q out\classes
 mkdir out\classes
-javac -encoding UTF-8 -d out\classes -sourcepath src src/Main.java
+javac -encoding UTF-8 -cp lib\flatlaf-3.5.jar -d out\classes -sourcepath src src/Main.java
 if %errorlevel% neq 0 (
     echo [FAIL] Compile failed! Check JDK 17+
     goto :error
@@ -34,7 +34,7 @@ echo   [OK] JAR: out\XDownload.jar
 echo [3/5] Linking custom JRE...
 if exist out\runtime rmdir /s /q out\runtime
 jlink --no-header-files --no-man-pages --compress=2 ^
-    --add-modules java.base,java.logging,jdk.crypto.ec ^
+    --add-modules java.base,java.logging,jdk.crypto.ec,java.desktop ^
     --output out\runtime
 if %errorlevel% neq 0 (
     echo [FAIL] jlink failed! Check JDK 17+
@@ -47,6 +47,7 @@ echo [4/5] Creating app-image...
 if exist build rmdir /s /q build
 mkdir build\jar
 copy out\XDownload.jar build\jar\ >nul
+if exist lib\flatlaf-3.5.jar copy lib\flatlaf-3.5.jar build\jar\ >nul
 
 jpackage ^
     --type app-image ^
@@ -58,8 +59,7 @@ jpackage ^
     --dest build ^
     --vendor "XDownload" ^
     --app-version "1.0.5" ^
-    --description "XDownload" ^
-    --win-console
+    --description "XDownload"
 if %errorlevel% neq 0 (
     echo [FAIL] jpackage failed!
     goto :error
