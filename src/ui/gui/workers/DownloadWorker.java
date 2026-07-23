@@ -4,6 +4,7 @@ import downloader.YtDlpDownloader;
 import downloader.YtDlpDownloader.DownloadProgress;
 import model.DownloadConfig;
 import ui.gui.panels.DownloadPanel;
+import ui.gui.panels.LogPanel;
 
 import javax.swing.*;
 import java.io.File;
@@ -24,14 +25,20 @@ public class DownloadWorker extends SwingWorker<Boolean, DownloadProgress> {
 
     @Override
     protected Boolean doInBackground() throws Exception {
-        return downloader.download(config, this::publish);
+        LogPanel.log("[YT-DLP] Starting download...");
+        boolean result = downloader.download(config, progress -> {
+            publish(progress);
+            if (progress.status != null && !"downloading".equals(progress.status)) {
+                LogPanel.log("[YT-DLP] " + progress.status + " | " + progress.percent);
+            }
+        });
+        LogPanel.log(result ? "[OK] Download complete" : "[FAIL] Download failed");
+        return result;
     }
 
     @Override
     protected void process(List<DownloadProgress> chunks) {
-        for (DownloadProgress p : chunks) {
-            panel.onDownloadProgress(p);
-        }
+        for (DownloadProgress p : chunks) panel.onDownloadProgress(p);
     }
 
     @Override
@@ -42,6 +49,7 @@ public class DownloadWorker extends SwingWorker<Boolean, DownloadProgress> {
             panel.onDownloadComplete(success, path);
         } catch (Exception e) {
             if (!isCancelled()) {
+                LogPanel.log("[ERROR] Download exception: " + e.getMessage());
                 panel.onDownloadComplete(false, "");
             }
         }

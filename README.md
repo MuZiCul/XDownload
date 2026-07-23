@@ -1,114 +1,61 @@
 # XDownload v1.0.5
 
-基于 [yt-dlp](https://github.com/yt-dlp/yt-dlp) 的 X视频下载器，Twitter视频下载器，开箱即用，无需安装任何依赖。
+基于 [yt-dlp](https://github.com/yt-dlp/yt-dlp) 的桌面视频下载器，Swing GUI，开箱即用。
 
 ## 特性
 
-- **便携免安装** — 打包为单目录 exe，内置 JRE，U 盘随身携带
-- **国内外自动感知** — 启动时检测网络环境，海外自动跳过代理，国内引导配置代理
-- **浏览器 Cookies 直读** — 自动扫描 Chrome / Firefox / Edge / Brave / Opera 登录态
-- **智能回退** — 当前浏览器 Cookies 不可用时自动切换下一个
-- **配置持久化** — 代理、Cookies 偏好保存至 `config/settings.json`，下次自动加载
-- **纯控制台** — 下载时仅显示进度条，干净无冗余输出
-- **交互 + CLI 双模式** — 菜单引导和命令行一键下载都支持
+- **便携免安装** — 单目录 exe，内置 JRE，复制即用
+- **现代 GUI** — FlatLaf 扁平风格，中英双语自适应
+- **国内外自动感知** — 启动检测网络环境，海外跳过代理，国内引导配置
+- **浏览器 Cookies 直读** — 自动扫描 Chrome / Firefox / Edge / Brave / Opera
+- **智能回退** — 当前浏览器不可用时自动切换
+- **配置持久化** — 代理、Cookies、输出目录、语言偏好自动保存
+- **工具管理** — yt-dlp / ffmpeg 一键下载更新
+- **日志面板** — yt-dlp 输出实时捕获，方便排查
 
 ## 快速开始
 
-### 方式一：便携版（推荐）
+### 便携版（推荐）
 
 1. 双击 `build.bat` 构建
 2. 将 `build\XDownload\` 复制到任意位置
 3. 双击 `XDownload.exe`
 
-### 方式二：Java 运行
+### Java 运行
 
 ```bash
-javac -encoding UTF-8 -d out/production/XDownload -sourcepath src src/Main.java
-java -cp out/production/XDownload -Dfile.encoding=UTF-8 Main
+javac -encoding UTF-8 -cp lib/flatlaf-3.5.jar -d out/classes -sourcepath src src/Main.java
+java -cp "lib/flatlaf-3.5.jar;out/classes" Main
 ```
 
-## 首次启动
+## 界面
 
 ```
-  ==========================================
-         XDownload - X视频下载工具  v1.0.5
-         基于 yt-dlp  | By MuZiCul
-  ==========================================
-
-  --- 环境检查 ---
-  [...] 检测网络环境... (回车跳过)          ← 3 秒自动判断，可回车跳过
-  [+] 海外环境，无需代理                     ← 国外直接下一步
-
-  [+] yt-dlp: 2026.07.04                   ← 已存在则跳过
-  [+] ffmpeg: 可用                          ← 不存在则询问下载
-
-  [...] 扫描本地浏览器 Cookies ...
-  [+] 检测到 chrome 浏览器已登录，是否导入？  ← 自动扫描
-  [+] chrome Cookies 就绪（提取 247 条）      ← 导入后验证
+┌──────────────────────────────────────────────────┐
+│  [Download]  [Settings]  [About]                  │
+├──────────────────────┬───────────────────────────┤
+│ URL: [__________]    │ ┌─ 状态信息 ──────────────┐│
+│ [Fetch Info] [Paste] │ │ yt-dlp: 2026.07.04      ││
+├──────────────────────┤ │ Proxy: none              ││
+│ Video Info           │ │ Cookies: chrome          ││
+│ Title / Author       │ │ ffmpeg: OK               ││
+├──────────────────────┤ │ ──────────────────────── ││
+│ 格式列表              │ │ [最佳] [视频+音频] [仅音频]││
+│ ID │Ext│Resolution   │ │ 重试次数: [5] [下载]     ││
+│ 18 │mp4│640x360      │ │ 45.2% | 2.5MiB/s        ││
+└──────────────────────┴───────────────────────────┘
 ```
 
-国内环境会提示：
+## 设置
 
-```
-  [!] 国内环境，需配置代理以访问外网
-  代理地址 (host:port): 127.0.0.1:7890
-  [+] 代理可用，连接 x.com 成功 (230ms)
-```
-
-## 交互模式
-
-```
-  ------------ 主菜单 ------------
-  1. 下载视频
-  2. 查看配置
-  3. 更新 yt-dlp
-  0. 退出
-```
-
-**下载流程**：输入 URL → 展示格式列表 → 选格式 → 输出目录 → 进度条下载
-
-**格式选择**：
-
-| 选项 | 含义 |
-|------|------|
-| `b` / 回车 | 最佳质量 |
-| `w` | 最佳视频 + 最佳音频 |
-| `a` | 仅最佳音频 |
-| `0` ~ `N` | 指定格式编号 |
-
-## 命令行模式
-
-```bash
-java Main <URL> --info                   # 仅查看信息
-java Main <URL> -f 18                    # 指定格式
-java Main <URL> -f bestaudio -x          # 仅提取 MP3
-java Main <URL> -o ./videos              # 指定输出目录
-java Main <URL> -cb chrome               # 从 Chrome 读 Cookies
-java Main <URL> -cb firefox              # 从 Firefox 读 Cookies
-java Main <URL> -p http://127.0.0.1:7890 # 指定代理
-```
-
-### 完整参数
-
-| 参数 | 说明 |
-|------|------|
-| `-f, --format <id>` | 格式 ID |
-| `-o, --output <dir>` | 输出目录（默认 `downloads`） |
-| `-x, --extract-audio` | 仅提取音频 MP3 |
-| `-p, --proxy <url>` | 代理地址 |
-| `-cb, --cookies-from-browser <b>` | 浏览器（chrome/firefox/edge/brave/opera） |
-| `-c, --cookies <file>` | Netscape 格式 Cookies 文件 |
-| `-r, --retries <n>` | 重试次数（默认 5） |
-| `--max-height <n>` | 最大分辨率 |
-| `--info` | 仅查看信息 |
-| `-h, --help` | 帮助 |
-| `-v, --version` | 版本 |
-
-### JVM 参数预设代理
-
-```bash
-java -Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=7890 ... Main <URL>
-```
+| 设置项 | 说明 |
+|--------|------|
+| 视频保存位置 | 选择下载目录，自动持久化 |
+| 代理 | 无代理 / 手动代理 + 测试 / 自动检测国内外 |
+| Cookies | 选择浏览器 + 验证 + 保存 |
+| Tools | yt-dlp / ffmpeg 下载和更新 |
+| 语言 | 中文 / English，重启生效 |
+| View Log | 系统默认程序打开日志文件 |
 
 ## 构建便携版
 
@@ -116,52 +63,49 @@ java -Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=7890 ... Main <URL>
 build.bat
 ```
 
-构建过程：
+过程：`javac` → `jar` → `jlink` (java.base+logging+crypto.ec+desktop) → `jpackage` (app-image)
 
-1. `javac` 编译源码
-2. `jar` 打包
-3. `jlink` 剪裁定制 JRE（仅保留必要模块，约 40MB）
-4. `jpackage` 生成原生 Windows exe（app-image）
-5. 复制 `bin/yt-dlp.exe`、`bin/ffmpeg.exe` 到镜像
-
-输出目录 `build\XDownload\` 结构：
+输出 `build\XDownload\`：
 
 ```
 XDownload\
 ├── XDownload.exe          ← 双击启动
 ├── app\                   ← 主程序 JAR
-├── runtime\               ← 内置 JRE
+├── runtime\               ← 内置 JRE (~50MB)
 ├── bin\                   ← yt-dlp.exe / ffmpeg.exe
-├── config\                ← 配置文件（自动生成）
+├── config\                ← settings.json + 日志
 └── downloads\             ← 下载输出
 ```
-
-总大小约 140MB（含 ffmpeg），压缩后约 50MB。
 
 ## 项目结构
 
 ```
 XDownload/
 ├── src/
-│   ├── Main.java                      # 入口 + CLI 解析
-│   ├── ui/
-│   │   └── ConsoleUI.java             # 交互界面 + 启动引导
+│   ├── Main.java                      # 入口
+│   ├── ui/gui/
+│   │   ├── XDownloadApp.java          # GUI 启动 (FlatLaf + 日志)
+│   │   ├── MainFrame.java             # 主窗口 (标签页 + 状态栏)
+│   │   ├── StartupWizard.java         # 首次运行引导
+│   │   ├── panels/                    # 面板 (Download/Settings/About/Log)
+│   │   └── workers/                   # SwingWorker 子类
 │   ├── downloader/
-│   │   └── YtDlpDownloader.java       # yt-dlp 调用封装
+│   │   └── YtDlpDownloader.java       # yt-dlp 封装
 │   ├── model/
-│   │   ├── VideoInfo.java             # 视频信息 + 格式模型
+│   │   ├── VideoInfo.java             # 视频信息 + 格式
 │   │   └── DownloadConfig.java        # 下载配置
 │   └── util/
-│       ├── AppHome.java               # 应用根目录解析
+│       ├── AppHome.java               # 路径解析
+│       ├── Bootstrap.java             # 依赖下载
 │       ├── ProcessHelper.java         # 进程调用 + Cookies 验证
-│       ├── Bootstrap.java             # 首次运行自动下载依赖
 │       ├── ProxyConfig.java           # 代理管理
 │       ├── ConfigManager.java         # 配置持久化
 │       ├── ChromeCookies.java         # Chrome DB 备份
-│       ├── NetworkDetect.java         # 国内外网络检测
+│       ├── NetworkDetect.java         # 国内外检测
+│       ├── I18n.java                  # 中英双语
 │       └── Version.java               # 版本号
-├── bin/                               # yt-dlp.exe / ffmpeg.exe
-├── build.bat                          # 便携版构建脚本
+├── lib/flatlaf-3.5.jar                # FlatLaf 皮肤
+├── build.bat                          # 构建脚本
 └── README.md
 ```
 
@@ -169,21 +113,28 @@ XDownload/
 
 ### 下载 X/Twitter 视频提示需要登录
 
-程序自动从浏览器提取 Cookies，如果 Chrome 正运行可能锁库，会依次尝试 Firefox → Edge 等。
+程序自动从浏览器提取 Cookies。Chrome 锁库时自动回退到 Firefox → Edge → Brave。
 
 ### 国内无法访问外网
 
-启动时自动检测，国内环境会引导输入代理地址，配置后持久化保存。
+启动时自动检测，国内环境引导输入代理地址。
 
-### exe 的 TLS 握手失败
+### exe TLS 握手失败
 
-已修复：jlink 包含 `jdk.crypto.ec` 模块支持现代 ECDHE 加密套件。
+jlink 已包含 `jdk.crypto.ec` 模块，支持 ECDHE 加密套件。
 
-### 控制台图标乱码
+### 下载慢 / GitHub 无法访问
 
-已全部替换为 ASCII 字符（`[+]` `[-]` `[!]` `[...]`），兼容所有 Windows 终端。
+设置中先配置代理，再使用 Tools 下载 yt-dlp / ffmpeg。
 
 ## 致谢
 
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp)
 - [FFmpeg](https://ffmpeg.org)
+- [FlatLaf](https://www.formdev.com/flatlaf/)
+
+## License
+
+MIT License — 详见 [LICENSE](https://github.com/MuZiCul/XDownload)
+
+Copyright (c) 2025 MuZiCul

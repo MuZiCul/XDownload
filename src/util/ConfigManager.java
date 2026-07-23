@@ -164,6 +164,17 @@ public class ConfigManager {
         save(cfg);
     }
 
+    public static void saveDownloadDir(String dir) {
+        Map<String, String> cfg = load();
+        if (dir != null && !dir.isEmpty()) cfg.put("downloadDir", dir);
+        else cfg.remove("downloadDir");
+        save(cfg);
+    }
+
+    public static String loadDownloadDir() {
+        return load().get("downloadDir");
+    }
+
     /** 保存语言设置 */
     public static void saveLang(String lang) {
         Map<String, String> cfg = load();

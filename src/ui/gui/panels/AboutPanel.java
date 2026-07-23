@@ -1,33 +1,27 @@
 package ui.gui.panels;
 
 import util.I18n;
-import ui.gui.MainFrame;
-import ui.gui.workers.UpdateWorker;
-import util.ProcessHelper;
 import util.Version;
 
 import javax.swing.*;
 import java.awt.*;
+import java.net.URI;
 
-/** 关于标签页 */
 public class AboutPanel extends JPanel {
 
-    private final MainFrame mainFrame;
-    private final JLabel versionLabel, ytDlpLabel, ffmpegLabel;
-
-    public AboutPanel(MainFrame mainFrame) {
-        this.mainFrame = mainFrame;
+    public AboutPanel() {
         setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
-        setBorder(BorderFactory.createEmptyBorder(30, 30, 30, 30));
+        setBorder(BorderFactory.createEmptyBorder(40, 30, 40, 30));
 
         JLabel title = new JLabel("XDownload");
-        title.setFont(title.getFont().deriveFont(Font.BOLD, 24f));
+        title.setFont(title.getFont().deriveFont(Font.BOLD, 28f));
         title.setAlignmentX(CENTER_ALIGNMENT);
         add(title);
 
-        versionLabel = new JLabel("v" + Version.CURRENT);
-        versionLabel.setAlignmentX(CENTER_ALIGNMENT);
-        add(versionLabel);
+        JLabel version = new JLabel("v" + Version.CURRENT);
+        version.setFont(version.getFont().deriveFont(14f));
+        version.setAlignmentX(CENTER_ALIGNMENT);
+        add(version);
 
         add(Box.createVerticalStrut(20));
 
@@ -39,51 +33,20 @@ public class AboutPanel extends JPanel {
         author.setAlignmentX(CENTER_ALIGNMENT);
         add(author);
 
-        add(Box.createVerticalStrut(20));
+        add(Box.createVerticalStrut(10));
 
-        ytDlpLabel = new JLabel("yt-dlp: " + getYtDlpVer());
-        ytDlpLabel.setAlignmentX(CENTER_ALIGNMENT);
-        add(ytDlpLabel);
-
-        ffmpegLabel = new JLabel(I18n.get("about.ffmpeg") + (ProcessHelper.isFfmpegAvailable() ? I18n.get("about.ffmpeg.ok") : I18n.get("about.ffmpeg.no")));
-        ffmpegLabel.setAlignmentX(CENTER_ALIGNMENT);
-        add(ffmpegLabel);
-
-        add(Box.createVerticalStrut(20));
-
-        JButton updateBtn = new JButton(I18n.get("about.update"));
-        updateBtn.setAlignmentX(CENTER_ALIGNMENT);
-        updateBtn.addActionListener(e -> updateYtDlp());
-        add(updateBtn);
-    }
-
-    private String getYtDlpVer() {
-        try {
-            ProcessHelper.CommandResult r = ProcessHelper.execute(
-                    java.util.List.of(ProcessHelper.findYtDlp(), "--version"));
-            return r.isSuccess() && !r.stdout.isEmpty() ? r.stdout.get(0).trim() : "unknown";
-        } catch (Exception e) { return "unknown"; }
-    }
-
-    private void updateYtDlp() {
-        JDialog dialog = new JDialog((Frame) SwingUtilities.getWindowAncestor(this), I18n.get("about.update.title"), true);
-        dialog.setSize(400, 100);
-        dialog.setLocationRelativeTo(this);
-        JProgressBar bar = new JProgressBar();
-        bar.setIndeterminate(true);
-        JLabel label = new JLabel(I18n.get("about.updating"));
-        JPanel panel = new JPanel(new BorderLayout(5, 5));
-        panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
-        panel.add(label, BorderLayout.NORTH);
-        panel.add(bar, BorderLayout.CENTER);
-        dialog.add(panel);
-
-        UpdateWorker worker = new UpdateWorker(mainFrame.downloader, success -> {
-            dialog.dispose();
-            ytDlpLabel.setText("yt-dlp: " + getYtDlpVer());
-            mainFrame.refreshStatusBar();
+        JLabel github = new JLabel("开源地址: github.com/MuZiCul/XDownload");
+        github.setMaximumSize(new Dimension(Integer.MAX_VALUE, github.getPreferredSize().height));
+        github.setAlignmentX(CENTER_ALIGNMENT);
+        github.setHorizontalAlignment(SwingConstants.CENTER);
+        github.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+        github.setForeground(new Color(0, 100, 200));
+        github.addMouseListener(new java.awt.event.MouseAdapter() {
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                try { java.awt.Desktop.getDesktop().browse(java.net.URI.create("https://github.com/MuZiCul/XDownload")); }
+                catch (Exception ignored) {}
+            }
         });
-        worker.execute();
-        dialog.setVisible(true);
+        add(github);
     }
 }

@@ -31,12 +31,16 @@ public class I18n {
         put("format.best", "最佳", "Best");
         put("format.bestva", "视频+音频", "Video+Audio");
         put("format.audio", "仅音频", "Audio Only");
-        put("opt.title", "选项", "Options");
+        put("opt.title", "配置状态", "Status");
         put("opt.dir", "输出目录:", "Output Dir:");
+        put("settings.dir", "视频保存位置:", "Download Dir:");
+        put("tools.hint", "提示: 下载慢或无法访问Github请先配置代理。也可手动下载解压到bin目录。",
+                "Tip: slow or GitHub unreachable? Configure proxy first. Or extract to bin/ manually.");
         put("opt.browse", "浏览", "Browse");
         put("opt.audio", "仅提取音频 (MP3)", "Extract Audio (MP3)");
         put("opt.retries", "重试次数:", "Retries:");
-        put("opt.start", "开始下载", "START DOWNLOAD");
+        put("opt.start", "状态信息", "Status");
+        put("opt.download", "下载", "Download");
         put("opt.cancel", "取消", "CANCEL");
 
         // ===== 进度 =====

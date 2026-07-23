@@ -1,9 +1,7 @@
 package ui.gui;
 
 import downloader.YtDlpDownloader;
-import ui.gui.panels.DownloadPanel;
-import ui.gui.panels.SettingsPanel;
-import ui.gui.panels.AboutPanel;
+import ui.gui.panels.*;
 import util.*;
 
 import javax.swing.*;
@@ -16,9 +14,7 @@ public class MainFrame extends JFrame {
 
     public final YtDlpDownloader downloader;
     private final JTabbedPane tabbedPane;
-    private final JLabel ytDlpLabel, proxyLabel, cookiesLabel, ffmpegLabel;
 
-    // 各标签面板引用
     DownloadPanel downloadPanel;
     SettingsPanel settingsPanel;
     AboutPanel aboutPanel;
@@ -37,7 +33,7 @@ public class MainFrame extends JFrame {
         tabbedPane = new JTabbedPane();
         downloadPanel = new DownloadPanel(this);
         settingsPanel = new SettingsPanel(this);
-        aboutPanel = new AboutPanel(this);
+        aboutPanel = new AboutPanel();
 
         tabbedPane.addTab(I18n.get("tab.download"), downloadPanel);
         tabbedPane.addTab(I18n.get("tab.settings"), settingsPanel);
@@ -45,19 +41,8 @@ public class MainFrame extends JFrame {
 
         add(tabbedPane, BorderLayout.CENTER);
 
-        // 状态栏
-        JPanel statusBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 15, 2));
-        ytDlpLabel = new JLabel();
-        proxyLabel = new JLabel();
-        cookiesLabel = new JLabel();
-        ffmpegLabel = new JLabel();
-        statusBar.add(ytDlpLabel);
-        statusBar.add(proxyLabel);
-        statusBar.add(cookiesLabel);
-        statusBar.add(ffmpegLabel);
-        add(statusBar, BorderLayout.SOUTH);
-
-        refreshStatusBar();
+        // 底部占位
+        add(new JLabel(" "), BorderLayout.SOUTH);
 
         // 首次运行？弹出引导对话框
         if (needSetupWizard()) {
@@ -90,12 +75,7 @@ public class MainFrame extends JFrame {
     }
 
     public void refreshStatusBar() {
-        ytDlpLabel.setText("yt-dlp: " + getYtDlpVersion());
-        proxyLabel.setText(I18n.get("status.proxy") + (ProxyConfig.isEnabled() ? ProxyConfig.getProxyString() : I18n.get("status.none")));
-        String cookies = downloader.getCookiesFromBrowser();
-        if (cookies == null) cookies = downloader.getCookiesFile();
-        cookiesLabel.setText(I18n.get("status.cookies") + (cookies != null ? cookies : I18n.get("status.none")));
-        ffmpegLabel.setText("ffmpeg: " + (ProcessHelper.isFfmpegAvailable() ? I18n.get("status.ok") : I18n.get("status.na")));
+        if (downloadPanel != null) downloadPanel.refreshStatusLines();
     }
 
     private String getYtDlpVersion() {

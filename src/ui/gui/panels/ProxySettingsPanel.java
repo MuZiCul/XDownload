@@ -5,20 +5,18 @@ import ui.gui.MainFrame;
 import ui.gui.workers.EnvironmentCheckWorker;
 import ui.gui.workers.ProxyTestWorker;
 import util.ConfigManager;
-import util.NetworkDetect;
 import util.ProxyConfig;
 
 import javax.swing.*;
 import java.awt.*;
 
-/** 代理设置 */
 public class ProxySettingsPanel extends JPanel {
 
     private final MainFrame mainFrame;
     private final JRadioButton noneRadio, manualRadio;
     private final JTextField hostField;
     private final JSpinner portSpinner;
-    private final JButton testBtn;
+    private final JButton testBtn, detectBtn;
     private final JLabel statusLabel;
 
     public ProxySettingsPanel(MainFrame mainFrame) {
@@ -26,50 +24,43 @@ public class ProxySettingsPanel extends JPanel {
         setBorder(BorderFactory.createTitledBorder(I18n.get("proxy.title")));
         setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
 
-        // 单选按钮组
+        // 第一行：单选 + 输入 + 按钮
+        JPanel row1 = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
+
         noneRadio = new JRadioButton(I18n.get("proxy.none"));
         manualRadio = new JRadioButton(I18n.get("proxy.manual"));
         ButtonGroup group = new ButtonGroup();
-        group.add(noneRadio);
-        group.add(manualRadio);
+        group.add(noneRadio); group.add(manualRadio);
+        if (ProxyConfig.isEnabled()) manualRadio.setSelected(true);
+        else noneRadio.setSelected(true);
 
-        // 初始化状态
-        if (ProxyConfig.isEnabled()) {
-            manualRadio.setSelected(true);
-        } else {
-            noneRadio.setSelected(true);
-        }
+        noneRadio.addActionListener(e -> disableProxy());
+        manualRadio.addActionListener(e -> enableFields(true));
 
-        noneRadio.addActionListener(e -> { disableProxy(); });
-        manualRadio.addActionListener(e -> { enableFields(true); });
+        row1.add(noneRadio);
+        row1.add(manualRadio);
 
-        add(noneRadio);
-        add(manualRadio);
-
-        // 手动代理输入
-        JPanel inputPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-        hostField = new JTextField(ProxyConfig.getProxyHost() != null ? ProxyConfig.getProxyHost() : "127.0.0.1", 12);
+        hostField = new JTextField(ProxyConfig.getProxyHost() != null ? ProxyConfig.getProxyHost() : "127.0.0.1", 10);
         portSpinner = new JSpinner(new SpinnerNumberModel(
                 ProxyConfig.getProxyPort() > 0 ? ProxyConfig.getProxyPort() : 7890, 1, 65535, 1));
-        inputPanel.add(new JLabel(I18n.get("proxy.host")));
-        inputPanel.add(hostField);
-        inputPanel.add(new JLabel(I18n.get("proxy.port")));
-        inputPanel.add(portSpinner);
-        add(inputPanel);
 
-        // 测试按钮
-        JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        row1.add(new JLabel(I18n.get("proxy.host")));
+        row1.add(hostField);
+        row1.add(new JLabel(I18n.get("proxy.port")));
+        row1.add(portSpinner);
+
         testBtn = new JButton(I18n.get("proxy.test"));
         testBtn.addActionListener(e -> testProxy());
-        btnPanel.add(testBtn);
-
-        JButton detectBtn = new JButton(I18n.get("proxy.autodetect"));
+        detectBtn = new JButton(I18n.get("proxy.autodetect"));
         detectBtn.addActionListener(e -> autoDetect());
-        btnPanel.add(detectBtn);
-        add(btnPanel);
+        row1.add(testBtn);
+        row1.add(detectBtn);
 
-        // 状态
+        add(row1);
+
+        // 第二行：状态
         statusLabel = new JLabel(" ");
+        statusLabel.setBorder(BorderFactory.createEmptyBorder(0, 6, 0, 0));
         add(statusLabel);
 
         enableFields(ProxyConfig.isEnabled());
@@ -79,6 +70,7 @@ public class ProxySettingsPanel extends JPanel {
         hostField.setEnabled(enabled);
         portSpinner.setEnabled(enabled);
         testBtn.setEnabled(enabled);
+        detectBtn.setEnabled(enabled);
     }
 
     private void testProxy() {
