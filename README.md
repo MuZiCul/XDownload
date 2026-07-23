@@ -1,6 +1,6 @@
 # XDownload — X视频下载工具
 
-基于 [yt-dlp](https://github.com/yt-dlp/yt-dlp) 的命令行视频下载器，支持 1000+ 网站，开箱即用。
+基于 [yt-dlp](https://github.com/yt-dlp/yt-dlp) 的命令行视频下载器，开箱即用。
 
 ## 特性
 
