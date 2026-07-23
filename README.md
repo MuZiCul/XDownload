@@ -1,6 +1,7 @@
 # XDownload v1.0.5
 
 基于 [yt-dlp](https://github.com/yt-dlp/yt-dlp) 的桌面视频下载器，Swing GUI，开箱即用。
+命令行版本请切换分支到Master分支查看。
 
 ## 特性
 
