@@ -1,6 +1,6 @@
 # XDownload v1.0.5
 
-基于 [yt-dlp](https://github.com/yt-dlp/yt-dlp) 的 Windows 便携视频下载器，开箱即用，无需安装任何依赖。
+基于 [yt-dlp](https://github.com/yt-dlp/yt-dlp) 的 X视频下载器，Twitter视频下载器，开箱即用，无需安装任何依赖。
 
 ## 特性
 
