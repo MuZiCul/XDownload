@@ -87,12 +87,12 @@ public class VideoInfo {
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
-        sb.append("═══════════════════════════════════════════\n");
+        sb.append("===========================================\n");
         sb.append("  标题: ").append(title != null ? title : "未知").append("\n");
         sb.append("  作者: ").append(uploader != null ? uploader : "未知").append("\n");
         sb.append("  时长: ").append(formatDuration(duration)).append("\n");
         sb.append("  播放: ").append(formatNumber(viewCount)).append("\n");
-        sb.append("═══════════════════════════════════════════\n");
+        sb.append("===========================================\n");
         sb.append("  可用格式:\n");
         for (int i = 0; i < formats.size(); i++) {
             sb.append(String.format("    [%2d] %s\n", i, formats.get(i)));
@@ -183,9 +183,9 @@ public class VideoInfo {
             // fps
             if (fps > 0) sb.append(String.format(" %.0ffps", fps));
             // 类型标签
-            if (hasVideo && hasAudio) sb.append("  📹🔊");
-            else if (hasVideo) sb.append("  📹");
-            else if (hasAudio) sb.append("  🔊");
+            if (hasVideo && hasAudio) sb.append("  [V][A]");
+            else if (hasVideo) sb.append("  [V]");
+            else if (hasAudio) sb.append("  [A]");
 
             return sb.toString();
         }

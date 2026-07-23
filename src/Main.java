@@ -5,6 +5,8 @@ import ui.ConsoleUI;
 import util.Bootstrap;
 import util.ProcessHelper;
 
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 /**
@@ -24,11 +26,11 @@ import java.util.List;
  */
 public class Main {
 
-    private static final String VERSION = "1.0.0";
+    private static final String VERSION = util.Version.CURRENT;
 
     public static void main(String[] args) {
-        // 编码设置，避免中文乱码
-        System.setProperty("file.encoding", "UTF-8");
+        // Windows 控制台默认 GBK，先切到 UTF-8 避免乱码
+        fixConsoleEncoding();
 
         if (args.length == 0) {
             // 交互模式
@@ -43,6 +45,19 @@ public class Main {
             System.err.println("错误: " + e.getMessage());
             System.exit(1);
         }
+    }
+
+    /** 修复 Windows 控制台编码：设置代码页为 UTF-8 并重定向 stdout/stderr */
+    private static void fixConsoleEncoding() {
+        if (System.getProperty("os.name").toLowerCase().contains("win")) {
+            try {
+                new ProcessBuilder("cmd", "/c", "chcp 65001 > nul")
+                        .inheritIO().start().waitFor();
+            } catch (Exception ignored) {}
+        }
+        // 重定向 stdout/stderr 为 UTF-8
+        System.setOut(new PrintStream(System.out, true, StandardCharsets.UTF_8));
+        System.setErr(new PrintStream(System.err, true, StandardCharsets.UTF_8));
     }
 
     private static void handleCommandLine(String[] args) throws Exception {

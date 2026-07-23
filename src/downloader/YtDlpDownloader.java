@@ -225,7 +225,7 @@ public class YtDlpDownloader {
      * 更新 yt-dlp 自身（带进度条）
      */
     public boolean updateYtDlp() throws IOException, InterruptedException {
-        System.out.println("  ⏳ 正在检查 yt-dlp 更新 ...");
+        System.out.println("  [...] 正在检查 yt-dlp 更新 ...");
 
         final long[] startTime = {System.currentTimeMillis()};
         final int[] lastPct = {-1};
@@ -260,13 +260,13 @@ public class YtDlpDownloader {
 
         if (result.isSuccess()) {
             if (hasNewVersion[0]) {
-                System.out.println("  ✓ yt-dlp 更新完成! 耗时: " + formatElapsedTime(elapsed));
+                System.out.println("  [+] yt-dlp 更新完成! 耗时: " + formatElapsedTime(elapsed));
             } else {
-                System.out.println("  ✓ yt-dlp 已是最新版本");
+                System.out.println("  [+] yt-dlp 已是最新版本");
             }
             return true;
         } else {
-            System.out.println("  ✗ 更新失败 (退出码: " + result.exitCode + ")");
+            System.out.println("  [-] 更新失败 (退出码: " + result.exitCode + ")");
             if (!result.getStderrText().isEmpty()) {
                 System.out.println("     " + result.getStderrText());
             }
@@ -361,7 +361,7 @@ public class YtDlpDownloader {
         for (String browser : BROWSER_FALLBACK) {
             if (browser.equalsIgnoreCase(preferred)) continue;
             if (canReadCookies(browser)) {
-                System.out.println("  ⚠ " + preferred + " Cookies 不可用，自动切换至 " + browser);
+                System.out.println("  [!] " + preferred + " Cookies 不可用，自动切换至 " + browser);
                 cookiesFromBrowser = browser;
                 cookiesResolved = true;
                 return;
@@ -420,7 +420,7 @@ public class YtDlpDownloader {
                 if (canReadCookies(browser)) { fallback = browser; break; }
             }
             if (fallback != null) {
-                System.out.println("  ⚠ Chrome 被锁定，自动切换至 " + fallback);
+                System.out.println("  [!] Chrome 被锁定，自动切换至 " + fallback);
                 cookiesFromBrowser = fallback;
                 cookiesResolved = true;
                 // 用新浏览器重建命令

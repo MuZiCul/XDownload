@@ -6,7 +6,6 @@ import java.net.Proxy;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.zip.ZipEntry;
@@ -19,15 +18,10 @@ import java.util.zip.ZipInputStream;
  */
 public class Bootstrap {
 
-    /** 项目内 bin 目录路径 */
-    public static final Path BIN_DIR;
     /** 项目根目录 */
-    public static final Path PROJECT_ROOT;
-
-    static {
-        PROJECT_ROOT = Paths.get(System.getProperty("user.dir")).toAbsolutePath();
-        BIN_DIR = PROJECT_ROOT.resolve("bin");
-    }
+    public static final Path PROJECT_ROOT = AppHome.ROOT;
+    /** 项目内 bin 目录路径 */
+    public static final Path BIN_DIR = AppHome.BIN;
 
     // ==== 下载源 URL（按优先级排列，自动回退） ====
 
@@ -57,7 +51,7 @@ public class Bootstrap {
                 return binYtdlp.toAbsolutePath().toString();
             }
             // 二进制损坏，删除后重新下载
-            System.out.println("  ⚠ bin/yt-dlp.exe 已损坏，删除并重新下载...");
+            System.out.println("  [!] bin/yt-dlp.exe 已损坏，删除并重新下载...");
             try { Files.delete(binYtdlp); } catch (Exception ignored) {}
         }
 
@@ -67,7 +61,7 @@ public class Bootstrap {
         }
 
         // 3. 自动下载
-        System.out.println("  ⏳ 首次使用，正在自动下载 yt-dlp ...");
+        System.out.println("  [...] 首次使用，正在自动下载 yt-dlp ...");
         System.out.println("     (约 15MB，请耐心等待)");
         if (ProxyConfig.isEnabled()) {
             System.out.println("     使用代理: " + ProxyConfig.getProxyString());
@@ -79,7 +73,7 @@ public class Bootstrap {
         IOException lastError = null;
         for (int i = 0; i < YTDLP_URLS.length; i++) {
             String url = YTDLP_URLS[i];
-            if (i > 0) System.out.println("  ⚠ 切换至镜像源 " + (i + 1) + " ...");
+            if (i > 0) System.out.println("  [!] 切换至镜像源 " + (i + 1) + " ...");
             try {
                 downloadFile(url, binYtdlp, "yt-dlp");
                 binYtdlp.toFile().setExecutable(true);
@@ -89,11 +83,11 @@ public class Bootstrap {
                     throw new IOException("下载的 yt-dlp 二进制无法运行（可能不完整）");
                 }
 
-                System.out.println("  ✓ yt-dlp 下载完成并验证通过: " + binYtdlp);
+                System.out.println("  [+] yt-dlp 下载完成并验证通过: " + binYtdlp);
                 return binYtdlp.toAbsolutePath().toString();
             } catch (IOException e) {
                 lastError = e;
-                System.out.println("  ⚠ 源 " + (i + 1) + " 失败: " + e.getMessage());
+                System.out.println("  [!] 源 " + (i + 1) + " 失败: " + e.getMessage());
                 // 清除不完整的文件
                 try { Files.deleteIfExists(binYtdlp); } catch (Exception ignored) {}
             }
@@ -129,7 +123,7 @@ public class Bootstrap {
         }
 
         // 命令行模式：静默尝试下载
-        System.out.println("  ⏳ 正在自动下载 ffmpeg (约 80MB，仅首次需要)...");
+        System.out.println("  [...] 正在自动下载 ffmpeg (约 80MB，仅首次需要)...");
         if (ProxyConfig.isEnabled()) {
             System.out.println("     使用代理: " + ProxyConfig.getProxyString());
         }
@@ -137,22 +131,22 @@ public class Bootstrap {
         IOException lastError = null;
         for (int i = 0; i < FFMPEG_URLS.length; i++) {
             String url = FFMPEG_URLS[i];
-            if (i > 0) System.out.println("  ⚠ 切换至镜像源 " + (i + 1) + " ...");
+            if (i > 0) System.out.println("  [!] 切换至镜像源 " + (i + 1) + " ...");
             try {
                 Files.createDirectories(BIN_DIR);
                 Path zipPath = BIN_DIR.resolve("ffmpeg-temp.zip");
                 downloadFile(url, zipPath, "ffmpeg");
                 extractFfmpeg(zipPath, BIN_DIR);
                 Files.deleteIfExists(zipPath);
-                System.out.println("  ✓ ffmpeg 下载完成");
+                System.out.println("  [+] ffmpeg 下载完成");
                 return BIN_DIR.resolve("ffmpeg.exe").toAbsolutePath().toString();
             } catch (IOException e) {
                 lastError = e;
-                System.out.println("  ⚠ 源 " + (i + 1) + " 失败: " + e.getMessage());
+                System.out.println("  [!] 源 " + (i + 1) + " 失败: " + e.getMessage());
             }
         }
 
-        System.out.println("  ⚠ ffmpeg 自动下载失败（不影响基本下载功能）");
+        System.out.println("  [!] ffmpeg 自动下载失败（不影响基本下载功能）");
         System.out.println("    手动安装: winget install ffmpeg  或  https://ffmpeg.org");
         return null;
     }
@@ -242,7 +236,7 @@ public class Bootstrap {
                 // 提取文件名
                 String fileName = name.substring(name.lastIndexOf('/') + 1);
                 Path target = destDir.resolve(fileName);
-                System.out.println("    ✓ 解压: " + fileName);
+                System.out.println("    [+] 解压: " + fileName);
 
                 Files.copy(zis, target, StandardCopyOption.REPLACE_EXISTING);
                 target.toFile().setExecutable(true);

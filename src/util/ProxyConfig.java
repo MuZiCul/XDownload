@@ -145,9 +145,9 @@ public class ProxyConfig {
         @Override
         public String toString() {
             if (success) {
-                return "✓ " + message + " (" + elapsedMs + "ms)";
+                return "[+] " + message + " (" + elapsedMs + "ms)";
             } else {
-                return "✗ " + message + " (耗时 " + elapsedMs + "ms)";
+                return "[-] " + message + " (耗时 " + elapsedMs + "ms)";
             }
         }
     }

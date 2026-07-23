@@ -3,7 +3,6 @@ package util;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -14,8 +13,7 @@ import java.util.regex.Pattern;
  */
 public class ConfigManager {
 
-    private static final Path CONFIG_DIR = Paths.get(System.getProperty("user.dir"))
-            .toAbsolutePath().resolve("config");
+    private static final Path CONFIG_DIR = AppHome.CONFIG;
     private static final Path CONFIG_FILE = CONFIG_DIR.resolve("settings.json");
 
     // ==================== 加载 ====================
@@ -50,7 +48,7 @@ public class ConfigManager {
                 map.putIfAbsent(numM.group(1), numM.group(2));
             }
         } catch (IOException e) {
-            System.err.println("  ⚠ 加载配置失败: " + e.getMessage());
+            System.err.println("  [!] 加载配置失败: " + e.getMessage());
         }
         return map;
     }
@@ -80,7 +78,7 @@ public class ConfigManager {
 
             Files.writeString(CONFIG_FILE, sb.toString());
         } catch (IOException e) {
-            System.err.println("  ⚠ 保存配置失败: " + e.getMessage());
+            System.err.println("  [!] 保存配置失败: " + e.getMessage());
         }
     }
 

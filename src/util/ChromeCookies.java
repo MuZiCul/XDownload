@@ -17,8 +17,7 @@ public class ChromeCookies {
             "Google", "Chrome", "User Data", "Default", "Network", "Cookies");
 
     /** 项目内备份目录 */
-    private static final Path BACKUP_DIR = Paths.get(System.getProperty("user.dir"))
-            .toAbsolutePath().resolve("config");
+    private static final Path BACKUP_DIR = AppHome.CONFIG;
 
     /** 备份文件名 */
     private static final String BACKUP_NAME = "chrome_cookies_backup.db";

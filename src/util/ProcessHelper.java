@@ -6,7 +6,6 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -113,8 +112,7 @@ public class ProcessHelper {
     }
 
     /** 项目 bin 目录 */
-    public static final Path BIN_DIR =
-            Paths.get(System.getProperty("user.dir")).toAbsolutePath().resolve("bin");
+    public static final Path BIN_DIR = AppHome.BIN;
 
     /**
      * 查找 yt-dlp 可执行文件（优先项目 bin 目录）
@@ -256,25 +254,25 @@ public class ProcessHelper {
                 // Chrome 数据库被锁定（浏览器正在运行）
                 if (lower.contains("could not copy") || (lower.contains("copy") && lower.contains("database"))) {
                     return new CookiesValidationResult(false,
-                            "✗ " + browser + " 正在运行，Cookie 数据库被锁定\n"
+                            "[-] " + browser + " 正在运行，Cookie 数据库被锁定\n"
                                     + "     → 请完全关闭 " + browser + " 浏览器后重试", 0);
                 }
                 if (lower.contains("could not find") || lower.contains("not found")
                         || lower.contains("no such file") || lower.contains("does not exist")) {
                     return new CookiesValidationResult(false,
-                            "✗ 未找到 " + browser + " Cookie 数据库（浏览器未安装或从未使用）", 0);
+                            "[-] 未找到 " + browser + " Cookie 数据库（浏览器未安装或从未使用）", 0);
                 }
                 if (lower.contains("permission") || lower.contains("denied")
                         || lower.contains("locked") || lower.contains("access")) {
                     return new CookiesValidationResult(false,
-                            "✗ " + browser + " Cookie 数据库被锁定（请关闭浏览器后重试）", 0);
+                            "[-] " + browser + " Cookie 数据库被锁定（请关闭浏览器后重试）", 0);
                 }
                 if (lower.contains("keyring") || lower.contains("decrypt") || lower.contains("encrypt")) {
                     return new CookiesValidationResult(false,
-                            "✗ " + browser + " Cookie 解密失败（尝试关闭浏览器或管理员运行）", 0);
+                            "[-] " + browser + " Cookie 解密失败（尝试关闭浏览器或管理员运行）", 0);
                 }
                 return new CookiesValidationResult(false,
-                        "✗ " + browser + " Cookies 读取失败: " + stderr.trim(), 0);
+                        "[-] " + browser + " Cookies 读取失败: " + stderr.trim(), 0);
             }
 
             // 成功了 —— 解析实际提取到的 cookie 数量
@@ -282,24 +280,24 @@ public class ProcessHelper {
             int count = extractCookieCount(combined);
             if (count > 0) {
                 return new CookiesValidationResult(true,
-                        "✓ " + browser + " Cookies 就绪（提取 " + count + " 条）", count);
+                        "[+] " + browser + " Cookies 就绪（提取 " + count + " 条）", count);
             } else if (combined.contains("extracted") && combined.contains("cookie")) {
                 // 明确输出了提取信息但数量为 0
                 return new CookiesValidationResult(true,
-                        "⚠ " + browser + " 提取到 0 条 Cookie（浏览器未登录任何网站）", 0);
+                        "[!] " + browser + " 提取到 0 条 Cookie（浏览器未登录任何网站）", 0);
             } else {
                 // 没报错，但也没有输出提取信息（某些 yt-dlp 版本 --version 不触发提取日志）
                 return new CookiesValidationResult(true,
-                        "✓ " + browser + " Cookies 已加载", 0);
+                        "[+] " + browser + " Cookies 已加载", 0);
             }
         } catch (Exception e) {
             String msg = e.getMessage();
             if (msg != null && msg.contains("超时")) {
                 return new CookiesValidationResult(false,
-                        "✗ " + browser + " 验证超时（请关闭浏览器后重试，或检查系统负载）", 0);
+                        "[-] " + browser + " 验证超时（请关闭浏览器后重试，或检查系统负载）", 0);
             }
             return new CookiesValidationResult(false,
-                    "✗ Cookies 验证异常: " + (msg != null ? msg : e.getClass().getSimpleName()), 0);
+                    "[-] Cookies 验证异常: " + (msg != null ? msg : e.getClass().getSimpleName()), 0);
         }
     }
 
