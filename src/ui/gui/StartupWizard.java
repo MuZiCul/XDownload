@@ -192,16 +192,36 @@ public class StartupWizard extends JDialog {
 
         JPanel center = new JPanel();
         center.setLayout(new BoxLayout(center, BoxLayout.Y_AXIS));
+
+        // 预填 Windows 系统代理（如果有）
+        String defaultHost = "127.0.0.1";
+        int defaultPort = 7890;
+        boolean hasSysProxy = ProxyConfig.detectSystemProxy();
+        if (hasSysProxy) {
+            defaultHost = ProxyConfig.getProxyHost();
+            defaultPort = ProxyConfig.getProxyPort();
+            // 注意：detectSystemProxy 会设置 enabled=true，但 wizard 中用户可能改，先保留检测结果
+        }
+
         netStatus = new JLabel(I18n.get("proxy.detecting"));
         center.add(netStatus);
 
         JPanel input = new JPanel(new FlowLayout(FlowLayout.LEFT));
         input.add(new JLabel(I18n.get("proxy.host")));
-        proxyHost = new JTextField("127.0.0.1", 12);
+        proxyHost = new JTextField(defaultHost, 12);
         input.add(proxyHost);
         input.add(new JLabel(I18n.get("proxy.port")));
-        proxyPort = new JSpinner(new SpinnerNumberModel(7890, 1, 65535, 1));
+        proxyPort = new JSpinner(new SpinnerNumberModel(defaultPort, 1, 65535, 1));
         input.add(proxyPort);
+
+        // 系统代理提示
+        if (hasSysProxy) {
+            JLabel sysHint = new JLabel("已检测到Windows系统代理");
+            sysHint.setForeground(new Color(0, 128, 0));
+            sysHint.setFont(sysHint.getFont().deriveFont(11f));
+            center.add(sysHint);
+        }
+
         center.add(input);
 
         JPanel btns2 = new JPanel(new FlowLayout(FlowLayout.LEFT));

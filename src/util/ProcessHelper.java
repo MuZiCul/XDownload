@@ -120,6 +120,10 @@ public class ProcessHelper {
             throw new IOException("命令执行超时（" + timeoutSeconds + "秒）");
         }
 
+        // 等待读取线程完成（进程已退出，线程很快结束）
+        stdoutThread.join(3000);
+        stderrThread.join(3000);
+
         return new CommandResult(process.exitValue(), stdout, stderr);
     }
 

@@ -35,7 +35,7 @@ public class ProxySettingsPanel extends JPanel {
         else noneRadio.setSelected(true);
 
         noneRadio.addActionListener(e -> disableProxy());
-        manualRadio.addActionListener(e -> enableFields(true));
+        manualRadio.addActionListener(e -> enableManual());
 
         row1.add(noneRadio);
         row1.add(manualRadio);
@@ -58,10 +58,17 @@ public class ProxySettingsPanel extends JPanel {
 
         add(row1);
 
-        // 第二行：状态
+        // 第二行：状态（系统代理提示 / 代理已禁用 共享此位置，互斥）
+        JPanel statusRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        statusRow.setOpaque(false);
         statusLabel = new JLabel(" ");
-        statusLabel.setBorder(BorderFactory.createEmptyBorder(0, 6, 0, 0));
-        add(statusLabel);
+        if (ProxyConfig.isFromSystemProxy()) {
+            statusLabel.setText("已检测到Windows系统代理，自动使用生效中");
+            statusLabel.setForeground(new Color(0, 128, 0));
+            statusLabel.setFont(statusLabel.getFont().deriveFont(11f));
+        }
+        statusRow.add(statusLabel);
+        add(statusRow);
 
         enableFields(ProxyConfig.isEnabled());
     }
@@ -114,5 +121,14 @@ public class ProxySettingsPanel extends JPanel {
         enableFields(false);
         mainFrame.refreshStatusBar();
         statusLabel.setText(I18n.get("proxy.disabled"));
+        statusLabel.setForeground(UIManager.getColor("Label.foreground"));
+        statusLabel.setFont(statusLabel.getFont().deriveFont(Font.PLAIN, 12f));
+    }
+
+    private void enableManual() {
+        enableFields(true);
+        statusLabel.setText("请输入手动代理");
+        statusLabel.setForeground(UIManager.getColor("Label.foreground"));
+        statusLabel.setFont(statusLabel.getFont().deriveFont(Font.PLAIN, 12f));
     }
 }

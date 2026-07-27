@@ -27,6 +27,10 @@ public class MainFrame extends JFrame {
         setSize(960, 680);
         setLocationRelativeTo(null);
 
+        // 尽早检测/应用代理（面板创建前）
+        ConfigManager.applySavedProxy();
+        ProxyConfig.detectSystemProxy();
+
         // 单例下载器
         downloader = new YtDlpDownloader();
 
@@ -69,7 +73,9 @@ public class MainFrame extends JFrame {
 
     /** 应用已保存配置 */
     void applySavedConfig() {
+        // 优先级：已保存的手动配置 > Windows 系统代理 > 无
         if (!ProxyConfig.isEnabled()) ConfigManager.applySavedProxy();
+        if (!ProxyConfig.isEnabled()) ProxyConfig.detectSystemProxy();
         String[] cookies = ConfigManager.loadSavedCookies();
         if (cookies[0] != null) downloader.setCookiesFromBrowser(cookies[0]);
         else if (cookies[1] != null) downloader.setCookiesFile(cookies[1]);

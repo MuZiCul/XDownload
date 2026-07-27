@@ -151,10 +151,12 @@ public class DownloadPanel extends JPanel {
         JPanel statusPanel = new JPanel();
         statusPanel.setBorder(BorderFactory.createEmptyBorder(6, 0, 6, 0));
         statusPanel.setLayout(new BoxLayout(statusPanel, BoxLayout.Y_AXIS));
-        statusLine1 = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-        statusLine2 = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-        statusLine3 = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-        statusLine4 = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        statusLine1 = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        statusLine2 = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        statusLine3 = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        statusLine4 = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        statusLine1.setAlignmentX(Component.LEFT_ALIGNMENT); statusLine2.setAlignmentX(Component.LEFT_ALIGNMENT);
+        statusLine3.setAlignmentX(Component.LEFT_ALIGNMENT); statusLine4.setAlignmentX(Component.LEFT_ALIGNMENT);
         statusLine1.setOpaque(false); statusLine2.setOpaque(false);
         statusLine3.setOpaque(false); statusLine4.setOpaque(false);
         statusPanel.add(statusLine1);
@@ -209,24 +211,32 @@ public class DownloadPanel extends JPanel {
 
     private volatile boolean toolDownloading = false;
 
+    /** 缓存 yt-dlp 版本，避免每次 refreshStatusLines 都启动进程 */
+    private String cachedYtVer = null;
+    private boolean cachedYtOk = false;
+    private boolean ytVerChecked = false;
+
     public void refreshStatusLines() {
         if (statusLine1 == null) return;
         Font sf = new JLabel().getFont().deriveFont(13f);
 
-        // yt-dlp 行
+        // yt-dlp 行（版本号缓存，仅首次启动进程）
         statusLine1.removeAll();
-        String ytVer = "?";
-        boolean hasYt = false;
-        try {
-            util.ProcessHelper.CommandResult r = util.ProcessHelper.execute(
-                    java.util.List.of(util.ProcessHelper.findYtDlp(), "--version"));
-            hasYt = r.isSuccess();
-            ytVer = hasYt && !r.stdout.isEmpty() ? r.stdout.get(0).trim() : "?";
-        } catch (Exception ignored) {}
-        JLabel ytLabel = new JLabel("Yt-dlp: " + ytVer);
+        if (!ytVerChecked) {
+            try {
+                util.ProcessHelper.CommandResult r = util.ProcessHelper.execute(
+                        java.util.List.of(util.ProcessHelper.findYtDlp(), "--version"));
+                cachedYtOk = r.isSuccess();
+                cachedYtVer = cachedYtOk && !r.stdout.isEmpty() ? r.stdout.get(0).trim() : "?";
+            } catch (Exception ignored) {
+                cachedYtVer = "?";
+            }
+            ytVerChecked = true;
+        }
+        JLabel ytLabel = new JLabel("Yt-dlp: " + cachedYtVer);
         ytLabel.setFont(sf);
         statusLine1.add(ytLabel);
-        if (!hasYt) {
+        if (!cachedYtOk) {
             JButton dl = smallBtn("Download");
             dl.addActionListener(e -> downloadTool(true, dl));
             statusLine1.add(dl);

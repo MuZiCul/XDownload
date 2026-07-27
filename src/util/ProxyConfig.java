@@ -17,6 +17,7 @@ public class ProxyConfig {
     private static int proxyPort = -1;
     private static Proxy.Type proxyType = Proxy.Type.HTTP;
     private static boolean enabled = false;
+    private static boolean fromSystemProxy = false;
 
     static {
         // 自动从系统属性读取
@@ -72,6 +73,89 @@ public class ProxyConfig {
         if (!isEnabled()) return "无";
         String scheme = proxyType == Proxy.Type.SOCKS ? "socks5://" : "http://";
         return scheme + proxyHost + ":" + proxyPort;
+    }
+
+    /** 当前代理是否来自 Windows 系统代理自动检测 */
+    public static boolean isFromSystemProxy() { return fromSystemProxy; }
+
+    // ==================== Windows 系统代理检测 ====================
+
+    /**
+     * 检测 Windows 系统代理（注册表）并自动应用。
+     * 仅在 Windows 上生效，不会覆盖已有手动配置。
+     * @return true 表示检测到并成功应用了系统代理
+     */
+    public static boolean detectSystemProxy() {
+        if (isEnabled()) return false;  // 已有代理，不覆盖
+        if (!isWindows()) return false;
+
+        try {
+            // 1. 检查代理是否启用
+            ProcessHelper.CommandResult enableResult = ProcessHelper.executeWithTimeout(
+                    java.util.List.of("reg", "query",
+                            "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
+                            "/v", "ProxyEnable"), 5);
+            String enableOutput = String.join(" ", enableResult.stdout);
+            if (!enableOutput.contains("0x1")) return false;  // ProxyEnable != 1
+
+            // 2. 读取 ProxyServer
+            ProcessHelper.CommandResult serverResult = ProcessHelper.executeWithTimeout(
+                    java.util.List.of("reg", "query",
+                            "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
+                            "/v", "ProxyServer"), 5);
+            if (!serverResult.isSuccess() || serverResult.stdout.isEmpty()) return false;
+
+            // 3. 直接从 stdout 列表中解析 ProxyServer 值
+            String value = extractRegValue(serverResult.stdout);
+            if (value == null || value.isEmpty()) return false;
+
+            // 处理分协议格式: "http=127.0.0.1:7890;https=127.0.0.1:7890"
+            String hostPart = value;
+            if (value.contains("=")) {
+                String[] protocols = value.split(";");
+                for (String p : protocols) {
+                    if (p.contains("=")) {
+                        hostPart = p.substring(p.indexOf('=') + 1).trim();
+                        break;
+                    }
+                }
+            }
+
+            // 4. 解析 host:port
+            String[] hp = hostPart.split(":");
+            if (hp.length < 2) return false;
+            String host = hp[0].trim();
+            int port = Integer.parseInt(hp[1].trim());
+
+            // 5. 应用系统代理
+            proxyHost = host;
+            proxyPort = port;
+            proxyType = Proxy.Type.HTTP;
+            enabled = true;
+            fromSystemProxy = true;
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** 从 reg query stdout 列表中提取 REG_SZ 值 */
+    private static String extractRegValue(java.util.List<String> stdoutLines) {
+        for (String line : stdoutLines) {
+            if (line.contains("REG_SZ") || line.contains("REG_EXPAND_SZ")) {
+                int idx = line.lastIndexOf("REG_SZ");
+                if (idx < 0) idx = line.lastIndexOf("REG_EXPAND_SZ");
+                if (idx >= 0) {
+                    String val = line.substring(idx).replaceFirst("REG_(EXPAND_)?SZ\\s*", "").trim();
+                    return val;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static boolean isWindows() {
+        return System.getProperty("os.name").toLowerCase().contains("win");
     }
 
     // ==================== 代理验证 ====================

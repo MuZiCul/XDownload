@@ -28,15 +28,15 @@ public class FetchInfoWorker extends SwingWorker<VideoInfo, String> {
     protected VideoInfo doInBackground() throws Exception {
         // URL 校验：仅允许 x.com 视频
         if (!url.toLowerCase().contains("x.com")) {
-            throw new IOException("仅支持x视频链接");
+            throw new IOException("仅支持X.COM视频链接");
         }
 
         // 网络预检：快速检测 x.com 可达性（5s 超时），避免 yt-dlp 等 30s
         LogPanel.log("[NET] Checking x.com reachability...");
         if (!NetworkDetect.isXAccessible()) {
             String tip = ProxyConfig.isEnabled()
-                    ? "无法访问x，请检查代理是否正常"
-                    : "无法访问x，请在设置中配置代理后重试";
+                    ? "无法访问X.COM，请检查代理是否正常"
+                    : "无法访问X.COM，请在设置中配置代理后重试";
             throw new IOException(tip);
         }
 

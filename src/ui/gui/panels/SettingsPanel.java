@@ -107,9 +107,12 @@ public class SettingsPanel extends JPanel {
         JLabel hint = new JLabel(I18n.get("tools.hint"));
         hint.setFont(hint.getFont().deriveFont(11f));
         hint.setForeground(Color.GRAY);
+        JPanel hintRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        hintRow.setOpaque(false);
+        hintRow.add(hint);
 
         p.add(btnRow);
-        p.add(hint);
+        p.add(hintRow);
         return p;
     }
 
