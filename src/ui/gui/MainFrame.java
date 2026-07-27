@@ -16,7 +16,7 @@ public class MainFrame extends JFrame {
     public final YtDlpDownloader downloader;
     private final JTabbedPane tabbedPane;
 
-    DownloadPanel downloadPanel;
+    public DownloadPanel downloadPanel;
     SettingsPanel settingsPanel;
     AboutPanel aboutPanel;
 

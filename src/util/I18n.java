@@ -113,6 +113,9 @@ public class I18n {
         put("wizard.ffmpeg.ok", "ffmpeg: 可用", "ffmpeg: OK");
         put("wizard.ffmpeg.no", "ffmpeg: 未找到", "ffmpeg: NOT FOUND");
 
+        // ===== 设置按钮 =====
+        put("settings.viewlog", "查看日志", "View Log");
+
         // ===== 状态栏 =====
         put("status.proxy", "代理: ", "Proxy: ");
         put("status.cookies", "Cookies: ", "Cookies: ");

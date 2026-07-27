@@ -67,4 +67,18 @@ public class CookiesSettingsPanel extends JPanel {
         mainFrame.refreshStatusBar();
         statusLabel.setText("[+] " + I18n.get("cookies.saved") + browser);
     }
+
+    /** 根据 downloader 刷新面板 UI（供外部应用配置后调用） */
+    public void reflectCookies() {
+        String ck = mainFrame.downloader.getCookiesFromBrowser();
+        if (ck != null && !ck.isEmpty()) {
+            browserCombo.setSelectedItem(ck);
+            statusLabel.setText("[+] Cookies: " + ck);
+        } else {
+            browserCombo.setSelectedIndex(0); // none
+            statusLabel.setText(" ");
+        }
+        statusLabel.setForeground(UIManager.getColor("Label.foreground"));
+        statusLabel.setFont(statusLabel.getFont().deriveFont(Font.PLAIN, 12f));
+    }
 }

@@ -41,8 +41,9 @@ public class ProxySettingsPanel extends JPanel {
         row1.add(manualRadio);
 
         hostField = new JTextField(ProxyConfig.getProxyHost() != null ? ProxyConfig.getProxyHost() : "127.0.0.1", 10);
-        portSpinner = new JSpinner(new SpinnerNumberModel(
-                ProxyConfig.getProxyPort() > 0 ? ProxyConfig.getProxyPort() : 7890, 1, 65535, 1));
+        int p = ProxyConfig.getProxyPort();
+        if (p < 1 || p > 65535) p = 7890;
+        portSpinner = new JSpinner(new SpinnerNumberModel(p, 1, 65535, 1));
 
         row1.add(new JLabel(I18n.get("proxy.host")));
         row1.add(hostField);
@@ -130,5 +131,30 @@ public class ProxySettingsPanel extends JPanel {
         statusLabel.setText("请输入手动代理");
         statusLabel.setForeground(UIManager.getColor("Label.foreground"));
         statusLabel.setFont(statusLabel.getFont().deriveFont(Font.PLAIN, 12f));
+    }
+
+    /** 根据 ProxyConfig 刷新面板 UI（供外部应用配置后调用） */
+    public void reflectConfig() {
+        if (ProxyConfig.isEnabled()) {
+            manualRadio.setSelected(true);
+            hostField.setText(ProxyConfig.getProxyHost());
+            portSpinner.setValue(ProxyConfig.getProxyPort());
+            enableFields(true);
+            if (ProxyConfig.isFromSystemProxy()) {
+                statusLabel.setText("已检测到Windows系统代理，自动使用生效中");
+                statusLabel.setForeground(new Color(0, 128, 0));
+                statusLabel.setFont(statusLabel.getFont().deriveFont(11f));
+            } else {
+                statusLabel.setText(" ");
+                statusLabel.setForeground(UIManager.getColor("Label.foreground"));
+                statusLabel.setFont(statusLabel.getFont().deriveFont(Font.PLAIN, 12f));
+            }
+        } else {
+            noneRadio.setSelected(true);
+            enableFields(false);
+            statusLabel.setText(I18n.get("proxy.disabled"));
+            statusLabel.setForeground(UIManager.getColor("Label.foreground"));
+            statusLabel.setFont(statusLabel.getFont().deriveFont(Font.PLAIN, 12f));
+        }
     }
 }
