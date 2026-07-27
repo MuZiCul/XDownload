@@ -5,6 +5,10 @@ import util.*;
 
 import javax.swing.*;
 import java.awt.*;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
+import java.util.ArrayList;
+import java.util.List;
 
 public class StartupWizard extends JDialog {
 
@@ -22,12 +26,23 @@ public class StartupWizard extends JDialog {
     private JLabel cookiesStatus;
     private JButton validateCookiesBtn, finishBtn;
 
+    /** 正在运行的 SwingWorker 列表，关闭弹窗时全部取消 */
+    private final List<SwingWorker<?, ?>> runningWorkers = new ArrayList<>();
+
     public StartupWizard(MainFrame mainFrame) {
         super(mainFrame, I18n.get("wizard.title"), true);
         this.mainFrame = mainFrame;
         setSize(550, 440);
         setLocationRelativeTo(mainFrame);
-        setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
+
+        // 关闭弹窗时取消所有后台任务
+        setDefaultCloseOperation(DISPOSE_ON_CLOSE);
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosed(WindowEvent e) {
+                cancelAllWorkers();
+            }
+        });
 
         buildCard1();
         buildCard2();
@@ -36,6 +51,34 @@ public class StartupWizard extends JDialog {
         add(cardPanel);
         cards.show(cardPanel, "env");
     }
+
+    /** 取消所有正在执行的 SwingWorker */
+    private void cancelAllWorkers() {
+        synchronized (runningWorkers) {
+            for (SwingWorker<?, ?> w : runningWorkers) {
+                w.cancel(true);
+            }
+            runningWorkers.clear();
+        }
+        // 强制终止可能正在运行的 yt-dlp 进程
+        mainFrame.downloader.cancel();
+    }
+
+    /** 注册 worker 以便关闭时取消 */
+    private void registerWorker(SwingWorker<?, ?> worker) {
+        synchronized (runningWorkers) {
+            runningWorkers.add(worker);
+        }
+    }
+
+    /** worker 完成后从列表移除 */
+    private void unregisterWorker(SwingWorker<?, ?> worker) {
+        synchronized (runningWorkers) {
+            runningWorkers.remove(worker);
+        }
+    }
+
+    // ==================== Card 1: 环境/组件 ====================
 
     private void buildCard1() {
         JPanel p = new JPanel(new BorderLayout(10, 10));
@@ -56,7 +99,10 @@ public class StartupWizard extends JDialog {
         downloadToolsBtn.addActionListener(e -> downloadMissing());
         next1Btn = new JButton(I18n.get("wizard.next"));
         next1Btn.addActionListener(e -> cards.show(cardPanel, "proxy"));
+        JButton skip1 = new JButton(I18n.get("wizard.skip"));
+        skip1.addActionListener(e -> cards.show(cardPanel, "cookies"));
         btns.add(downloadToolsBtn);
+        btns.add(skip1);
         btns.add(next1Btn);
         p.add(btns, BorderLayout.SOUTH);
 
@@ -65,34 +111,79 @@ public class StartupWizard extends JDialog {
     }
 
     private void checkTools() {
-        ytDlpStatus.setText(I18n.get(ProcessHelper.isYtDlpAvailable() ? "wizard.ytdlp.ok" : "wizard.ytdlp.no"));
-        ffmpegStatus.setText(I18n.get(ProcessHelper.isFfmpegAvailable() ? "wizard.ffmpeg.ok" : "wizard.ffmpeg.no"));
+        // 快速文件检查（不启动进程）
+        boolean ytOk = java.nio.file.Files.exists(Bootstrap.BIN_DIR.resolve("yt-dlp.exe"))
+                || ProcessHelper.isYtDlpAvailable();
+        ytDlpStatus.setText(I18n.get(ytOk ? "wizard.ytdlp.ok" : "wizard.ytdlp.no"));
+
+        boolean ffOk = java.nio.file.Files.exists(Bootstrap.BIN_DIR.resolve("ffmpeg.exe"))
+                || ProcessHelper.isFfmpegAvailable();
+        ffmpegStatus.setText(I18n.get(ffOk ? "wizard.ffmpeg.ok" : "wizard.ffmpeg.no"));
     }
 
+    /**
+     * 下载缺失组件。
+     * 下载前检测 GitHub 连通性：不可达则自动跳转代理页引导配置。
+     */
     private void downloadMissing() {
         downloadToolsBtn.setEnabled(false);
+
+        // ==== GitHub 连通性预检 ====
+        if (!ProxyConfig.isEnabled()) {
+            ytDlpStatus.setText("yt-dlp: checking GitHub...");
+            boolean githubOk = NetworkDetect.isGithubAccessible();
+            if (!githubOk) {
+                ytDlpStatus.setText("yt-dlp: GitHub unreachable, configure proxy first");
+                ffmpegStatus.setText("ffmpeg: waiting for proxy...");
+                // 提示并跳转到代理卡片
+                JOptionPane.showMessageDialog(this,
+                        "Cannot reach GitHub.\nPlease configure a proxy on the next page.",
+                        "Network Required", JOptionPane.WARNING_MESSAGE);
+                cards.show(cardPanel, "proxy");
+                downloadToolsBtn.setEnabled(true);
+                return;
+            }
+        }
+
+        // 先下载 yt-dlp，再下载 ffmpeg
         if (!ProcessHelper.isYtDlpAvailable()) {
-            ytDlpStatus.setText("yt-dlp: " + I18n.get("prog.downloading"));
-            new BootstrapWorker(true, result -> {
+            ytDlpStatus.setText("yt-dlp: downloading (~15MB)...");
+            final BootstrapWorker[] ytRef = new BootstrapWorker[1];
+            ytRef[0] = new BootstrapWorker(true, result -> {
                 SwingUtilities.invokeLater(() -> {
-                    ytDlpStatus.setText("yt-dlp: " + (result != null && !result.startsWith("failed") ? I18n.get("status.ok") : "FAILED"));
+                    ytDlpStatus.setText("yt-dlp: " + (result != null && !result.startsWith("failed")
+                            ? I18n.get("status.ok") : "FAILED"));
+                    unregisterWorker(ytRef[0]);
                     checkFFmpeg();
                 });
-            }).execute();
-        } else checkFFmpeg();
+            });
+            registerWorker(ytRef[0]);
+            ytRef[0].execute();
+        } else {
+            checkFFmpeg();
+        }
     }
 
     private void checkFFmpeg() {
         if (!ProcessHelper.isFfmpegAvailable()) {
-            ffmpegStatus.setText("ffmpeg: " + I18n.get("prog.downloading"));
-            new BootstrapWorker(false, result -> {
+            ffmpegStatus.setText("ffmpeg: downloading (~80MB)...");
+            final BootstrapWorker[] ffRef = new BootstrapWorker[1];
+            ffRef[0] = new BootstrapWorker(false, result -> {
                 SwingUtilities.invokeLater(() -> {
-                    ffmpegStatus.setText("ffmpeg: " + (result != null && !result.startsWith("failed") ? I18n.get("status.ok") : "skipped"));
+                    ffmpegStatus.setText("ffmpeg: " + (result != null && !result.startsWith("failed")
+                            ? I18n.get("status.ok") : "skipped"));
+                    unregisterWorker(ffRef[0]);
                     downloadToolsBtn.setEnabled(true);
                 });
-            }).execute();
-        } else downloadToolsBtn.setEnabled(true);
+            });
+            registerWorker(ffRef[0]);
+            ffRef[0].execute();
+        } else {
+            downloadToolsBtn.setEnabled(true);
+        }
     }
+
+    // ==================== Card 2: 代理 ====================
 
     private void buildCard2() {
         JPanel p = new JPanel(new BorderLayout(10, 10));
@@ -134,26 +225,37 @@ public class StartupWizard extends JDialog {
 
         cardPanel.add(p, "proxy");
 
-        new EnvironmentCheckWorker(overseas -> {
+        // 后台异步检测网络环境（可取消）
+        EnvironmentCheckWorker envWorker = new EnvironmentCheckWorker(overseas -> {
             SwingUtilities.invokeLater(() -> netStatus.setText(I18n.get(overseas ? "proxy.overseas" : "proxy.domestic")));
-        }).execute();
+        });
+        registerWorker(envWorker);
+        envWorker.execute();
     }
 
     private void testProxy() {
         String host = proxyHost.getText().trim();
         int port = (Integer) proxyPort.getValue();
         proxyTestResult.setText(I18n.get("proxy.testing"));
-        new ProxyTestWorker(host, port, result -> {
+        final ProxyTestWorker[] ptRef = new ProxyTestWorker[1];
+        ptRef[0] = new ProxyTestWorker(host, port, result -> {
             SwingUtilities.invokeLater(() -> {
+                unregisterWorker(ptRef[0]);
                 if (result != null && result.success) {
                     proxyTestResult.setText("[+] " + I18n.get("proxy.ok") + result.elapsedMs + "ms");
                     ProxyConfig.setProxy(host, port);
                     ConfigManager.saveProxy(host, port);
                     mainFrame.refreshStatusBar();
-                } else proxyTestResult.setText("[-] " + I18n.get("proxy.failed"));
+                } else {
+                    proxyTestResult.setText("[-] " + I18n.get("proxy.failed"));
+                }
             });
-        }).execute();
+        });
+        registerWorker(ptRef[0]);
+        ptRef[0].execute();
     }
+
+    // ==================== Card 3: Cookies ====================
 
     private void buildCard3() {
         JPanel p = new JPanel(new BorderLayout(10, 10));
@@ -187,33 +289,65 @@ public class StartupWizard extends JDialog {
         p.add(bottom, BorderLayout.SOUTH);
 
         cardPanel.add(p, "cookies");
-        scanCookies();
+
+        // 后台扫描 cookies（可取消）
+        scanCookiesAsync();
     }
 
-    private void scanCookies() {
-        String[] browsers = {"chrome", "firefox", "edge", "brave", "opera"};
+    /** 后台异步扫描浏览器 cookies */
+    private void scanCookiesAsync() {
         cookiesStatus.setText(I18n.get("cookies.scanning"));
-        for (String b : browsers) {
-            ProcessHelper.CookiesValidationResult r = ProcessHelper.validateCookiesFromBrowser(b);
-            if (r.success && r.cookieCount > 0) {
-                browserCombo.setSelectedItem(b);
-                cookiesStatus.setText("[+] " + b + ": " + r.cookieCount + " cookies");
-                return;
+        SwingWorker<String, Void> scanWorker = new SwingWorker<String, Void>() {
+            @Override
+            protected String doInBackground() {
+                String[] browsers = {"chrome", "firefox", "edge", "brave", "opera"};
+                for (String b : browsers) {
+                    if (isCancelled()) return null;
+                    ProcessHelper.CookiesValidationResult r =
+                            ProcessHelper.validateCookiesFromBrowser(b);
+                    if (r.success && r.cookieCount > 0) {
+                        return b + "|" + r.cookieCount;
+                    }
+                }
+                return null;
             }
-        }
-        cookiesStatus.setText("[!] " + I18n.get("cookies.none"));
+            @Override
+            protected void done() {
+                unregisterWorker(this);
+                try {
+                    String result = get();
+                    if (result != null) {
+                        String[] parts = result.split("\\|");
+                        browserCombo.setSelectedItem(parts[0]);
+                        cookiesStatus.setText("[+] " + parts[0] + ": " + parts[1] + " cookies");
+                    } else {
+                        cookiesStatus.setText("[!] " + I18n.get("cookies.none"));
+                    }
+                } catch (Exception ignored) {}
+            }
+        };
+        registerWorker(scanWorker);
+        scanWorker.execute();
     }
 
     private void validateCookies() {
         String browser = (String) browserCombo.getSelectedItem();
         if (browser == null) return;
         cookiesStatus.setText(I18n.get("cookies.validating"));
-        new CookiesValidationWorker(browser, result -> {
-            SwingUtilities.invokeLater(() -> cookiesStatus.setText(result != null ? result.message : "[-] Failed"));
-        }).execute();
+        final CookiesValidationWorker[] cvRef = new CookiesValidationWorker[1];
+        cvRef[0] = new CookiesValidationWorker(browser, result -> {
+            SwingUtilities.invokeLater(() -> {
+                unregisterWorker(cvRef[0]);
+                cookiesStatus.setText(result != null ? result.message : "[-] Failed");
+            });
+        });
+        registerWorker(cvRef[0]);
+        cvRef[0].execute();
     }
 
     private void saveAndClose() {
+        // 先取消所有运行中的后台任务
+        cancelAllWorkers();
         String browser = (String) browserCombo.getSelectedItem();
         if (browser != null) {
             mainFrame.downloader.setCookiesFromBrowser(browser);

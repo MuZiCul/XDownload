@@ -119,7 +119,7 @@ public class Bootstrap {
 
         // 3. ffmpeg 非必须，仅提示
         if (!autoConfirm) {
-            return null; // 交互模式下由 ConsoleUI 处理
+            return null; // 交互模式下由 GUI StartupWizard 处理
         }
 
         // 命令行模式：静默尝试下载

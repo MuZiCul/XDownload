@@ -223,7 +223,7 @@ public class DownloadPanel extends JPanel {
             hasYt = r.isSuccess();
             ytVer = hasYt && !r.stdout.isEmpty() ? r.stdout.get(0).trim() : "?";
         } catch (Exception ignored) {}
-        JLabel ytLabel = new JLabel("yt-dlp: " + ytVer);
+        JLabel ytLabel = new JLabel("Yt-dlp: " + ytVer);
         ytLabel.setFont(sf);
         statusLine1.add(ytLabel);
         if (!hasYt) {
@@ -234,7 +234,7 @@ public class DownloadPanel extends JPanel {
 
         // Proxy 行
         statusLine2.removeAll();
-        JLabel px = new JLabel("Proxy: " + (util.ProxyConfig.isEnabled() ? util.ProxyConfig.getProxyString() : "none"));
+        JLabel px = new JLabel("Proxy: " + (util.ProxyConfig.isEnabled() ? util.ProxyConfig.getProxyString() : "N/A"));
         px.setFont(sf);
         statusLine2.add(px);
 
@@ -242,14 +242,14 @@ public class DownloadPanel extends JPanel {
         statusLine3.removeAll();
         String ck = mainFrame.downloader.getCookiesFromBrowser();
         if (ck == null) ck = mainFrame.downloader.getCookiesFile();
-        JLabel co = new JLabel("Cookies: " + (ck != null ? ck : "none"));
+        JLabel co = new JLabel("Cookies: " + (ck != null ? ck : "N/A"));
         co.setFont(sf);
         statusLine3.add(co);
 
         // ffmpeg 行
         statusLine4.removeAll();
         boolean hasFfmpeg = util.ProcessHelper.isFfmpegAvailable();
-        JLabel ff = new JLabel("ffmpeg: " + (hasFfmpeg ? "OK" : "N/A"));
+        JLabel ff = new JLabel("FFmpeg: " + (hasFfmpeg ? "OK" : "N/A"));
         ff.setFont(sf);
         statusLine4.add(ff);
         if (!hasFfmpeg) {

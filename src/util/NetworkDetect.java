@@ -39,6 +39,49 @@ public class NetworkDetect {
     }
 
     /**
+     * 检测是否能直连 GitHub（用于判断下载 yt-dlp 是否需要代理）
+     * @return true 表示可以直连
+     */
+    public static boolean isGithubAccessible() {
+        try {
+            URL url = new URL("https://github.com");
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection(Proxy.NO_PROXY);
+            conn.setRequestMethod("HEAD");
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
+            conn.setInstanceFollowRedirects(false);
+            conn.connect();
+            int code = conn.getResponseCode();
+            conn.disconnect();
+            return code > 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * 检测是否能访问 x.com（含代理），用于 fetch 前快速预检避免 yt-dlp 超时等待。
+     * @return true 表示 x.com 可达
+     */
+    public static boolean isXAccessible() {
+        try {
+            URL url = new URL("https://x.com");
+            Proxy javaProxy = ProxyConfig.isEnabled() ? ProxyConfig.toJavaProxy() : Proxy.NO_PROXY;
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection(javaProxy);
+            conn.setRequestMethod("HEAD");
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
+            conn.setInstanceFollowRedirects(false);
+            conn.connect();
+            int code = conn.getResponseCode();
+            conn.disconnect();
+            return code > 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
      * 测试指定代理是否可用
      * @return 延迟毫秒，-1 表示不可用
      */

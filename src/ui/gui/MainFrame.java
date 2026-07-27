@@ -6,6 +6,7 @@ import util.*;
 
 import javax.swing.*;
 import java.awt.*;
+import java.nio.file.Files;
 
 /**
  * 主窗口：标签页 + 状态栏
@@ -59,6 +60,8 @@ public class MainFrame extends JFrame {
     }
 
     private boolean needSetupWizard() {
+        // 快速文件检查：组件已存在则跳过向导（不启动 yt-dlp 进程）
+        if (Files.exists(AppHome.BIN.resolve("yt-dlp.exe"))) return false;
         if (!ProcessHelper.isYtDlpAvailable()) return true;
         java.util.Map<String, String> cfg = ConfigManager.load();
         return cfg.isEmpty() || (!cfg.containsKey("proxyHost") && !cfg.containsKey("cookiesFromBrowser"));
