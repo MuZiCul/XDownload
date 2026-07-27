@@ -1,18 +1,21 @@
-# XDownload v1.0.5
+# XDownload v1.1
 
-基于 [yt-dlp](https://github.com/yt-dlp/yt-dlp) 的桌面视频下载器，Swing GUI，开箱即用。
-命令行版本请切换分支到Master分支查看。
+基于 [yt-dlp](https://github.com/yt-dlp/yt-dlp) 的 X/Twitter 视频下载器，Swing GUI，开箱即用。
 
 ## 特性
 
 - **便携免安装** — 单目录 exe，内置 JRE，复制即用
 - **现代 GUI** — FlatLaf 扁平风格，中英双语自适应
+- **X/Twitter 专精** — 仅允许 x.com 链接，获取前预检网络可达性，5 秒内反馈结果
+- **Windows 系统代理自检测** — 启动时自动读取系统代理设置（Clash / v2rayN 等），即时生效
 - **国内外自动感知** — 启动检测网络环境，海外跳过代理，国内引导配置
+- **组件智能下载** — yt-dlp/ffmpeg 缺失时先检测 GitHub 可达性，不可达引导配置代理
 - **浏览器 Cookies 直读** — 自动扫描 Chrome / Firefox / Edge / Brave / Opera
-- **智能回退** — 当前浏览器不可用时自动切换
+- **配置管理** — 保存配置 / 应用配置（支持自定义配置文件路径），白名单校验
 - **配置持久化** — 代理、Cookies、输出目录、语言偏好自动保存
 - **工具管理** — yt-dlp / ffmpeg 一键下载更新
-- **日志面板** — yt-dlp 输出实时捕获，方便排查
+- **启动优化** — 异步初始化不阻塞主窗口，版本号缓存避免重复进程启动
+- **可取消弹窗** — 启动向导关闭即终止所有后台任务
 
 ## 快速开始
 
@@ -37,7 +40,7 @@ java -cp "lib/flatlaf-3.5.jar;out/classes" Main
 ├──────────────────────┬───────────────────────────┤
 │ URL: [__________]    │ ┌─ 状态信息 ──────────────┐│
 │ [Fetch Info] [Paste] │ │ yt-dlp: 2026.07.04      ││
-├──────────────────────┤ │ Proxy: none              ││
+├──────────────────────┤ │ Proxy: 127.0.0.1:7897   ││
 │ Video Info           │ │ Cookies: chrome          ││
 │ Title / Author       │ │ ffmpeg: OK               ││
 ├──────────────────────┤ │ ──────────────────────── ││
@@ -52,11 +55,26 @@ java -cp "lib/flatlaf-3.5.jar;out/classes" Main
 | 设置项 | 说明 |
 |--------|------|
 | 视频保存位置 | 选择下载目录，自动持久化 |
-| 代理 | 无代理 / 手动代理 + 测试 / 自动检测国内外 |
+| 代理 | 无代理 / 手动代理 + 测试 / 自动检测国内外；启动时自动读取 Windows 系统代理 |
 | Cookies | 选择浏览器 + 验证 + 保存 |
 | Tools | yt-dlp / ffmpeg 下载和更新 |
 | 语言 | 中文 / English，重启生效 |
-| View Log | 系统默认程序打开日志文件 |
+| 保存配置 | 将所有设置保存到 `config/settings.json` |
+| 应用配置 | 弹窗选择「应用默认配置」或「选择配置文件位置」，支持部分应用和白名单校验 |
+
+## v1.1 新增
+
+| 功能 | 说明 |
+|------|------|
+| Windows 系统代理自检测 | 启动时自动读取注册表代理设置（Clash/v2rayN 等），无需手动填写 |
+| x.com 链接限制 | 仅允许包含 x.com 的 URL，非 x.com 链接立即弹窗拒绝 |
+| 网络预检 | 获取视频信息前快速检测 x.com 可达性（5 秒超时），网络不通直接提示 |
+| GitHub 连通预检 | 下载 yt-dlp/ffmpeg 前先检测 GitHub 可达性，不可达引导配置代理 |
+| 配置管理按钮 | 保存配置 / 应用配置（支持自定义 JSON 文件），浏览器名和语言白名单校验 |
+| 启动性能优化 | 异步初始化网络/Cookies/代理检测不阻塞主窗口，yt-dlp 版本号首次缓存 |
+| 可取消启动弹窗 | 向导弹窗关闭即终止所有后台 SwingWorker + yt-dlp 进程 |
+| 控制台模式移除 | 全面转向 GUI，`ConsoleUI` 已删除 |
+| 版本升级 | v1.0.5 → v1.1 |
 
 ## 构建便携版
 
@@ -88,7 +106,7 @@ XDownload/
 │   │   ├── XDownloadApp.java          # GUI 启动 (FlatLaf + 日志)
 │   │   ├── MainFrame.java             # 主窗口 (标签页 + 状态栏)
 │   │   ├── StartupWizard.java         # 首次运行引导
-│   │   ├── panels/                    # 面板 (Download/Settings/About/Log)
+│   │   ├── panels/                    # 面板 (Download/Settings/About/Log/Cookies/Proxy)
 │   │   └── workers/                   # SwingWorker 子类
 │   ├── downloader/
 │   │   └── YtDlpDownloader.java       # yt-dlp 封装
@@ -99,10 +117,10 @@ XDownload/
 │       ├── AppHome.java               # 路径解析
 │       ├── Bootstrap.java             # 依赖下载
 │       ├── ProcessHelper.java         # 进程调用 + Cookies 验证
-│       ├── ProxyConfig.java           # 代理管理
+│       ├── ProxyConfig.java           # 代理管理 + 系统代理检测
 │       ├── ConfigManager.java         # 配置持久化
 │       ├── ChromeCookies.java         # Chrome DB 备份
-│       ├── NetworkDetect.java         # 国内外检测
+│       ├── NetworkDetect.java         # 国内外/GitHub/x.com 检测
 │       ├── I18n.java                  # 中英双语
 │       └── Version.java               # 版本号
 ├── lib/flatlaf-3.5.jar                # FlatLaf 皮肤
@@ -118,15 +136,21 @@ XDownload/
 
 ### 国内无法访问外网
 
-启动时自动检测，国内环境引导输入代理地址。
+1. **有 Clash/v2rayN 等工具？** 启动时自动读取 Windows 系统代理，无需手动配置
+2. **手动配置：** 启动向导自动检测，国内环境引导输入代理地址
+
+### 下载慢 / GitHub 无法访问
+
+1. 先配置代理（设置 → 代理 → 手动代理 → 测试代理）
+2. 再使用 Tools 下载 yt-dlp / ffmpeg（下载前会自动检测 GitHub 可达性）
 
 ### exe TLS 握手失败
 
 jlink 已包含 `jdk.crypto.ec` 模块，支持 ECDHE 加密套件。
 
-### 下载慢 / GitHub 无法访问
+### 配置文件迁移/备份
 
-设置中先配置代理，再使用 Tools 下载 yt-dlp / ffmpeg。
+使用设置中的「保存配置」导出当前设置，新环境中「应用配置」→「选择配置文件位置」导入。
 
 ## 致谢
 
