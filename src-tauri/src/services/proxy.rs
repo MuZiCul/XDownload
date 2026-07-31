@@ -176,6 +176,7 @@ impl ProxyConfig {
 
     /// Detect Windows system proxy via Win32 API.
     /// Uses WinHttpGetIEProxyConfigForCurrentUser to get the real system proxy.
+    /// Falls back to direct registry read if the WinHTTP API fails.
     /// Returns true if a proxy was detected and applied.
     pub fn detect_system_proxy() -> bool {
         if cfg!(not(windows)) {
@@ -191,7 +192,7 @@ impl ProxyConfig {
 
         // Call Win32 API to read IE proxy config
         let result = detect_system_proxy_raw();
-        eprintln!("[XDownload] detect_system_proxy: result={:?}", result);
+        tracing::info!("[XDownload] detect_system_proxy via WinHTTP: result={:?}", result);
 
         match result {
             Some((host, port)) => {
@@ -204,10 +205,71 @@ impl ProxyConfig {
                 true
             }
             None => {
-                tracing::debug!("no system proxy detected via WinHTTP");
-                false
+                tracing::info!("[XDownload] WinHTTP detection returned no proxy, trying registry fallback...");
+                // Fallback: read proxy settings directly from Windows Registry
+                match Self::detect_system_proxy_from_registry() {
+                    Some((host, port)) => {
+                        let mut s = state().lock().unwrap();
+                        s.host = host;
+                        s.port = port;
+                        s.enabled = true;
+                        s.from_system_proxy = true;
+                        tracing::info!("detected system proxy via registry: {}:{}", s.host, s.port);
+                        true
+                    }
+                    None => {
+                        tracing::info!("[XDownload] no system proxy detected via registry either");
+                        false
+                    }
+                }
             }
         }
+    }
+
+    /// Fallback: read proxy settings directly from Windows Registry.
+    /// Reads HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings
+    /// — the same source that WinHTTP reads from.
+    fn detect_system_proxy_from_registry() -> Option<(String, u16)> {
+        use winreg::enums::*;
+        use winreg::RegKey;
+
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let key = hkcu
+            .open_subkey(
+                r"Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+            )
+            .ok()?;
+
+        // Check ProxyEnable (REG_DWORD): 0 = disabled, 1 = enabled
+        let enabled: u32 = key.get_value("ProxyEnable").unwrap_or(0);
+        if enabled == 0 {
+            tracing::info!(
+                "[XDownload] registry: ProxyEnable is 0, no system proxy configured"
+            );
+            return None;
+        }
+
+        // Read ProxyServer (REG_SZ): e.g. "127.0.0.1:7890" or "http=127.0.0.1:7890;https=..."
+        let server: String = key.get_value("ProxyServer").ok()?;
+        tracing::info!("[XDownload] registry: ProxyServer={}", server);
+
+        if server.is_empty() {
+            return None;
+        }
+
+        // Parse: may be "host:port" or "http=host:port;https=host:port"
+        let host_port = if server.contains('=') {
+            server
+                .split(';')
+                .find_map(|part| part.splitn(2, '=').nth(1).map(|v| v.trim()))
+                .unwrap_or(&server)
+                .to_string()
+        } else {
+            server
+        };
+
+        tracing::info!("[XDownload] registry: parsed host_port={}", host_port);
+        parse_host_port(&host_port)
     }
 
     // ==================== Proxy Testing ====================
@@ -372,16 +434,32 @@ mod sys_proxy {
     /// Returns None if no proxy or detection failed.
     pub fn detect() -> Option<(String, u16)> {
         unsafe {
-            eprintln!("[XDownload] sys_proxy::detect: calling WinHttpGetIEProxyConfigForCurrentUser...");
-            let mut config = WINHTTP_CURRENT_USER_IE_PROXY_CONFIG::default();
-            if let Err(e) = WinHttpGetIEProxyConfigForCurrentUser(&mut config) {
-                eprintln!("[XDownload] sys_proxy::detect: WinHttp API failed: {:?}", e);
-                tracing::debug!("WinHttpGetIEProxyConfigForCurrentUser failed: {:?}", e);
-                return None;
+            tracing::info!("[XDownload] sys_proxy::detect: calling WinHttpGetIEProxyConfigForCurrentUser...");
+            // Use std::mem::zeroed() for explicit zero-initialization (more
+            // reliable than Default::default() in optimized release builds).
+            let mut config: WINHTTP_CURRENT_USER_IE_PROXY_CONFIG = std::mem::zeroed();
+            match WinHttpGetIEProxyConfigForCurrentUser(&mut config) {
+                Ok(()) => {
+                    tracing::info!("[XDownload] sys_proxy::detect: WinHttp API call succeeded");
+                }
+                Err(e) => {
+                    tracing::info!(
+                        "[XDownload] sys_proxy::detect: WinHttp API failed: {:?}",
+                        e
+                    );
+                    return None;
+                }
             }
 
+            tracing::info!(
+                "[XDownload] sys_proxy::detect: fAutoDetect={:?}, lpszAutoConfigUrl is_null={}, lpszProxy is_null={}",
+                config.fAutoDetect,
+                config.lpszAutoConfigUrl.is_null(),
+                config.lpszProxy.is_null(),
+            );
+
             let proxy = pwstr_to_option_string(config.lpszProxy);
-            eprintln!("[XDownload] sys_proxy::detect: raw proxy={:?}", proxy);
+            tracing::info!("[XDownload] sys_proxy::detect: raw proxy={:?}", proxy);
 
             // Free WinHttp-allocated strings
             if !config.lpszProxy.is_null() {
@@ -410,9 +488,9 @@ mod sys_proxy {
                 server
             };
 
-            eprintln!("[XDownload] sys_proxy::detect: parsed host_port={:?}", host_port);
+            tracing::info!("[XDownload] sys_proxy::detect: parsed host_port={:?}", host_port);
             let result = super::parse_host_port(&host_port);
-            eprintln!("[XDownload] sys_proxy::detect: parse_host_port result={:?}", result);
+            tracing::info!("[XDownload] sys_proxy::detect: parse_host_port result={:?}", result);
             result
         }
     }
