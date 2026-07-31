@@ -1,38 +1,11 @@
-### IntelliJ IDEA ###
-out/
-!**/src/main/**/out/
-!**/src/test/**/out/
+/target
+/ui/node_modules
+/ui/dist
 
-### Eclipse ###
-.apt_generated
-.classpath
-.factorypath
-.project
-.settings
-.springBeans
-.sts4-cache
-bin/
-!**/src/main/**/bin/
-!**/src/test/**/bin/
-
-### NetBeans ###
-/nbproject/private/
-/nbbuild/
-/dist/
-/nbdist/
-/.nb-gradle/
-
-### VS Code ###
-.vscode/
-
-### Mac OS ###
-.DS_Store
-
-### XDownload ###
-# 自动下载的二进制依赖（yt-dlp.exe, ffmpeg.exe 等）
+# Project exclude paths
+/node_modules/
+/src-tauri/target/
 /bin/
-# 下载输出目录
-downloads/
-# 用户配置（含代理、cookies 等敏感信息）
-config/
-/.idea/
+/progress/
+/config/
+/ui/src/components/settings/proxy-test/target/
