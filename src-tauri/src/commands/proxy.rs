@@ -30,7 +30,7 @@ pub fn get_proxy_status() -> serde_json::Value {
     let port = ProxyConfig::get_proxy_port();
     let from_system = ProxyConfig::is_from_system_proxy();
     let proxy_string = ProxyConfig::get_proxy_string();
-    eprintln!(
+    tracing::info!(
         "[XDownload] get_proxy_status: enabled={} host={} port={} from_system={} proxy_string={}",
         enabled, host, port, from_system, proxy_string
     );

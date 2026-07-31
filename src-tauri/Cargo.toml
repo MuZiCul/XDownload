@@ -37,6 +37,7 @@ thiserror = "2"
 regex = "1"
 zip = "2"
 futures-util = "0.3"
+winreg = "0.52"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = [
