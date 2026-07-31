@@ -1,0 +1,57 @@
+[package]
+name = "xdownload"
+version = "2.0.0"
+edition = "2021"
+description = "X/Twitter video downloader based on yt-dlp, rewritten in Rust"
+authors = ["MuZiCul"]
+license = "MIT"
+repository = "https://github.com/MuZiCul/XDownload"
+default-run = "xdownload"
+
+[lib]
+name = "xdownload_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[[bin]]
+name = "xdownload"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [], default-features = false }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json", "stream", "socks", "rustls-tls"], default-features = false }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+chrono = "0.4"
+anyhow = "1"
+thiserror = "2"
+regex = "1"
+zip = "2"
+futures-util = "0.3"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Networking_WinHttp",
+    "Win32_Foundation",
+    "Win32_System_Memory",
+] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = "s"
+panic = "unwind"
+strip = "symbols"

@@ -1,0 +1,80 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: "Inter", -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 13px;
+  color: #18181b;
+  background: #fafafa;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: 10px; }
+::-webkit-scrollbar-thumb:hover { background: #a1a1aa; }
+
+/* Card */
+.section-card {
+  @apply border border-zinc-200/80 rounded-2xl p-4 mb-3 bg-white shadow-sm;
+}
+
+.section-title {
+  @apply font-semibold text-[11px] text-zinc-400 tracking-wider uppercase mb-3;
+}
+
+/* Buttons */
+.btn {
+  @apply font-sans text-xs px-3.5 py-1.5 border border-zinc-300 rounded-xl bg-white cursor-pointer whitespace-nowrap
+         font-medium hover:bg-zinc-50 hover:border-zinc-400 active:scale-[0.98]
+         transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/40;
+}
+.btn:disabled { @apply opacity-40 pointer-events-none scale-100; }
+.btn-primary { @apply bg-blue-600 text-white border-blue-600 hover:bg-blue-700 hover:border-blue-700; }
+.btn-danger { @apply bg-red-600 text-white border-red-600 hover:bg-red-700; }
+
+/* Inputs */
+input[type="text"],
+input[type="number"],
+select {
+  @apply font-sans text-xs px-2.5 py-1.5 border border-zinc-300 rounded-xl outline-none
+         bg-white transition-all duration-150;
+}
+input:focus,
+select:focus {
+  @apply border-blue-500;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.08);
+}
+
+/* Status colors */
+.text-ok { color: #059669; }
+.text-warn { color: #d97706; }
+.text-err { color: #dc2626; }
+
+/* Format table */
+.format-table th {
+  @apply sticky top-0 bg-zinc-50/90 backdrop-blur font-semibold px-3 py-2 text-left
+         border-b border-zinc-200 text-[11px] text-zinc-500 uppercase tracking-wider;
+}
+.format-table td {
+  @apply px-3 py-2 border-b border-zinc-100 cursor-pointer text-[12px] transition-colors;
+}
+.format-table tr:hover td { @apply bg-blue-50/60; }
+.format-table tr.selected td { @apply bg-blue-50 font-medium text-blue-900; }
+
+/* Dialog overlay */
+.dialog-overlay {
+  @apply fixed inset-0 bg-black/30 backdrop-blur-sm z-50;
+}
+.dialog-content {
+  @apply fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50
+         bg-white rounded-2xl shadow-2xl p-5 w-[360px];
+}

@@ -1,0 +1,103 @@
+use crate::services::proxy::ProxyConfig;
+use std::time::Duration;
+
+/// Network environment detection — checks connectivity to key services
+/// to determine whether the user is overseas (no proxy needed) or domestic.
+pub struct NetworkDetect;
+
+/// Default timeout for quick checks (3 seconds).
+const QUICK_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Default timeout for full checks (5 seconds).
+const FULL_TIMEOUT: Duration = Duration::from_secs(5);
+
+impl NetworkDetect {
+    /// Build a plain reqwest client (no proxy).
+    fn direct_client(timeout: Duration) -> reqwest::Client {
+        reqwest::Client::builder()
+            .no_proxy()
+            .timeout(timeout)
+            .build()
+            .unwrap_or_default()
+    }
+
+    /// Build a client that routes through the configured proxy.
+    fn proxy_client(timeout: Duration) -> reqwest::Client {
+        let mut builder = reqwest::Client::builder().timeout(timeout);
+        if let Some(proxy) = ProxyConfig::to_reqwest_proxy() {
+            builder = builder.proxy(proxy);
+        }
+        builder.build().unwrap_or_default()
+    }
+
+    // ==================== Connectivity Checks ====================
+
+    /// Check whether we are overseas (can reach Google without proxy).
+    /// Returns true if Google is reachable directly.
+    pub async fn is_overseas() -> bool {
+        let client = Self::direct_client(QUICK_TIMEOUT);
+        match client.head("https://www.google.com").send().await {
+            Ok(resp) => resp.status().as_u16() > 0,
+            Err(_) => false,
+        }
+    }
+
+    /// Check whether GitHub is accessible without proxy.
+    /// Used to decide if yt-dlp / ffmpeg can be downloaded directly.
+    pub async fn is_github_accessible() -> bool {
+        let client = Self::direct_client(FULL_TIMEOUT);
+        match client.head("https://github.com").send().await {
+            Ok(resp) => resp.status().as_u16() > 0,
+            Err(_) => false,
+        }
+    }
+
+    /// Check whether Google is accessible (with configured proxy if any).
+    /// Used as a pre-flight check before downloading tools.
+    pub async fn is_google_accessible() -> bool {
+        let client = Self::proxy_client(QUICK_TIMEOUT);
+        match client.head("https://www.google.com").send().await {
+            Ok(resp) => resp.status().as_u16() > 0,
+            Err(_) => false,
+        }
+    }
+
+    /// Check whether x.com is accessible (with configured proxy if any).
+    /// Used as a pre-flight check before invoking yt-dlp to avoid long timeouts.
+    pub async fn is_x_accessible() -> bool {
+        let client = Self::proxy_client(FULL_TIMEOUT);
+        match client.head("https://x.com").send().await {
+            Ok(resp) => resp.status().as_u16() > 0,
+            Err(_) => false,
+        }
+    }
+
+    // ==================== Proxy Latency Test ====================
+
+    /// Test proxy latency by timing a HEAD request to Google through the given proxy.
+    /// Returns Some(latency_ms) on success, None on failure.
+    pub async fn test_proxy_latency(host: &str, port: u16) -> Option<i64> {
+        let proxy_url = format!("http://{}:{}", host, port);
+        let proxy = match reqwest::Proxy::all(&proxy_url) {
+            Ok(p) => p,
+            Err(_) => return None,
+        };
+
+        let client = match reqwest::Client::builder()
+            .proxy(proxy)
+            .timeout(FULL_TIMEOUT)
+            .build()
+        {
+            Ok(c) => c,
+            Err(_) => return None,
+        };
+
+        let start = std::time::Instant::now();
+        match client.head("https://www.google.com").send().await {
+            Ok(resp) if resp.status().as_u16() > 0 => {
+                Some(start.elapsed().as_millis() as i64)
+            }
+            _ => None,
+        }
+    }
+}

@@ -1,0 +1,21 @@
+{
+  "identifier": "default",
+  "description": "Default permissions for XDownload",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "dialog:default",
+    "shell:default",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "yt-dlp-execute",
+          "cmd": "${appDir}/bin/yt-dlp.exe",
+          "args": true
+        }
+      ]
+    }
+  ]
+}
