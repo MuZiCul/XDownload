@@ -10,6 +10,7 @@ import java.util.Objects;
 public class VideoInfo {
     private final String url;
     private String title;
+
     private String description;
     private long duration;          // 秒
     private String thumbnailUrl;
