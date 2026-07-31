@@ -1,0 +1,11 @@
+{
+  "name": "xdownload-root",
+  "private": true,
+  "scripts": {
+    "dev": "node ui/node_modules/@tauri-apps/cli/tauri.js dev",
+    "dev:web": "pnpm --prefix ui dev:web",
+    "build": "node ui/node_modules/@tauri-apps/cli/tauri.js build",
+    "build:web": "pnpm --prefix ui build:web",
+    "tauri": "tauri"
+  }
+}

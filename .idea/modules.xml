@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/XDownload.iml" filepath="$PROJECT_DIR$/XDownload.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/XDownload-rust.iml" filepath="$PROJECT_DIR$/.idea/XDownload-rust.iml" />
     </modules>
   </component>
 </project>
