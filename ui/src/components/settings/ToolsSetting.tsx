@@ -1,9 +1,14 @@
 import { useState, useEffect, useRef } from "react";
 import { useToolStatus } from "../../hooks/useToolStatus";
-import { pingGoogle, cancelBootstrapDownload } from "../../lib/bindings";
+import {
+  pingGoogle,
+  cancelBootstrapDownload,
+  openRootDir,
+} from "../../lib/bindings";
 import { listen } from "@tauri-apps/api/event";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import { Ban, HelpCircle } from "lucide-react";
+import { toast } from "sonner";
+import { Ban, FolderOpen, HelpCircle } from "lucide-react";
 
 type Phase =
   | { kind: "checking" }
@@ -87,6 +92,15 @@ export default function ToolsSetting() {
     unlistenRef.current?.();
     unlistenRef.current = null;
     setPhase(null);
+  };
+
+  const handleOpenRootDir = async () => {
+    try {
+      await openRootDir();
+      toast.success("已打开根目录");
+    } catch (err: any) {
+      toast.error(`打开失败: ${err}`);
+    }
   };
 
   return (
@@ -288,7 +302,14 @@ export default function ToolsSetting() {
                   </div>
                 </div>
 
-                <div className="mt-5 text-center">
+                <div className="mt-5 flex items-center justify-center gap-3">
+                  <button
+                    className="px-5 py-2 text-sm rounded-lg bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors flex items-center gap-1.5"
+                    onClick={handleOpenRootDir}
+                  >
+                    <FolderOpen size={14} />
+                    根目录
+                  </button>
                   <button
                     className="px-5 py-2 text-sm rounded-lg bg-gray-200 text-gray-600 font-medium hover:bg-gray-300 transition-colors"
                     onClick={() => setPhase(null)}

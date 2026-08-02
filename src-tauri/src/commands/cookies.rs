@@ -47,6 +47,7 @@ pub async fn validate_cookies(app: AppHandle, browser: String) -> Result<serde_j
                 "success": true,
                 "message": format!("[+] x.com 登录有效 — 用户: @{}", username),
                 "cookie_count": 1,
+                "username": username,
             }))
         }
         Err(msg) => {

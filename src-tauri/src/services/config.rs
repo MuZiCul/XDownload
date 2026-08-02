@@ -178,6 +178,23 @@ impl ConfigManager {
         Self::load().lang
     }
 
+    // ==================== Disclaimer ====================
+    //
+    // The acceptance state is stored in the Windows Registry (HKCU) with an
+    // HMAC-SHA256 signature (see services::disclaimer), so users cannot bypass
+    // the forced disclaimer by editing config/settings.json. The legacy
+    // `disclaimer_accepted` JSON field is intentionally NOT honored.
+
+    /// Mark the disclaimer as accepted and persist a signed record.
+    pub fn accept_disclaimer() -> Result<()> {
+        crate::services::disclaimer::accept()
+    }
+
+    /// Whether the disclaimer has been accepted (registry + signature check).
+    pub fn is_disclaimer_accepted() -> bool {
+        crate::services::disclaimer::is_accepted()
+    }
+
     // ==================== Download Dir ====================
 
     pub fn save_download_dir(dir: &str) -> Result<()> {

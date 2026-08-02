@@ -1,18 +1,31 @@
 import { useState, useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Toaster } from "sonner";
+import { Toaster, toast } from "sonner";
 import TabBar from "./components/layout/TabBar";
 import StatusBar from "./components/layout/StatusBar";
 import DownloadPage from "./components/download/DownloadPage";
 import SettingsPage from "./components/settings/SettingsPage";
 import AboutPage from "./components/about/AboutPage";
-import { checkUpdate, checkYtdlpUpdate, checkFfmpegUpdate } from "./lib/bindings";
+import DisclaimerPage from "./components/about/DisclaimerPage";
+import { CONTENT } from "./components/about/DisclaimerPage";
+import type { Lang } from "./components/about/DisclaimerPage";
+import {
+  acceptDisclaimer,
+  checkUpdate,
+  checkYtdlpUpdate,
+  checkFfmpegUpdate,
+  getDisclaimerAccepted,
+  getUninstallInfo,
+  loadSettings,
+  openUninstallPanel,
+  uninstallApp,
+} from "./lib/bindings";
 import type {
   UpdateCheckResult,
   YtdlpUpdateResult,
   FfmpegUpdateResult,
 } from "./lib/bindings";
-import { ArrowUpRight, X } from "lucide-react";
+import { ArrowUpRight, Loader2, Trash2, X } from "lucide-react";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -20,7 +33,7 @@ const queryClient = new QueryClient({
   },
 });
 
-type Tab = "download" | "settings" | "about";
+type Tab = "download" | "settings" | "about" | "disclaimer";
 
 function ToolCard({
   label,
@@ -91,6 +104,44 @@ function App() {
   const [ytdlpUpdate, setYtdlpUpdate] = useState<YtdlpUpdateResult | null>(null);
   const [ffmpegUpdate, setFfmpegUpdate] = useState<FfmpegUpdateResult | null>(null);
 
+  // --- Forced disclaimer (first launch) ---
+  const [disclaimerAccepted, setDisclaimerAccepted] = useState<boolean | null>(null);
+  const [disclaimerLang, setDisclaimerLang] = useState<Lang>("zh");
+  const [showDeclineConfirm, setShowDeclineConfirm] = useState(false);
+  const [uninstalling, setUninstalling] = useState(false);
+
+  // Load language for the disclaimer content
+  useEffect(() => {
+    let active = true;
+    loadSettings()
+      .then((settings) => {
+        if (!active) return;
+        setDisclaimerLang(settings.lang === "en" ? "en" : "zh");
+      })
+      .catch(() => {
+        if (active) setDisclaimerLang("zh");
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Check disclaimer acceptance on startup (takes priority over update modal)
+  useEffect(() => {
+    let active = true;
+    getDisclaimerAccepted()
+      .then((accepted) => {
+        if (active) setDisclaimerAccepted(accepted);
+      })
+      .catch(() => {
+        // If the check fails, show the disclaimer to be safe.
+        if (active) setDisclaimerAccepted(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   // Auto-check for updates on startup (app + yt-dlp + ffmpeg)
   useEffect(() => {
     Promise.all([
@@ -106,12 +157,56 @@ function App() {
     ]).catch(() => {});
   }, []);
 
-  const showModal = appUpdate !== null || ytdlpUpdate !== null || ffmpegUpdate !== null;
+  const showModal =
+    disclaimerAccepted !== false &&
+    (appUpdate !== null || ytdlpUpdate !== null || ffmpegUpdate !== null);
 
   const closeModal = () => {
     setAppUpdate(null);
     setYtdlpUpdate(null);
     setFfmpegUpdate(null);
+  };
+
+  const d = CONTENT[disclaimerLang];
+
+  // Accept → persist and enter the app.
+  const handleAcceptDisclaimer = async () => {
+    try {
+      await acceptDisclaimer();
+      setDisclaimerAccepted(true);
+    } catch (err: any) {
+      toast.error(`${err}`);
+    }
+  };
+
+  // Decline (after second confirmation) → uninstall and exit.
+  const handleConfirmDecline = async () => {
+    if (uninstalling) return;
+    setUninstalling(true);
+    try {
+      const info = await getUninstallInfo();
+      if (info.installed) {
+        const handled = await uninstallApp();
+        // handled === true → uninstaller launched, the app is exiting.
+        if (!handled) {
+          // Installed entry exists but no usable UninstallString / launch failed →
+          // fall back to the system uninstall panel.
+          await openUninstallPanel();
+          toast.success(d.uninstall.panelHint);
+          setShowDeclineConfirm(false);
+        }
+        return;
+      }
+      // Not registered (dev / portable build) → open the system uninstall panel.
+      await openUninstallPanel();
+      toast.success(d.uninstall.panelHint);
+      setShowDeclineConfirm(false);
+    } catch (err: any) {
+      toast.error(`${err}`);
+      setShowDeclineConfirm(false);
+    } finally {
+      setUninstalling(false);
+    }
   };
 
   return (
@@ -123,6 +218,7 @@ function App() {
           {activeTab === "download" && <DownloadPage />}
           {activeTab === "settings" && <SettingsPage />}
           {activeTab === "about" && <AboutPage />}
+          {activeTab === "disclaimer" && <DisclaimerPage />}
         </main>
 
         <StatusBar />
@@ -229,6 +325,98 @@ function App() {
               }
             />
           </div>
+        </div>
+      )}
+
+      {/* Forced disclaimer modal (first launch) — no close button, no ESC, no
+          backdrop click; only Accept or I Don't Accept */}
+      {disclaimerAccepted === false && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+
+          <div className="relative z-10 bg-white/85 backdrop-blur-xl rounded-2xl shadow-2xl w-[580px] max-w-[90vw] border border-white/40">
+            <div className="px-7 pt-6 pb-2">
+              <h2 className="text-lg font-semibold text-gray-800 text-center">
+                {d.title}
+              </h2>
+            </div>
+
+            {/* Full terms — scrollable */}
+            <div className="px-7 py-4 max-h-[45vh] overflow-y-auto">
+              <ol className="list-decimal pl-5 space-y-2 text-[13px] leading-relaxed text-gray-700 text-left">
+                {d.items.map((item, i) => (
+                  <li key={i}>{item}</li>
+                ))}
+              </ol>
+              <p className="mt-3 text-[13px] font-medium text-gray-800">
+                {d.footer}
+              </p>
+            </div>
+
+            <div className="px-7 py-5 border-t border-zinc-200/70 flex gap-2 justify-end">
+              <button
+                className="px-4 py-2 text-xs rounded-lg bg-red-500 text-white font-medium hover:bg-red-600 transition-colors"
+                onClick={() => setShowDeclineConfirm(true)}
+                disabled={uninstalling}
+              >
+                {d.disclaimer.decline}
+              </button>
+              <button
+                className="px-4 py-2 text-xs rounded-lg bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors"
+                onClick={handleAcceptDisclaimer}
+                disabled={uninstalling}
+              >
+                {d.disclaimer.accept}
+              </button>
+            </div>
+          </div>
+
+          {/* Decline → second confirmation */}
+          {showDeclineConfirm && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center">
+              <div
+                className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+                onClick={() => !uninstalling && setShowDeclineConfirm(false)}
+              />
+              <div
+                className="relative z-10 bg-white/85 backdrop-blur-xl rounded-2xl shadow-2xl w-[400px] border border-white/40 p-6 text-center"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <h3 className="text-sm font-semibold text-zinc-900 mb-3">
+                  {d.disclaimer.declineModalTitle}
+                </h3>
+                <p className="text-xs text-zinc-500 mb-5 leading-relaxed">
+                  {d.disclaimer.declineModalBody}
+                </p>
+                <div className="flex gap-2 justify-end">
+                  <button
+                    className="btn"
+                    onClick={() => setShowDeclineConfirm(false)}
+                    disabled={uninstalling}
+                  >
+                    {d.disclaimer.cancel}
+                  </button>
+                  <button
+                    className="btn btn-danger flex items-center gap-1.5"
+                    onClick={handleConfirmDecline}
+                    disabled={uninstalling}
+                  >
+                    {uninstalling ? (
+                      <>
+                        <Loader2 size={13} className="animate-spin" />
+                        {d.disclaimer.confirming}
+                      </>
+                    ) : (
+                      <>
+                        <Trash2 size={13} />
+                        {d.disclaimer.confirm}
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </QueryClientProvider>

@@ -93,6 +93,7 @@ export interface CookiesValidationResult {
   success: boolean;
   message: string;
   cookie_count: number;
+  username?: string;
 }
 
 // --- Tools ---

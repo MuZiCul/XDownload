@@ -1,14 +1,15 @@
-import { Download, Settings, Info } from "lucide-react";
+import { Download, Settings, Info, ScrollText } from "lucide-react";
 
 type Props = {
-  activeTab: "download" | "settings" | "about";
-  onTabChange: (tab: "download" | "settings" | "about") => void;
+  activeTab: "download" | "settings" | "about" | "disclaimer";
+  onTabChange: (tab: "download" | "settings" | "about" | "disclaimer") => void;
 };
 
 const tabs = [
   { id: "download" as const, label: "下载", Icon: Download },
   { id: "settings" as const, label: "设置", Icon: Settings },
   { id: "about" as const, label: "关于", Icon: Info },
+  { id: "disclaimer" as const, label: "免责声明", Icon: ScrollText },
 ];
 
 export default function TabBar({ activeTab, onTabChange }: Props) {

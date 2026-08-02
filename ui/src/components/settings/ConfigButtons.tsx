@@ -8,10 +8,12 @@ import {
   loadSettingsFromPath,
   applyAndPersistSettings,
   applyDefaultConfig,
+  openConfigDir,
+  quitApp,
 } from "../../lib/bindings";
 import type { AppSettings } from "../../lib/types";
 import { toast } from "sonner";
-import { Save, Upload, Folder, FolderOpen, X } from "lucide-react";
+import { Save, Upload, Folder, FolderOpen, FolderCog, Power, X } from "lucide-react";
 
 type Props = {
   settings: AppSettings;
@@ -96,6 +98,25 @@ export default function ConfigButtons({ settings, onApply }: Props) {
     }
   };
 
+  // ── Config dir / Quit ────────────────────────────────────────
+
+  const handleOpenConfigDir = async () => {
+    try {
+      await openConfigDir();
+      toast.success("已打开配置目录");
+    } catch (err: any) {
+      toast.error(`打开失败: ${err}`);
+    }
+  };
+
+  const handleQuit = async () => {
+    try {
+      await quitApp();
+    } catch (err: any) {
+      toast.error(`退出失败: ${err}`);
+    }
+  };
+
   // ── Render ────────────────────────────────────────────────────
 
   return (
@@ -114,6 +135,22 @@ export default function ConfigButtons({ settings, onApply }: Props) {
         >
           <Upload size={13} />
           应用配置
+        </button>
+        <button
+          className="btn flex items-center gap-1"
+          onClick={handleOpenConfigDir}
+          title="打开根目录下的 config 文件夹"
+        >
+          <FolderCog size={13} />
+          配置目录
+        </button>
+        <button
+          className="btn flex items-center gap-1 text-red-600 hover:text-red-700"
+          onClick={handleQuit}
+          title="清理进程并退出应用"
+        >
+          <Power size={13} />
+          退出
         </button>
         {configPath && (
           <span className="text-[10px] text-zinc-400 ml-auto truncate max-w-[260px]">
@@ -178,7 +215,7 @@ export default function ConfigButtons({ settings, onApply }: Props) {
                 onClick={() => handleApply(false)}
               >
                 <Folder size={15} />
-                默认目录（恢复默认配置）
+                恢复默认
               </button>
               <button
                 className="btn w-full text-sm flex items-center justify-center gap-2 py-2.5"

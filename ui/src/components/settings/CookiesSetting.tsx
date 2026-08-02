@@ -30,6 +30,8 @@ export default function CookiesSetting({ browser, onChange }: Props) {
   const [saving, setSaving] = useState(false);
   const [loadedBrowser, setLoadedBrowser] = useState<string | null>(null);
   const [verified, setVerified] = useState(false);
+  const [verifiedUsername, setVerifiedUsername] = useState<string | null>(null);
+  const [loadedUsername, setLoadedUsername] = useState<string | null>(null);
   const [initialized, setInitialized] = useState(false);
 
   useEffect(() => {
@@ -62,6 +64,7 @@ export default function CookiesSetting({ browser, onChange }: Props) {
   const handleSelect = (value: string) => {
     setSelected(value);
     setVerified(false); // changing browser resets verification
+    setVerifiedUsername(null); // changing browser resets verified username
     if (value === "none") {
       onChange(undefined);
     } else {
@@ -90,11 +93,14 @@ export default function CookiesSetting({ browser, onChange }: Props) {
       if (result.success) {
         toast.success(result.message);
         setVerified(true);
+        setVerifiedUsername(result.username ?? null);
       } else {
         toast.error(result.message);
+        setVerifiedUsername(null);
       }
     } catch (err: any) {
       toast.error(`${err}`);
+      setVerifiedUsername(null);
     } finally {
       (await unlisten)();
       setValidating(false);
@@ -107,6 +113,7 @@ export default function CookiesSetting({ browser, onChange }: Props) {
     try {
       await saveAndApplyCookies(selected);
       setLoadedBrowser(selected);
+      setLoadedUsername(verifiedUsername); // carry verified username to loaded state
       onChange(selected);
       toast.success(`Cookies 已保存并加载: ${selected}`);
     } catch (err: any) {
@@ -118,15 +125,35 @@ export default function CookiesSetting({ browser, onChange }: Props) {
 
   if (!initialized) return null;
 
+  // Status indicator next to the "Cookies" title.
+  // Priority: validating > verified-but-not-saved > loaded > none
+  let statusText: string;
+  let statusColor: string;
+  if (validating) {
+    statusText = `验证中: ${selected}`;
+    statusColor = "text-amber-500";
+  } else if (verified && selected !== loadedBrowser) {
+    statusText = `已验证: ${selected}${
+      verifiedUsername ? ` — @${verifiedUsername}` : ""
+    }，请保存并加载生效`;
+    statusColor = "text-green-600";
+  } else if (loadedBrowser) {
+    statusText = `已加载: ${loadedBrowser}${
+      loadedUsername ? ` — @${loadedUsername}` : ""
+    }`;
+    statusColor = "text-green-600";
+  } else {
+    statusText = "无 cookies";
+    statusColor = "text-gray-400";
+  }
+
   return (
     <div className="section-card">
       <div className="section-title">
         Cookies
-        {loadedBrowser && (
-          <span className="normal-case font-normal text-[10px] text-green-600 ml-2">
-            ● 已加载: {loadedBrowser}
-          </span>
-        )}
+        <span className={`normal-case font-normal text-[10px] ${statusColor} ml-2`}>
+          ● {statusText}
+        </span>
       </div>
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-xs text-gray-500">浏览器:</span>

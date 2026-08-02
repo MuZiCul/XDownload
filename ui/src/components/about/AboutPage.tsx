@@ -39,40 +39,42 @@ export default function AboutPage() {
   };
 
   return (
-    <div className="flex items-center justify-center h-full">
-      <div className="text-center py-10 px-8 max-w-md">
-        <h1 className="text-3xl font-bold text-gray-900 mb-1">XDownload</h1>
+    <div className="h-full flex items-center justify-center py-10 px-6">
+      <div className="w-full max-w-lg">
+        <div className="text-center">
+          <h1 className="text-3xl font-bold text-gray-900 mb-1">XDownload</h1>
 
-        {/* Version + check update button */}
-        <div className="flex items-center justify-center gap-2 mb-2">
-          <p className="text-sm text-gray-500">v2.0.0</p>
-          <button
-            className="inline-flex items-center gap-1 text-[11px] text-blue-500 hover:text-blue-600 hover:underline disabled:text-gray-300 disabled:no-underline transition-colors"
-            onClick={handleCheckUpdate}
-            disabled={checking}
+          {/* Version + check update button */}
+          <div className="flex items-center justify-center gap-2 mb-2">
+            <p className="text-sm text-gray-500">v2.0.0</p>
+            <button
+              className="inline-flex items-center gap-1 text-[11px] text-blue-500 hover:text-blue-600 hover:underline disabled:text-gray-300 disabled:no-underline transition-colors"
+              onClick={handleCheckUpdate}
+              disabled={checking}
+            >
+              <RefreshCw
+                size={12}
+                className={checking ? "animate-spin" : ""}
+              />
+              {checking ? "检测中..." : "检测更新"}
+            </button>
+          </div>
+
+          <div className="h-5" />
+          <p className="text-sm text-gray-600 leading-relaxed mb-1">
+            基于 yt-dlp 的视频下载器
+          </p>
+          <p className="text-xs text-gray-500 mb-3">By MuZiCul</p>
+          <a
+            href="https://github.com/MuZiCul/XDownload"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-sm text-[#0969da] hover:underline"
           >
-            <RefreshCw
-              size={12}
-              className={checking ? "animate-spin" : ""}
-            />
-            {checking ? "检测中..." : "检测更新"}
-          </button>
+            <Github size={14} />
+            github.com/MuZiCul/XDownload
+          </a>
         </div>
-
-        <div className="h-5" />
-        <p className="text-sm text-gray-600 leading-relaxed mb-1">
-          基于 yt-dlp 的视频下载器
-        </p>
-        <p className="text-xs text-gray-500 mb-3">By MuZiCul</p>
-        <a
-          href="https://github.com/MuZiCul/XDownload"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 text-sm text-[#0969da] hover:underline"
-        >
-          <Github size={14} />
-          github.com/MuZiCul/XDownload
-        </a>
       </div>
     </div>
   );
