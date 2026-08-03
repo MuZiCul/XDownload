@@ -84,6 +84,19 @@ pub fn save_language(lang: String) -> Result<(), String> {
     ConfigManager::save_lang(&lang).map_err(|e| e.to_string())
 }
 
+/// Get whether the user has accepted the disclaimer on first launch.
+/// Returns `false` when the field is missing (never accepted / old config).
+#[tauri::command]
+pub fn get_disclaimer_accepted() -> bool {
+    ConfigManager::is_disclaimer_accepted()
+}
+
+/// Mark the disclaimer as accepted and persist to active config.
+#[tauri::command]
+pub fn accept_disclaimer() -> Result<(), String> {
+    ConfigManager::accept_disclaimer().map_err(|e| e.to_string())
+}
+
 /// Load settings from an arbitrary file path.
 #[tauri::command]
 pub fn load_settings_from_path(path: String) -> Result<AppSettings, String> {

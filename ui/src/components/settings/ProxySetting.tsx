@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { testProxy, setProxyMode, getProxyStatus, loadSettings, saveSettings } from "../../lib/bindings";
-import type { ProxyStatus, AppSettings } from "../../lib/types";
+import type { ProxyStatus, ProxyTestResult, AppSettings } from "../../lib/types";
 import { toast } from "sonner";
 import { Save } from "lucide-react";
 
@@ -18,6 +18,7 @@ export default function ProxySetting({ host, port, onChange }: Props) {
   const [sysProxyPort, setSysProxyPort] = useState(0);
   const [sysProxyStr, setSysProxyStr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [testState, setTestState] = useState<"idle" | "testing" | "success" | "error">("idle");
 
   // Track committed state to enable/disable save button
   const [committedMode, setCommittedMode] = useState<"none" | "manual" | "system">("none");
@@ -66,6 +67,14 @@ export default function ProxySetting({ host, port, onChange }: Props) {
           setCommittedPort(status.port);
         }
       }
+
+      // 启动时主动测试代理连通性
+      if (status.enabled && status.host && status.port > 0) {
+        setTestState("testing");
+        testProxy(status.host, status.port)
+          .then((result: ProxyTestResult) => setTestState(result.success ? "success" : "error"))
+          .catch(() => setTestState("error"));
+      }
     }).catch(() => {});
   }, []);
 
@@ -95,16 +104,20 @@ export default function ProxySetting({ host, port, onChange }: Props) {
       toast.warning("请输入代理主机地址");
       return;
     }
+    setTestState("testing");
     try {
       const result = await testProxy(effectiveHost, effectivePort);
       if (result.success) {
         onChange(effectiveHost, effectivePort);
         toast.success(`代理测试通过 (${result.elapsed_ms}ms)`);
+        setTestState("success");
       } else {
         toast.error(result.message);
+        setTestState("error");
       }
     } catch (err: any) {
       toast.error(`${err}`);
+      setTestState("error");
     }
   };
 
@@ -147,7 +160,18 @@ export default function ProxySetting({ host, port, onChange }: Props) {
 
   return (
     <div className="section-card">
-      <div className="section-title">代理</div>
+      <div className="section-title">
+        代理
+        {testState === "testing" && (
+          <span className="normal-case font-normal text-[10px] text-yellow-600 ml-2">● 测试中...</span>
+        )}
+        {testState === "success" && (
+          <span className="normal-case font-normal text-[10px] text-green-600 ml-2">● 测试通过</span>
+        )}
+        {testState === "error" && (
+          <span className="normal-case font-normal text-[10px] text-red-600 ml-2">● 代理异常</span>
+        )}
+      </div>
       <div className="flex flex-wrap items-center gap-2">
         <label className="flex items-center gap-1 text-xs cursor-pointer">
           <input type="radio" name="proxyMode" checked={mode === "none"} onChange={() => handleModeChange("none")} className="size-3" />
@@ -165,7 +189,7 @@ export default function ProxySetting({ host, port, onChange }: Props) {
         <input
           type="text"
           value={effectiveHost}
-          onChange={(e) => { setH(e.target.value); }}
+          onChange={(e) => { setH(e.target.value); setTestState("idle"); }}
           disabled={manualDisabled}
           className="w-[100px]"
         />
@@ -178,6 +202,7 @@ export default function ProxySetting({ host, port, onChange }: Props) {
           onChange={(e) => {
             const v = e.target.value.replace(/\D/g, "");
             setP(v ? parseInt(v, 10) : 7890);
+            setTestState("idle");
           }}
           disabled={manualDisabled}
           className="w-[60px]"

@@ -1,9 +1,11 @@
 use anyhow::{Context, Result};
+use std::collections::HashSet;
 use std::path::PathBuf;
+use std::process::Stdio;
+use std::sync::{Mutex, OnceLock};
 use tokio::io::AsyncBufReadExt;
 use tokio::process::{Child, Command};
 use tokio::time::{timeout, Duration};
-use std::process::Stdio;
 
 /// Callback type used for process output lines
 type LineCallback = Box<dyn Fn(String) + Send + 'static>;
@@ -28,6 +30,59 @@ impl CommandResult {
     pub fn stderr_text(&self) -> String {
         self.stderr.join("\n")
     }
+}
+
+/// Registry of live child process PIDs, used to clean up running
+/// downloads (yt-dlp / ffmpeg) when the app exits.
+static RUNNING_CHILDREN: OnceLock<Mutex<HashSet<u32>>> = OnceLock::new();
+
+fn running_children() -> &'static Mutex<HashSet<u32>> {
+    RUNNING_CHILDREN.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Register a spawned child process so it can be killed on quit.
+pub fn register_child_pid(pid: Option<u32>) {
+    if let Some(pid) = pid {
+        if pid > 0 {
+            if let Ok(mut set) = running_children().lock() {
+                set.insert(pid);
+            }
+        }
+    }
+}
+
+/// Remove a finished child process from the registry.
+pub fn unregister_child_pid(pid: Option<u32>) {
+    if let Some(pid) = pid {
+        if let Ok(mut set) = running_children().lock() {
+            set.remove(&pid);
+        }
+    }
+}
+
+/// Kill every registered child process (process tree on Windows).
+pub fn kill_all_children() {
+    let pids: Vec<u32> = running_children()
+        .lock()
+        .map(|s| s.iter().copied().collect())
+        .unwrap_or_default();
+    for pid in pids {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            let _ = std::process::Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .creation_flags(0x08000000) // CREATE_NO_WINDOW
+                .output();
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = std::process::Command::new("kill")
+                .args(["-9", &pid.to_string()])
+                .output();
+        }
+    }
+    let _ = running_children().lock().map(|mut s| s.clear());
 }
 
 /// Find yt-dlp executable path
@@ -173,6 +228,9 @@ async fn execute_inner(
     let mut child = cmd.spawn()
         .with_context(|| format!("failed to spawn: {:?}", args))?;
 
+    let child_pid = child.id();
+    register_child_pid(child_pid);
+
     let stdout_opt = child.stdout.take();
     let stderr = child.stderr.take()
         .ok_or_else(|| anyhow::anyhow!("no stderr"))?;
@@ -231,21 +289,25 @@ async fn execute_inner(
     };
 
     // Wait for process with optional timeout
-    let exit_code = if let Some(secs) = timeout_secs {
+    let wait_result = if let Some(secs) = timeout_secs {
         match timeout(Duration::from_secs(secs), child.wait()).await {
-            Ok(Ok(status)) => status.code().unwrap_or(-1),
-            Ok(Err(e)) => return Err(e.into()),
+            Ok(Ok(status)) => Ok(status.code().unwrap_or(-1)),
+            Ok(Err(e)) => Err(e),
             Err(_) => {
                 // Timed out, kill the process
                 let _ = child.kill().await;
                 let _ = child.wait().await;
-                return Err(anyhow::anyhow!("command timed out after {}s", secs));
+                Err(std::io::Error::other(anyhow::anyhow!("command timed out after {}s", secs)))
             }
         }
     } else {
-        let status = child.wait().await?;
-        status.code().unwrap_or(-1)
+        child.wait().await.map(|s| s.code().unwrap_or(-1))
     };
+
+    // Remove from live-child registry regardless of outcome
+    unregister_child_pid(child_pid);
+
+    let exit_code = wait_result?;
 
     let stdout_lines = stdout_handle.await.unwrap_or_else(|_| Vec::new());
     let stderr_lines = stderr_handle.await.unwrap_or_default();

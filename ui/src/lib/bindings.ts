@@ -82,6 +82,16 @@ export async function saveLanguage(lang: string): Promise<void> {
   return invoke("save_language", { lang });
 }
 
+// --- Disclaimer ---
+
+export async function getDisclaimerAccepted(): Promise<boolean> {
+  return invoke("get_disclaimer_accepted");
+}
+
+export async function acceptDisclaimer(): Promise<void> {
+  return invoke("accept_disclaimer");
+}
+
 // --- Proxy ---
 
 export async function testProxy(host: string, port: number): Promise<ProxyTestResult> {
@@ -134,6 +144,46 @@ export async function cancelBootstrapDownload(): Promise<void> {
 
 export async function getBinDir(): Promise<string> {
   return invoke("get_bin_dir");
+}
+
+export async function getRootDir(): Promise<string> {
+  return invoke("get_root_dir");
+}
+
+export async function openRootDir(): Promise<void> {
+  return invoke("open_root_dir");
+}
+
+export async function getConfigDir(): Promise<string> {
+  return invoke("get_config_dir");
+}
+
+export async function openConfigDir(): Promise<void> {
+  return invoke("open_config_dir");
+}
+
+export async function quitApp(): Promise<void> {
+  return invoke("quit_app");
+}
+
+// --- Uninstall ---
+
+export interface UninstallInfo {
+  installed: boolean;
+  uninstall_string: string | null;
+  display_name: string | null;
+}
+
+export async function getUninstallInfo(): Promise<UninstallInfo> {
+  return invoke("get_uninstall_info");
+}
+
+export async function uninstallApp(): Promise<boolean> {
+  return invoke("uninstall_app");
+}
+
+export async function openUninstallPanel(): Promise<void> {
+  return invoke("open_uninstall_panel");
 }
 
 export interface UpdateCheckResult {
