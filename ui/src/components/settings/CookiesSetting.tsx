@@ -116,6 +116,9 @@ export default function CookiesSetting({ browser, onChange }: Props) {
       setLoadedUsername(verifiedUsername); // carry verified username to loaded state
       onChange(selected);
       toast.success(`Cookies 已保存并加载: ${selected}`);
+
+      // Notify other pages (e.g. DownloadPage) to reload the latest config.
+      window.dispatchEvent(new CustomEvent("config-applied"));
     } catch (err: any) {
       toast.error(`保存失败: ${err}`);
     } finally {

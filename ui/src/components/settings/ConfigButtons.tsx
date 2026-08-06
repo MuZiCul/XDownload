@@ -57,6 +57,9 @@ export default function ConfigButtons({ settings, onApply }: Props) {
       try {
         await saveSettings(settings);
         toast.success(`配置已保存\n路径: ${configPath}`);
+
+        // Notify other pages (e.g. DownloadPage) to reload the latest config.
+        window.dispatchEvent(new CustomEvent("config-applied"));
       } catch (err: any) {
         toast.error(`保存失败: ${err}`);
       }

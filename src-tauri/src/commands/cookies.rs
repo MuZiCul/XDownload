@@ -88,15 +88,9 @@ async fn dump_and_extract_auth_token(_app: &AppHandle, browser: &str) -> Result<
     ];
 
     // Add proxy if configured
-    if ProxyConfig::is_enabled() {
-        let proxy_arg = ProxyConfig::to_cli_args();
-        if !proxy_arg.is_empty() {
-            let parts: Vec<&str> = proxy_arg.splitn(2, ' ').collect();
-            if parts.len() == 2 {
-                args.push("--proxy".to_string());
-                args.push(parts[1].to_string());
-            }
-        }
+    if let Some(proxy_url) = ProxyConfig::to_proxy_url() {
+        args.push("--proxy".to_string());
+        args.push(proxy_url);
     }
 
     // Use --dump-user-agent trick: give a valid URL that yt-dlp can parse

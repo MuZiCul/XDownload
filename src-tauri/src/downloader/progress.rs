@@ -20,6 +20,20 @@ static COMPLETE_RE: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 
+/// Matches post-processing stage lines that follow the actual download, e.g.:
+///   [Merger] Merging formats into "xxx.mp4"
+///   [ExtractAudio] Destination: xxx.mp3
+///   [EmbedThumbnail] Adding thumbnail to "xxx.mp4"
+///   [Metadata] Writing metadata ...
+/// These are reported so the UI can show a "merging / post-processing" state
+/// instead of appearing frozen at 100%.
+static POSTPROCESS_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"^\[(Merger|ExtractAudio|EmbedThumbnail|Metadata|VideoRemuxer|FixupM4a|FixupStretched|FixupM3u8|FixupTimestamp|FixupDuration|EmbedSubtitle|EmbedInfoJson|SubtitlesConvertor|ThumbnailsConvertor|ModifyChapters|SplitChapters|MoveFiles|Mover)\].*",
+    )
+    .unwrap()
+});
+
 /// Parse a yt-dlp progress line into DownloadProgress.
 /// Supports two formats:
 /// 1. Default stderr: "[download]  XX.X% of ~XMiB at XMiB/s ETA XX:XX"
@@ -46,6 +60,23 @@ pub fn parse_progress_line(line: &str) -> Option<DownloadProgress> {
             eta: caps.name("eta").map(|m| m.as_str().to_string()).unwrap_or_default(),
             percent: "100%".to_string(),
             status: "finished".to_string(),
+        });
+    }
+
+    // Post-processing stages (ffmpeg merge, audio extraction, thumbnails, ...).
+    // The download itself is done at this point, so report the stage name as
+    // the status so the UI can show "merging / post-processing" instead of
+    // appearing frozen.
+    if let Some(caps) = POSTPROCESS_RE.captures(line) {
+        let tag = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+        let status = if tag == "Merger" { "merging" } else { "postprocess" };
+        return Some(DownloadProgress {
+            downloaded_bytes: 0,
+            total_bytes: 0,
+            speed: String::new(),
+            eta: String::new(),
+            percent: "100%".to_string(),
+            status: status.to_string(),
         });
     }
 

@@ -16,6 +16,9 @@ pub struct YtDlpDownloader {
     cookies_from_browser: Mutex<Option<String>>,
     cookies_file: Mutex<Option<String>>,
     cancel_flag: Arc<AtomicBool>,
+    /// PID of the currently running download child process (yt-dlp).
+    /// Used to actually terminate the process tree on cancellation.
+    current_pid: Arc<Mutex<Option<u32>>>,
 }
 
 impl YtDlpDownloader {
@@ -30,6 +33,7 @@ impl YtDlpDownloader {
             cookies_from_browser: Mutex::new(None),
             cookies_file: Mutex::new(None),
             cancel_flag: Arc::new(AtomicBool::new(false)),
+            current_pid: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -57,6 +61,12 @@ impl YtDlpDownloader {
 
     pub fn cancel(&self) {
         self.cancel_flag.store(true, Ordering::SeqCst);
+        // Terminate the running yt-dlp process (and its ffmpeg children) so
+        // cancellation actually stops the download instead of just pausing the UI.
+        if let Some(pid) = *self.current_pid.lock().unwrap() {
+            tracing::info!("cancel: killing download process tree pid={}", pid);
+            process::kill_process_tree(pid);
+        }
     }
 
     fn reset_cancel(&self) {
@@ -98,24 +108,47 @@ impl YtDlpDownloader {
         }
 
         let json = result.stdout_text();
-        if json.is_empty() {
+        if json.trim().is_empty() {
             anyhow::bail!("无法获取视频信息，请检查 URL 是否正确");
         }
 
-        let json_line = json
-            .lines()
-            .filter(|l| l.trim().starts_with('{'))
-            .last()
-            .unwrap_or(&json);
+        // `--dump-json` may emit several JSON lines (e.g. a tweet containing
+        // multiple media entries) plus non-JSON log lines. Parse line by line
+        // and take the FIRST valid JSON object instead of `.last()` (which
+        // silently drops earlier entries) or a raw whole-output parse (which
+        // fails when the output is not a single JSON document).
+        let mut parsed: Option<VideoInfo> = None;
+        for line in json.lines() {
+            let line = line.trim();
+            if !line.starts_with('{') {
+                continue; // skip log / warning lines
+            }
+            if let Ok(info) = parse_video_json(line) {
+                parsed = Some(info);
+                break;
+            }
+        }
 
-        parse_video_json(json_line).map_err(|e| anyhow::anyhow!(e))
+        match parsed {
+            Some(info) => Ok(info),
+            None => {
+                let preview: String = json.chars().take(300).collect();
+                anyhow::bail!(
+                    "无法解析视频信息，请检查 URL 是否正确:\n{}",
+                    preview
+                )
+            }
+        }
     }
 
+    /// Download a video. Returns the final file path (from
+    /// `--print-to-file after_move:filepath`) on success, `None` if the
+    /// process failed without producing stderr output.
     pub async fn download(
         &self,
         config: &DownloadConfig,
         progress_cb: impl Fn(DownloadProgress) + Send + 'static,
-    ) -> Result<bool> {
+    ) -> Result<Option<String>> {
         self.reset_cancel();
 
         let mut cmd = self.build_base_command();
@@ -197,37 +230,92 @@ impl YtDlpDownloader {
         cmd.push("--newline".to_string());
         cmd.push("--progress".to_string());
 
+        // Record the final file path (after all post-processing) to a temp
+        // file so we can remember where the video was saved.
+        let tmp_path = std::env::temp_dir().join("xdownload_last_path.txt");
+        let _ = std::fs::remove_file(&tmp_path);
+        cmd.push("--print-to-file".to_string());
+        cmd.push("after_move:filepath".to_string());
+        cmd.push(tmp_path.to_string_lossy().to_string());
+
         cmd.push(config.url.clone());
 
         let cancel = self.cancel_flag.clone();
         let args_refs: Vec<&str> = cmd.iter().map(|s| s.as_str()).collect();
 
-        let result = process::execute_with_callbacks(
+        // NOTE: yt-dlp writes download progress to **stdout**, not stderr.
+        // So we must capture stdout and parse progress from its lines, while
+        // stderr is used only for error logging.
+        let current_pid = self.current_pid.clone();
+        let result = process::execute_with_callbacks_pid(
             &args_refs,
-            None,  // stdout not needed — progress comes via stderr
+            // stdout → progress lines
             Some(Box::new(move |line: String| {
                 if cancel.load(Ordering::SeqCst) {
                     return;
                 }
                 if let Some(progress) = parse_progress_line(&line) {
                     progress_cb(progress);
-                } else if line.contains("ERROR") || line.contains("error") {
+                }
+            })),
+            // stderr → error logging only
+            Some(Box::new(|line: String| {
+                if line.contains("ERROR") || line.contains("error") {
                     tracing::error!("{}", line);
                 }
             })),
             None,
-            false, // capture_stdout = false → avoids GBK pipe error on Windows
+            true, // capture_stdout = true — progress is emitted on stdout
+            move |pid| {
+                if let Ok(mut guard) = current_pid.lock() {
+                    *guard = Some(pid);
+                }
+            },
         )
         .await?;
+
+        // Download finished (or was cancelled) — clear the tracked PID.
+        if let Ok(mut guard) = self.current_pid.lock() {
+            *guard = None;
+        }
 
         if !result.is_success() {
             let stderr = result.stderr_text();
             if !stderr.is_empty() {
                 anyhow::bail!("下载失败: {}", stderr);
             }
+            return Ok(None);
         }
 
-        Ok(result.is_success())
+        // Read the actual saved path written by --print-to-file.
+        let saved_path = std::fs::read_to_string(&tmp_path)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
+        // Clean the filename (keep only Chinese / letters / digits / - # +)
+        // so the saved file (and the history record) has a clean name.
+        let saved_path = saved_path.map(|p| {
+            let new_path =
+                crate::services::download_history::DownloadHistory::sanitize_filename(&p);
+            if new_path == p {
+                return p;
+            }
+            let src = std::path::Path::new(&p);
+            let dst = std::path::Path::new(&new_path);
+            if dst.exists() {
+                // A cleaned-name file already exists (e.g. a previous download) —
+                // drop the just-downloaded source file and keep the existing one.
+                tracing::info!("cleaned target exists, keeping {} and discarding {}", dst.display(), src.display());
+                let _ = std::fs::remove_file(src);
+            } else {
+                tracing::info!("renaming {} -> {}", src.display(), dst.display());
+                let _ = std::fs::rename(src, dst);
+            }
+            new_path
+        });
+
+        Ok(saved_path)
     }
 
     fn build_base_command(&self) -> Vec<String> {
@@ -235,16 +323,16 @@ impl YtDlpDownloader {
         cmd.push(self.ytdlp_path.clone());
         cmd.push("--no-warnings".to_string());
         cmd.push("--no-color".to_string());
+        // Force UTF-8 output. Without this, yt-dlp (Python) writes stdout in
+        // the system locale (e.g. GBK on Chinese Windows), which fails with
+        // "[Errno 22] Invalid argument" when stdout is a pipe (no console).
+        // PYTHONUTF8=1 is not enough for the PyInstaller-built yt-dlp.exe.
+        cmd.push("--encoding".to_string());
+        cmd.push("utf-8".to_string());
 
-        if ProxyConfig::is_enabled() {
-            let proxy_arg = ProxyConfig::to_cli_args();
-            if !proxy_arg.is_empty() {
-                let parts: Vec<&str> = proxy_arg.splitn(2, ' ').collect();
-                if parts.len() == 2 {
-                    cmd.push(parts[0].to_string());
-                    cmd.push(parts[1].to_string());
-                }
-            }
+        if let Some(proxy_url) = ProxyConfig::to_proxy_url() {
+            cmd.push("--proxy".to_string());
+            cmd.push(proxy_url);
         }
 
         // Cookies are added by the caller (fetch_video_info / download),

@@ -16,6 +16,16 @@ export async function fetchVideoInfo(url: string): Promise<VideoInfo> {
   return invoke("fetch_video_info", { url });
 }
 
+export interface DownloadStatus {
+  downloaded: boolean;
+  downloaded_at: number | null;
+  file_path: string | null;
+}
+
+export async function checkVideoDownloaded(videoId: string): Promise<DownloadStatus> {
+  return invoke("check_video_downloaded", { videoId });
+}
+
 export async function startDownload(config: DownloadConfig): Promise<boolean> {
   return invoke("start_download", { config });
 }
@@ -94,8 +104,12 @@ export async function acceptDisclaimer(): Promise<void> {
 
 // --- Proxy ---
 
-export async function testProxy(host: string, port: number): Promise<ProxyTestResult> {
-  return invoke("test_proxy", { host, port });
+export async function testProxy(
+  host: string,
+  port: number,
+  scheme?: string
+): Promise<ProxyTestResult> {
+  return invoke("test_proxy", { host, port, scheme });
 }
 
 export async function getProxyStatus(): Promise<ProxyStatus> {
@@ -160,6 +174,10 @@ export async function getConfigDir(): Promise<string> {
 
 export async function openConfigDir(): Promise<void> {
   return invoke("open_config_dir");
+}
+
+export async function openDownloadDir(): Promise<void> {
+  return invoke("open_download_dir");
 }
 
 export async function quitApp(): Promise<void> {

@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct VideoInfo {
+    /// Video identifier (set by parser; empty when unknown).
+    #[serde(default)]
+    pub id: String,
     pub url: String,
     #[serde(default)]
     pub title: Option<String>,
@@ -23,6 +26,17 @@ pub struct VideoInfo {
     pub webpage_url: Option<String>,
     #[serde(default)]
     pub formats: Vec<Format>,
+    // ===== Download status (filled by the command layer, not by yt-dlp) =====
+    /// Whether this video has already been downloaded (record exists AND the
+    /// saved file still exists on disk).
+    #[serde(default)]
+    pub downloaded: bool,
+    /// Unix timestamp of the previous download, if any.
+    #[serde(default)]
+    pub downloaded_at: Option<i64>,
+    /// Absolute path of the previously saved file, if any.
+    #[serde(default)]
+    pub download_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -4,6 +4,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadConfig {
     pub url: String,
+    /// Video identifier, filled by the frontend after parsing. Used to record
+    /// the download in the history so repeat downloads can be detected.
+    #[serde(default)]
+    pub video_id: Option<String>,
     #[serde(default = "default_format")]
     pub format_id: String,
     #[serde(default = "default_output_dir")]
@@ -44,6 +48,7 @@ impl DownloadConfig {
     pub fn new(url: String) -> Self {
         Self {
             url,
+            video_id: None,
             format_id: default_format(),
             output_dir: default_output_dir(),
             output_template: default_output_template(),
@@ -86,6 +91,9 @@ pub struct AppSettings {
     pub proxy_host: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proxy_port: Option<u32>,
+    /// Proxy scheme, e.g. "http" / "socks5" / "https".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proxy_scheme: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cookies_from_browser: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

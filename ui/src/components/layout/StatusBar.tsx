@@ -5,7 +5,7 @@ import { useToolStatus } from "../../hooks/useToolStatus";
 import { Activity } from "lucide-react";
 
 export default function StatusBar() {
-  const { ytStatus, ffStatus } = useToolStatus();
+  const { ytStatus, ffStatus, hasYtUpdate, hasFfUpdate } = useToolStatus();
   const [pxStatus, setPxStatus] = useState<ProxyStatus | null>(null);
 
   const refreshProxyStatus = () => {
@@ -24,11 +24,15 @@ export default function StatusBar() {
       <StatusBadge
         label="yt-dlp"
         ok={ytStatus.available}
+        update={hasYtUpdate}
+        redWhenOff
         detail={ytStatus.version ?? "?"}
       />
       <StatusBadge
         label="ffmpeg"
         ok={ffStatus.available}
+        update={hasFfUpdate}
+        redWhenOff
         detail={ffStatus.version ?? (ffStatus.available ? "?" : "N/A")}
       />
       <div className="flex-1" />
@@ -41,12 +45,33 @@ export default function StatusBar() {
   );
 }
 
-function StatusBadge({ label, ok, detail }: { label: string; ok: boolean; detail: string }) {
+function StatusBadge({
+  label,
+  ok,
+  update,
+  detail,
+  redWhenOff = false,
+}: {
+  label: string;
+  ok: boolean;
+  update?: boolean;
+  detail: string;
+  redWhenOff?: boolean;
+}) {
+  // Dot color priority: has update → amber, available → green,
+  // otherwise red for tools (redWhenOff) or grey (e.g. proxy off).
+  const dotColor = update
+    ? "bg-amber-500"
+    : ok
+      ? "bg-emerald-500"
+      : redWhenOff
+        ? "bg-red-500"
+        : "bg-zinc-300";
   return (
     <div className="flex items-center gap-1.5">
       <span className="text-zinc-400">{label}</span>
       <span className="flex items-center gap-1">
-        <span className={`inline-block w-1.5 h-1.5 rounded-full ${ok ? "bg-emerald-500" : "bg-zinc-300"}`} />
+        <span className={`inline-block w-1.5 h-1.5 rounded-full ${dotColor}`} />
         <span className={ok ? "text-zinc-700 font-medium" : "text-zinc-400"}>
           {detail}
         </span>

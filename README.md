@@ -1,4 +1,4 @@
-# XDownload v2.0
+# XDownload v2.5
 
 基于 [yt-dlp](https://github.com/yt-dlp/yt-dlp) 的跨平台桌面视频下载器，使用 Rust + Tauri v2 构建。
 
@@ -65,7 +65,7 @@ cargo tauri dev
 .\build.bat
 
 # 产物位置
-#   NSIS 安装包 → src-tauri\target\release\bundle\nsis\XDownload_2.0.0_x64-setup.exe
+#   NSIS 安装包 → src-tauri\target\release\bundle\nsis\XDownload_2.5.0_x64-setup.exe
 #   MSI 安装包  → src-tauri\target\release\bundle\msi\
 ```
 

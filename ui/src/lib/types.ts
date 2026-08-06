@@ -16,6 +16,7 @@ export interface Format {
 }
 
 export interface VideoInfo {
+  id: string;
   url: string;
   title: string | null;
   description: string | null;
@@ -26,12 +27,25 @@ export interface VideoInfo {
   like_count: number;
   webpage_url: string | null;
   formats: Format[];
+  // Download status (filled by the backend command layer)
+  downloaded: boolean;
+  downloaded_at: number | null;
+  download_path: string | null;
+}
+
+// --- Download Status (backend check_video_downloaded) ---
+
+export interface DownloadStatus {
+  downloaded: boolean;
+  downloaded_at: number | null;
+  file_path: string | null;
 }
 
 // --- Download Config ---
 
 export interface DownloadConfig {
   url: string;
+  video_id: string | null;
   format_id: string;
   output_dir: string;
   output_template: string;
@@ -65,6 +79,7 @@ export interface AppSettings {
   download_dir?: string;
   proxy_host?: string;
   proxy_port?: number;
+  proxy_scheme?: string;
   cookies_from_browser?: string;
   cookies_file?: string;
   lang?: string;
