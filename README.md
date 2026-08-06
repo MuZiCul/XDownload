@@ -58,4 +58,4 @@ pnpm dev          # development (hot reload)
 
 [MIT](LICENSE) © MuZiCul
 
-Star ⭐ if this saved you a trip to a sketchy download site.
+Star ⭐ if this tool helped you solve a little problem.
