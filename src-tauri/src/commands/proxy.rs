@@ -2,16 +2,21 @@ use crate::services::proxy::ProxyConfig;
 
 /// Test proxy connectivity to x.com
 #[tauri::command]
-pub async fn test_proxy(host: String, port: u32) -> Result<serde_json::Value, String> {
+pub async fn test_proxy(
+    host: String,
+    port: u32,
+    scheme: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let scheme = scheme.unwrap_or_else(|| "http".to_string());
     // Temporarily set the proxy for testing
     let port_u16 = port.min(65535) as u16;
-    ProxyConfig::set_proxy(&host, port_u16);
+    ProxyConfig::set_proxy_full(&host, port_u16, &scheme);
 
     let result = ProxyConfig::test_proxy().await;
 
     if result.success {
         // Save on successful test
-        let _ = crate::services::config::ConfigManager::save_proxy(&host, port);
+        let _ = crate::services::config::ConfigManager::save_proxy(&host, port, &scheme);
     }
 
     Ok(serde_json::json!({

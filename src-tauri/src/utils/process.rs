@@ -60,6 +60,25 @@ pub fn unregister_child_pid(pid: Option<u32>) {
     }
 }
 
+/// Kill a single process and its whole process tree (e.g. yt-dlp + spawned
+/// ffmpeg merge). On Windows uses `taskkill /T /F` which also kills children.
+pub fn kill_process_tree(pid: u32) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+            .output();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .output();
+    }
+}
+
 /// Kill every registered child process (process tree on Windows).
 pub fn kill_all_children() {
     let pids: Vec<u32> = running_children()
@@ -67,20 +86,7 @@ pub fn kill_all_children() {
         .map(|s| s.iter().copied().collect())
         .unwrap_or_default();
     for pid in pids {
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            let _ = std::process::Command::new("taskkill")
-                .args(["/PID", &pid.to_string(), "/T", "/F"])
-                .creation_flags(0x08000000) // CREATE_NO_WINDOW
-                .output();
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = std::process::Command::new("kill")
-                .args(["-9", &pid.to_string()])
-                .output();
-        }
+        kill_process_tree(pid);
     }
     let _ = running_children().lock().map(|mut s| s.clear());
 }
@@ -171,12 +177,12 @@ pub async fn is_ffmpeg_available() -> bool {
 
 /// Execute a command with no timeout
 pub async fn execute(args: &[&str]) -> Result<CommandResult> {
-    execute_inner(args, None::<LineCallback>, None::<LineCallback>, None, true).await
+    execute_inner(args, None::<LineCallback>, None::<LineCallback>, None, true, None).await
 }
 
 /// Execute a command with a timeout in seconds
 pub async fn execute_with_timeout(args: &[&str], timeout_secs: u64) -> Result<CommandResult> {
-    execute_inner(args, None::<LineCallback>, None::<LineCallback>, Some(timeout_secs), true).await
+    execute_inner(args, None::<LineCallback>, None::<LineCallback>, Some(timeout_secs), true, None).await
 }
 
 /// Execute a command with optional stdout/stderr callbacks and timeout.
@@ -189,7 +195,21 @@ pub async fn execute_with_callbacks(
     timeout_secs: Option<u64>,
     capture_stdout: bool,
 ) -> Result<CommandResult> {
-    execute_inner(args, stdout_cb, stderr_cb, timeout_secs, capture_stdout).await
+    execute_inner(args, stdout_cb, stderr_cb, timeout_secs, capture_stdout, None).await
+}
+
+/// Same as [`execute_with_callbacks`], but invokes `on_spawned` right after the
+/// child process is spawned so the caller can retain its PID (e.g. to kill it
+/// on cancellation).
+pub async fn execute_with_callbacks_pid(
+    args: &[&str],
+    stdout_cb: Option<LineCallback>,
+    stderr_cb: Option<LineCallback>,
+    timeout_secs: Option<u64>,
+    capture_stdout: bool,
+    on_spawned: impl FnOnce(u32) + Send + 'static,
+) -> Result<CommandResult> {
+    execute_inner(args, stdout_cb, stderr_cb, timeout_secs, capture_stdout, Some(Box::new(on_spawned))).await
 }
 
 async fn execute_inner(
@@ -198,6 +218,7 @@ async fn execute_inner(
     stderr_cb: Option<LineCallback>,
     timeout_secs: Option<u64>,
     capture_stdout: bool,
+    on_spawned: Option<Box<dyn FnOnce(u32) + Send + 'static>>,
 ) -> Result<CommandResult> {
     if args.is_empty() {
         return Err(anyhow::anyhow!("empty command"));
@@ -217,6 +238,10 @@ async fn execute_inner(
     // "Invalid argument".  PYTHONUTF8=1 forces Python ≥3.7 to use
     // UTF-8 mode on Windows (more reliable than PYTHONIOENCODING).
     cmd.env("PYTHONUTF8", "1");
+    // Belt-and-braces: force the child's stdin/stdout/stderr to UTF-8 so
+    // piped stdout does not hit GBK "Invalid argument" errors on Chinese
+    // Windows (the built yt-dlp.exe may ignore PYTHONUTF8 alone).
+    cmd.env("PYTHONIOENCODING", "utf-8");
 
     // Don't show console window on Windows
     #[cfg(windows)]
@@ -230,6 +255,11 @@ async fn execute_inner(
 
     let child_pid = child.id();
     register_child_pid(child_pid);
+    if let Some(cb) = on_spawned {
+        if let Some(pid) = child_pid {
+            cb(pid);
+        }
+    }
 
     let stdout_opt = child.stdout.take();
     let stderr = child.stderr.take()

@@ -10,12 +10,26 @@ fn state() -> &'static Mutex<ProxyState> {
 }
 
 /// Internal mutable proxy state.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 struct ProxyState {
+    /// Proxy URL scheme, e.g. "http", "socks5", "https".
+    scheme: String,
     host: String,
     port: u16,
     enabled: bool,
     from_system_proxy: bool,
+}
+
+impl Default for ProxyState {
+    fn default() -> Self {
+        Self {
+            scheme: "http".to_string(),
+            host: String::new(),
+            port: 0,
+            enabled: false,
+            from_system_proxy: false,
+        }
+    }
 }
 
 // ==================== ProxyTestResult ====================
@@ -45,13 +59,28 @@ impl ProxyTestResult {
 pub struct ProxyConfig;
 
 impl ProxyConfig {
-    /// Manual proxy override.
+    /// Manual proxy override (HTTP scheme).
     pub fn set_proxy(host: &str, port: u16) {
+        Self::set_proxy_full(host, port, "http");
+    }
+
+    /// Manual proxy override with an explicit scheme ("http", "socks5", ...).
+    pub fn set_proxy_full(host: &str, port: u16, scheme: &str) {
         let mut s = state().lock().unwrap();
         s.host = host.to_string();
         s.port = port;
+        s.scheme = if scheme.is_empty() {
+            "http".to_string()
+        } else {
+            scheme.to_string()
+        };
         s.enabled = true;
         s.from_system_proxy = false;
+    }
+
+    /// Get the configured proxy scheme ("http", "socks5", ...).
+    pub fn get_proxy_scheme() -> String {
+        state().lock().unwrap().scheme.clone()
     }
 
     /// Disable proxy (but keep settings).
@@ -80,31 +109,32 @@ impl ProxyConfig {
         state().lock().unwrap().from_system_proxy
     }
 
-    /// Returns "http://host:port" format for display.
+    /// Returns "scheme://host:port" format for display.
     pub fn get_proxy_string() -> String {
         let s = state().lock().unwrap();
         if !s.enabled || s.host.is_empty() {
             return "none".to_string();
         }
-        format!("http://{}:{}", s.host, s.port)
+        format!("{}://{}:{}", s.scheme, s.host, s.port)
     }
 
-    /// Returns "--proxy http://host:port" for yt-dlp CLI.
+    /// Returns "--proxy scheme://host:port" for yt-dlp CLI (kept for
+    /// compatibility; prefer [`Self::to_proxy_url`] for direct use).
     pub fn to_cli_args() -> String {
         let s = state().lock().unwrap();
         if !s.enabled || s.host.is_empty() {
             return String::new();
         }
-        format!("--proxy http://{}:{}", s.host, s.port)
+        format!("--proxy {}://{}:{}", s.scheme, s.host, s.port)
     }
 
-    /// Returns just "http://host:port" (the proxy URL portion, no CLI flag).
+    /// Returns just "scheme://host:port" (the proxy URL portion, no CLI flag).
     pub fn to_proxy_url() -> Option<String> {
         let s = state().lock().unwrap();
         if !s.enabled || s.host.is_empty() {
             return None;
         }
-        Some(format!("http://{}:{}", s.host, s.port))
+        Some(format!("{}://{}:{}", s.scheme, s.host, s.port))
     }
 
     /// Build a reqwest::Proxy from the current configuration.
@@ -162,10 +192,11 @@ impl ProxyConfig {
         for var in &["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] {
             if let Ok(val) = std::env::var(var) {
                 if !val.is_empty() {
-                    if let Some((host, port)) = parse_proxy_url(&val) {
+                    if let Some((scheme, host, port)) = parse_proxy_url(&val) {
                         let mut s = state().lock().unwrap();
                         s.host = host;
                         s.port = port;
+                        s.scheme = scheme;
                         s.enabled = true;
                         return;
                     }
@@ -277,15 +308,15 @@ impl ProxyConfig {
     /// Test whether the configured proxy can reach x.com.
     /// Returns a ProxyTestResult with success, HTTP status, elapsed_ms, and message.
     pub async fn test_proxy() -> ProxyTestResult {
-        let (host, port) = {
+        let (scheme, host, port) = {
             let s = state().lock().unwrap();
             if !s.enabled || s.host.is_empty() {
                 return ProxyTestResult::new(false, -1, 0, "proxy not enabled".to_string());
             }
-            (s.host.clone(), s.port)
+            (s.scheme.clone(), s.host.clone(), s.port)
         };
 
-        let proxy_url = format!("http://{}:{}", host, port);
+        let proxy_url = format!("{}://{}:{}", scheme, host, port);
         let proxy = match reqwest::Proxy::all(&proxy_url) {
             Ok(p) => p,
             Err(e) => {
@@ -340,15 +371,16 @@ impl ProxyConfig {
 
 // ==================== Helpers ====================
 
-/// Parse a proxy URL like "http://host:port" or "host:port" into (host, port).
-fn parse_proxy_url(url: &str) -> Option<(String, u16)> {
-    let stripped = url
-        .trim()
-        .strip_prefix("http://")
-        .or_else(|| url.trim().strip_prefix("https://"))
-        .unwrap_or(url)
-        .trim_end_matches('/');
-    parse_host_port(stripped)
+/// Parse a proxy URL like "socks5://host:port" or "host:port" into
+/// (scheme, host, port). Scheme defaults to "http" when absent.
+fn parse_proxy_url(url: &str) -> Option<(String, String, u16)> {
+    let trimmed = url.trim().trim_end_matches('/');
+    let (scheme, rest) = match trimmed.find("://") {
+        Some(idx) => (trimmed[..idx].to_lowercase(), &trimmed[idx + 3..]),
+        None => ("http".to_string(), trimmed),
+    };
+    let (host, port) = parse_host_port(rest)?;
+    Some((scheme, host, port))
 }
 
 /// Parse "host:port" into (host, port).
@@ -388,15 +420,19 @@ mod tests {
     fn test_parse_proxy_url() {
         assert_eq!(
             parse_proxy_url("http://127.0.0.1:7890"),
-            Some(("127.0.0.1".to_string(), 7890))
+            Some(("http".to_string(), "127.0.0.1".to_string(), 7890))
         );
         assert_eq!(
             parse_proxy_url("https://proxy.example.com:3128/"),
-            Some(("proxy.example.com".to_string(), 3128))
+            Some(("https".to_string(), "proxy.example.com".to_string(), 3128))
+        );
+        assert_eq!(
+            parse_proxy_url("socks5://127.0.0.1:1080"),
+            Some(("socks5".to_string(), "127.0.0.1".to_string(), 1080))
         );
         assert_eq!(
             parse_proxy_url("10.0.0.1:1080"),
-            Some(("10.0.0.1".to_string(), 1080))
+            Some(("http".to_string(), "10.0.0.1".to_string(), 1080))
         );
     }
 }

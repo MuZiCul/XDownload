@@ -15,6 +15,14 @@ function formatNumber(n: number): string {
   return n.toLocaleString();
 }
 
+function formatDateTime(ts: number): string {
+  const d = new Date(ts * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(
+    d.getHours()
+  )}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
 type Props = {
   info: VideoInfo | null;
 };
@@ -43,6 +51,15 @@ export default function VideoInfoCard({ info }: Props) {
             <InfoRow label="播放" value={info ? formatNumber(info.view_count) : "—"} />
             <InfoRow label="点赞" value={info ? formatNumber(info.like_count) : "—"} />
           </div>
+
+          {info?.downloaded && (
+            <div className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-0.5">
+              ✓ 已下载
+              {info.downloaded_at
+                ? ` · ${formatDateTime(info.downloaded_at)}`
+                : ""}
+            </div>
+          )}
         </div>
       </div>
     </div>

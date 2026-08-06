@@ -57,6 +57,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::download::fetch_video_info,
+            commands::download::check_video_downloaded,
             commands::download::start_download,
             commands::download::cancel_download,
             commands::settings::load_settings,
@@ -91,6 +92,7 @@ pub fn run() {
             commands::bootstrap::open_root_dir,
             commands::bootstrap::get_config_dir,
             commands::bootstrap::open_config_dir,
+            commands::bootstrap::open_download_dir,
             commands::bootstrap::quit_app,
             commands::bootstrap::get_uninstall_info,
             commands::bootstrap::uninstall_app,

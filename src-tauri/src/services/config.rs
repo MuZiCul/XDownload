@@ -99,10 +99,11 @@ impl ConfigManager {
 
     // ==================== Proxy ====================
 
-    pub fn save_proxy(host: &str, port: u32) -> Result<()> {
+    pub fn save_proxy(host: &str, port: u32, scheme: &str) -> Result<()> {
         Self::merge_and_save(|cfg| {
             cfg.proxy_host = Some(host.to_string());
             cfg.proxy_port = Some(port);
+            cfg.proxy_scheme = Some(scheme.to_string());
         })
     }
 
@@ -110,6 +111,7 @@ impl ConfigManager {
         Self::merge_and_save(|cfg| {
             cfg.proxy_host = None;
             cfg.proxy_port = None;
+            cfg.proxy_scheme = None;
         })
     }
 
@@ -121,7 +123,12 @@ impl ConfigManager {
         let cfg = Self::load();
         match (cfg.proxy_host, cfg.proxy_port) {
             (Some(host), Some(port)) if !host.is_empty() => {
-                crate::services::proxy::ProxyConfig::set_proxy(&host, port.min(65535) as u16);
+                let scheme = cfg.proxy_scheme.as_deref().unwrap_or("http");
+                crate::services::proxy::ProxyConfig::set_proxy_full(
+                    &host,
+                    port.min(65535) as u16,
+                    scheme,
+                );
                 true
             }
             _ => false,

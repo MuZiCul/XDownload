@@ -48,6 +48,7 @@ export default function SettingsPage() {
             key={`proxy-${applyKey}`}
             host={settings.proxy_host}
             port={settings.proxy_port}
+            scheme={settings.proxy_scheme}
             onChange={(host, port) =>
               setSettings((s) => ({ ...s, proxy_host: host, proxy_port: port }))
             }

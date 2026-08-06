@@ -58,6 +58,29 @@ pub fn open_config_dir(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| format!("failed to open config dir: {}", e))
 }
 
+/// Open the download directory in the system file manager.
+/// Uses the configured absolute `download_dir` when present, otherwise the
+/// default `downloads/` folder. Creates the directory if it does not exist.
+#[tauri::command]
+pub fn open_download_dir(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let dir = match crate::services::config::ConfigManager::load_download_dir() {
+        Some(d) if !d.is_empty() && std::path::Path::new(&d).is_absolute() => {
+            std::path::PathBuf::from(d)
+        }
+        _ => crate::utils::app_home::AppHome::downloads_dir(),
+    };
+
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        return Err(format!("failed to create download dir: {}", e));
+    }
+
+    app.opener()
+        .open_path(dir.to_string_lossy().to_string(), None::<&str>)
+        .map_err(|e| format!("failed to open download dir: {}", e))
+}
+
 /// Clean up running child processes (including active downloads) and quit the app
 #[tauri::command]
 pub fn quit_app(app: tauri::AppHandle) {

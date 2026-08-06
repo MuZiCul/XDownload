@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { saveSettings, loadSettings } from "../../lib/bindings";
+import { saveSettings, loadSettings, openDownloadDir } from "../../lib/bindings";
 import type { AppSettings } from "../../lib/types";
 import { toast } from "sonner";
-import { Save } from "lucide-react";
+import { Save, FolderOpen } from "lucide-react";
 
 type Props = {
   dir: string;
@@ -18,6 +18,14 @@ export default function DirSetting({ dir, onChange }: Props) {
   const handleBrowse = async () => {
     const selected = await open({ directory: true, defaultPath: dir });
     if (selected) onChange(selected);
+  };
+
+  const handleOpen = async () => {
+    try {
+      await openDownloadDir();
+    } catch (err: any) {
+      toast.error(`打开失败: ${err}`);
+    }
   };
 
   const handleSave = async () => {
@@ -48,6 +56,10 @@ export default function DirSetting({ dir, onChange }: Props) {
         />
         <button className="btn" onClick={handleBrowse}>
           浏览
+        </button>
+        <button className="btn flex items-center gap-1" onClick={handleOpen}>
+          <FolderOpen size={13} />
+          打开
         </button>
         <button
           className="btn flex items-center gap-1"

@@ -8,6 +8,7 @@ pub fn parse_video_json(json: &str) -> Result<VideoInfo, String> {
         .map_err(|e| format!("JSON parse error: {}", e))?;
 
     let mut info = VideoInfo {
+        id: root["id"].as_str().unwrap_or("").to_string(),
         url: root["webpage_url"]
             .as_str()
             .or_else(|| root["original_url"].as_str())
@@ -23,6 +24,10 @@ pub fn parse_video_json(json: &str) -> Result<VideoInfo, String> {
         like_count: root["like_count"].as_i64().unwrap_or(0),
         webpage_url: root["webpage_url"].as_str().map(|s| s.to_string()),
         formats: vec![],
+        // Download status — filled by the command layer, not by yt-dlp.
+        downloaded: false,
+        downloaded_at: None,
+        download_path: None,
     };
 
     // Parse formats array

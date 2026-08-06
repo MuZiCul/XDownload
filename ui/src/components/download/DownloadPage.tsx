@@ -11,6 +11,7 @@ import DownloadControls from "./DownloadControls";
 function defaultConfig(): DownloadConfig {
   return {
     url: "",
+    video_id: null,
     format_id: "best",
     output_dir: "downloads",
     output_template: "%(title)s.%(ext)s",
@@ -65,7 +66,7 @@ export default function DownloadPage() {
     },
     onSuccess: (data) => {
       setVideoInfo(data);
-      setConfig((c) => ({ ...c, url: data.url }));
+      setConfig((c) => ({ ...c, url: data.url, video_id: data.id }));
       toast.success("获取成功", { id: "fetch-video" });
     },
     onError: (err: any) => {
@@ -101,6 +102,19 @@ export default function DownloadPage() {
           videoInfo={videoInfo}
           onConfigChange={setConfig}
           onFormatQuick={handleFormatQuick}
+          onDownloadComplete={() => {
+            // Mark the video as downloaded locally so the button becomes
+            // "重新下载" and the info card shows the completion time.
+            setVideoInfo((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    downloaded: true,
+                    downloaded_at: Math.floor(Date.now() / 1000),
+                  }
+                : prev
+            );
+          }}
         />
       </div>
     </div>

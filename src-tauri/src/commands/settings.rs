@@ -116,7 +116,12 @@ pub fn apply_and_persist_settings(
     // Apply proxy to runtime
     if let (Some(ref host), Some(port)) = (&settings.proxy_host, settings.proxy_port) {
         if !host.is_empty() {
-            crate::services::proxy::ProxyConfig::set_proxy(host, port.min(65535) as u16);
+            let scheme = settings.proxy_scheme.as_deref().unwrap_or("http");
+            crate::services::proxy::ProxyConfig::set_proxy_full(
+                host,
+                port.min(65535) as u16,
+                scheme,
+            );
         }
     }
     // Apply cookies to runtime
@@ -149,7 +154,12 @@ pub fn apply_default_config(
     // Apply to runtime
     if let (Some(ref host), Some(port)) = (&defaults.proxy_host, defaults.proxy_port) {
         if !host.is_empty() {
-            crate::services::proxy::ProxyConfig::set_proxy(host, port.min(65535) as u16);
+            let scheme = defaults.proxy_scheme.as_deref().unwrap_or("http");
+            crate::services::proxy::ProxyConfig::set_proxy_full(
+                host,
+                port.min(65535) as u16,
+                scheme,
+            );
         }
     }
     if let Some(ref browser) = defaults.cookies_from_browser {

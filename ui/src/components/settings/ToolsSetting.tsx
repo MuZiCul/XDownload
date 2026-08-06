@@ -8,7 +8,7 @@ import {
 import { listen } from "@tauri-apps/api/event";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { toast } from "sonner";
-import { Ban, FolderOpen, HelpCircle } from "lucide-react";
+import { Ban, FolderOpen, HelpCircle, RefreshCw } from "lucide-react";
 
 type Phase =
   | { kind: "checking" }
@@ -30,10 +30,24 @@ function Dots() {
 }
 
 export default function ToolsSetting() {
-  const { ytStatus, ffStatus, download } = useToolStatus();
+  const { ytStatus, ffStatus, hasYtUpdate, hasFfUpdate, refresh, download } = useToolStatus();
   const [phase, setPhase] = useState<Phase>(null);
   const [progress, setProgress] = useState(0);
+  const [checking, setChecking] = useState(false);
   const unlistenRef = useRef<UnlistenFn | null>(null);
+
+  const handleCheckUpdate = async () => {
+    if (checking) return;
+    setChecking(true);
+    try {
+      await refresh();
+      toast.success("检查完成");
+    } catch (err: any) {
+      toast.error(`检查失败: ${err}`);
+    } finally {
+      setChecking(false);
+    }
+  };
 
   // Clean up listener on unmount
   useEffect(() => {
@@ -109,27 +123,31 @@ export default function ToolsSetting() {
       <div className="flex items-center gap-2 flex-wrap">
         <button
           className="btn"
-          disabled={ytStatus.available || phase !== null}
+          disabled={(ytStatus.available && !hasYtUpdate) || phase !== null}
           onClick={() => handleDownload("yt-dlp")}
         >
           yt-dlp:{" "}
-          {ytStatus.available
-            ? "Latest"
-            : phase?.kind === "downloading" && (phase as any).tool === "yt-dlp"
-              ? "..."
-              : "Download"}
+          {phase?.kind === "downloading" && (phase as any).tool === "yt-dlp"
+            ? "..."
+            : !ytStatus.available
+              ? "Download"
+              : hasYtUpdate
+                ? "Update"
+                : "Latest"}
         </button>
         <button
           className="btn"
-          disabled={ffStatus.available || phase !== null}
+          disabled={(ffStatus.available && !hasFfUpdate) || phase !== null}
           onClick={() => handleDownload("ffmpeg")}
         >
           ffmpeg:{" "}
-          {ffStatus.available
-            ? "Latest"
-            : phase?.kind === "downloading" && (phase as any).tool === "ffmpeg"
-              ? "..."
-              : "Download"}
+          {phase?.kind === "downloading" && (phase as any).tool === "ffmpeg"
+            ? "..."
+            : !ffStatus.available
+              ? "Download"
+              : hasFfUpdate
+                ? "Update"
+                : "Latest"}
         </button>
         <button
           className="btn flex items-center gap-1"
@@ -137,6 +155,14 @@ export default function ToolsSetting() {
         >
           <HelpCircle size={14} />
           下载指南
+        </button>
+        <button
+          className="btn flex items-center gap-1"
+          onClick={handleCheckUpdate}
+          disabled={checking || phase !== null}
+        >
+          <RefreshCw size={13} className={checking ? "animate-spin" : ""} />
+          {checking ? "检查中..." : "检查更新"}
         </button>
       </div>
 
