@@ -39,7 +39,7 @@
 
 从 [Releases](https://github.com/MuZiCul/XDownload/releases) 下载最新安装包。
 
-- **Windows**: `XDownload_2.5.0_x64-setup.exe` (NSIS) / `.msi`
+- **Windows**: `XDownload_2.5.1_x64-setup.exe` (NSIS) / `.msi`
 - **macOS**: `.dmg`
 - **Linux**: `.deb` / `.AppImage`
 

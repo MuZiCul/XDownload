@@ -156,8 +156,6 @@ impl YtDlpDownloader {
         cmd.push(config.format_id.clone());
         cmd.push("-o".to_string());
         cmd.push(config.output_path());
-        cmd.push("--retries".to_string());
-        cmd.push(config.retries.to_string());
         cmd.push("--socket-timeout".to_string());
         cmd.push(config.socket_timeout.to_string());
         cmd.push("--no-playlist".to_string());

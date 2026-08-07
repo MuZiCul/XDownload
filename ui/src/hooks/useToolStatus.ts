@@ -8,13 +8,14 @@ import {
   downloadFfmpeg,
 } from "../lib/bindings";
 import type { ToolStatus } from "../lib/types";
+import type { YtdlpUpdateResult, FfmpegUpdateResult } from "../lib/bindings";
 
 // Shared singleton state — only fetched once per app lifetime
 let cachedYtStatus: ToolStatus | null = null;
 let cachedFfStatus: ToolStatus | null = null;
-// Whether an update is available (from check_*_update, compares versions)
-let cachedYtUpdate = false;
-let cachedFfUpdate = false;
+// Full update-check results (carry local/latest versions, not_installed, error)
+let cachedYtUpdate: YtdlpUpdateResult | null = null;
+let cachedFfUpdate: FfmpegUpdateResult | null = null;
 let pendingPromise: Promise<unknown> | null = null;
 
 const listeners = new Set<() => void>();
@@ -23,25 +24,37 @@ function notify() {
   listeners.forEach((fn) => fn());
 }
 
+async function checkAll(): Promise<{
+  yt: ToolStatus;
+  ff: ToolStatus;
+  ytUp: YtdlpUpdateResult | null;
+  ffUp: FfmpegUpdateResult | null;
+}> {
+  // Sequential availability check first, then update checks that REUSE the
+  // already-fetched local version — this avoids spawning a second yt-dlp
+  // process at startup (which both slowed things down and doubled the
+  // chance of a cold-start timeout).
+  const yt = await checkYtdlp();
+  const ff = await checkFfmpeg();
+  const [ytUp, ffUp] = await Promise.all([
+    checkYtdlpUpdate(yt.version ?? undefined).catch(() => null),
+    checkFfmpegUpdate().catch(() => null),
+  ]);
+  return { yt, ff, ytUp, ffUp };
+}
+
 function fetchAll(): Promise<unknown> {
   if (!pendingPromise) {
-    pendingPromise = Promise.all([
-      checkYtdlp(),
-      checkFfmpeg(),
-      checkYtdlpUpdate().catch(() => null),
-      checkFfmpegUpdate().catch(() => null),
-    ]).then(
-      ([yt, ff, ytUp, ffUp]) => {
-        cachedYtStatus = yt as ToolStatus;
-        cachedFfStatus = ff as ToolStatus;
-        cachedYtUpdate = !!(ytUp as { has_update?: boolean } | null)?.has_update;
-        cachedFfUpdate = !!(ffUp as { has_update?: boolean } | null)?.has_update;
-        notify();
-      },
-      () => {
-        pendingPromise = null; // allow retry on next access
-      },
-    );
+    pendingPromise = (async () => {
+      const res = await checkAll();
+      cachedYtStatus = res.yt;
+      cachedFfStatus = res.ff;
+      cachedYtUpdate = res.ytUp;
+      cachedFfUpdate = res.ffUp;
+      notify();
+    })().catch(() => {
+      pendingPromise = null; // allow retry on next access
+    });
   }
   return pendingPromise;
 }
@@ -67,17 +80,13 @@ export function useToolStatus() {
     // instead of flickering to "not installed" (which happens when the cache
     // is cleared first and the fallback `{ available: false }` is rendered).
     pendingPromise = null;
-    const [yt, ff, ytUp, ffUp] = await Promise.all([
-      checkYtdlp(),
-      checkFfmpeg(),
-      checkYtdlpUpdate().catch(() => null),
-      checkFfmpegUpdate().catch(() => null),
-    ]);
-    cachedYtStatus = yt;
-    cachedFfStatus = ff;
-    cachedYtUpdate = !!ytUp?.has_update;
-    cachedFfUpdate = !!ffUp?.has_update;
+    const res = await checkAll();
+    cachedYtStatus = res.yt;
+    cachedFfStatus = res.ff;
+    cachedYtUpdate = res.ytUp;
+    cachedFfUpdate = res.ffUp;
     notify();
+    return res;
   }, []);
 
   const download = useCallback(
@@ -95,8 +104,10 @@ export function useToolStatus() {
   return {
     ytStatus: cachedYtStatus ?? { available: false, version: null },
     ffStatus: cachedFfStatus ?? { available: false, version: null },
-    hasYtUpdate: cachedYtUpdate,
-    hasFfUpdate: cachedFfUpdate,
+    ytUpdate: cachedYtUpdate,
+    ffUpdate: cachedFfUpdate,
+    hasYtUpdate: !!cachedYtUpdate?.has_update,
+    hasFfUpdate: !!cachedFfUpdate?.has_update,
     refresh,
     download,
   };

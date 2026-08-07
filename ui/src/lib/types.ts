@@ -54,7 +54,6 @@ export interface DownloadConfig {
   embed_thumbnail: boolean;
   write_thumbnail: boolean;
   proxy: string | null;
-  retries: number;
   socket_timeout: number;
   cookies_file: string | null;
   cookies_from_browser: string | null;

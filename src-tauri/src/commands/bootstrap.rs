@@ -81,6 +81,54 @@ pub fn open_download_dir(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| format!("failed to open download dir: {}", e))
 }
 
+/// Open the file manager at the location of a downloaded video file.
+///
+/// When download history knows the file and it still exists on disk, the file
+/// is located/selected in the system file manager (Windows: `explorer /select`).
+/// Otherwise it falls back to opening the download directory.
+#[tauri::command]
+pub fn open_download_path(app: tauri::AppHandle, video_id: String) -> Result<(), String> {
+    let file_path = crate::services::download_history::DownloadHistory::get(&video_id)
+        .and_then(|rec| rec.file_path)
+        .filter(|p| !p.trim().is_empty())
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.exists());
+
+    let Some(path) = file_path else {
+        tracing::info!(
+            "open_download_path: no existing file for '{}', opening download dir",
+            video_id
+        );
+        return open_download_dir(app);
+    };
+
+    #[cfg(windows)]
+    {
+        // `explorer /select,<path>` opens the parent folder and highlights the
+        // file. Pass the path as a single argument and let Rust apply the
+        // standard Windows command-line quoting (spaces inside the path are
+        // quoted automatically). Wrapping in `cmd /C` would re-parse the inner
+        // quotes, split the path and make explorer open "This PC" instead.
+        std::process::Command::new("explorer")
+            .arg(format!("/select,{}", path.display()))
+            .spawn()
+            .map_err(|e| format!("failed to open file location: {}", e))?;
+        tracing::info!(
+            "open_download_path: selecting '{}' in explorer",
+            path.display()
+        );
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        use tauri_plugin_opener::OpenerExt;
+        let dir = path.parent().unwrap_or(&path);
+        app.opener()
+            .open_path(dir.to_string_lossy().to_string(), None::<&str>)
+            .map_err(|e| format!("failed to open file location: {}", e))
+    }
+}
+
 /// Clean up running child processes (including active downloads) and quit the app
 #[tauri::command]
 pub fn quit_app(app: tauri::AppHandle) {
@@ -95,15 +143,31 @@ pub async fn check_ytdlp() -> serde_json::Value {
     let ytdlp = crate::utils::process::find_ytdlp();
     let ytdlp_str = ytdlp.to_str().unwrap_or("yt-dlp");
 
-    match crate::utils::process::execute_with_timeout(&[ytdlp_str, "--version"], 5).await {
-        Ok(result) if result.is_success() && !result.stdout.is_empty() => {
-            let version = result.stdout[0].trim().to_string();
-            serde_json::json!({ "available": true, "version": version })
+    // The PyInstaller-built yt-dlp.exe cold-starts slowly (self-extraction +
+    // antivirus scan) and can exceed a short timeout, falsely reporting
+    // "not installed". Retry once with a generous timeout.
+    for attempt in 0..2 {
+        let result =
+            crate::utils::process::execute_with_timeout(&[ytdlp_str, "--version"], 15).await;
+        if let Ok(result) = result {
+            if result.is_success() && !result.stdout.is_empty() {
+                let version = result.stdout[0].trim().to_string();
+                return serde_json::json!({ "available": true, "version": version });
+            }
         }
-        _ => {
-            serde_json::json!({ "available": false, "version": null })
+        if attempt == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
     }
+
+    // Fallback: the binary exists but we could not read its version (e.g.
+    // transient slowness). Report it as available to avoid a false
+    // "not installed" state in the status bar.
+    if ytdlp.exists() {
+        return serde_json::json!({ "available": true, "version": Option::<String>::None });
+    }
+
+    serde_json::json!({ "available": false, "version": Option::<String>::None })
 }
 
 /// Check if ffmpeg is available and get its version
@@ -115,16 +179,22 @@ pub async fn check_ffmpeg() -> serde_json::Value {
     }
 
     let ffmpeg_str = ffmpeg.to_str().unwrap_or("ffmpeg");
-    match crate::utils::process::execute_with_timeout(&[ffmpeg_str, "-version"], 5).await {
-        Ok(result) if result.is_success() && !result.stdout.is_empty() => {
-            // Parse "ffmpeg version 7.1-essentials_build-..." → "7.1"
-            let version = crate::commands::update::parse_ffmpeg_version_export(&result.stdout[0]);
-            serde_json::json!({ "available": true, "version": version })
+    for attempt in 0..2 {
+        let result =
+            crate::utils::process::execute_with_timeout(&[ffmpeg_str, "-version"], 10).await;
+        if let Ok(result) = result {
+            if result.is_success() && !result.stdout.is_empty() {
+                // Parse "ffmpeg version 7.1-essentials_build-..." → "7.1"
+                let version = crate::commands::update::parse_ffmpeg_version_export(&result.stdout[0]);
+                return serde_json::json!({ "available": true, "version": version });
+            }
         }
-        _ => {
-            serde_json::json!({ "available": false, "version": Option::<String>::None })
+        if attempt == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         }
     }
+
+    serde_json::json!({ "available": false, "version": Option::<String>::None })
 }
 
 /// Download yt-dlp with progress events

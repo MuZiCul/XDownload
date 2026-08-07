@@ -7,6 +7,7 @@ import UrlBar from "./UrlBar";
 import VideoInfoCard from "./VideoInfoCard";
 import FormatTable from "./FormatTable";
 import DownloadControls from "./DownloadControls";
+import { friendlyErrorMessage } from "../../lib/errorMessages";
 
 function defaultConfig(): DownloadConfig {
   return {
@@ -20,7 +21,6 @@ function defaultConfig(): DownloadConfig {
     embed_thumbnail: false,
     write_thumbnail: false,
     proxy: null,
-    retries: 5,
     socket_timeout: 30,
     cookies_file: null,
     cookies_from_browser: null,
@@ -70,7 +70,7 @@ export default function DownloadPage() {
       toast.success("获取成功", { id: "fetch-video" });
     },
     onError: (err: any) => {
-      toast.error(`获取失败: ${err}`, { id: "fetch-video" });
+      toast.error(`获取失败: ${friendlyErrorMessage(err)}`, { id: "fetch-video" });
     },
   });
 
@@ -90,7 +90,7 @@ export default function DownloadPage() {
     <div className="p-3 max-w-[900px] mx-auto">
       <UrlBar onFetch={handleFetch} isLoading={fetchMutation.isPending} />
 
-      <div className="space-y-3" style={{ height: "calc(100vh - 145px)", overflow: "auto" }}>
+      <div className="space-y-3">
         <VideoInfoCard info={videoInfo} />
         <FormatTable
           formats={videoInfo?.formats ?? []}

@@ -8,7 +8,8 @@ import {
 import { listen } from "@tauri-apps/api/event";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { toast } from "sonner";
-import { Ban, FolderOpen, HelpCircle, RefreshCw } from "lucide-react";
+import { Ban, Download, FolderOpen, HelpCircle, RefreshCw } from "lucide-react";
+import type { YtdlpUpdateResult, FfmpegUpdateResult } from "../../lib/bindings";
 
 type Phase =
   | { kind: "checking" }
@@ -34,14 +35,18 @@ export default function ToolsSetting() {
   const [phase, setPhase] = useState<Phase>(null);
   const [progress, setProgress] = useState(0);
   const [checking, setChecking] = useState(false);
+  const [updateResult, setUpdateResult] = useState<{
+    yt: YtdlpUpdateResult | null;
+    ff: FfmpegUpdateResult | null;
+  } | null>(null);
   const unlistenRef = useRef<UnlistenFn | null>(null);
 
   const handleCheckUpdate = async () => {
     if (checking) return;
     setChecking(true);
     try {
-      await refresh();
-      toast.success("检查完成");
+      const res = await refresh();
+      setUpdateResult({ yt: res.ytUp, ff: res.ffUp });
     } catch (err: any) {
       toast.error(`检查失败: ${err}`);
     } finally {
@@ -115,6 +120,69 @@ export default function ToolsSetting() {
     } catch (err: any) {
       toast.error(`打开失败: ${err}`);
     }
+  };
+
+  const renderToolRow = (
+    name: "yt-dlp" | "ffmpeg",
+    info: YtdlpUpdateResult | FfmpegUpdateResult | null
+  ) => {
+    const notInstalled = !!info?.not_installed;
+    const hasUpdate = !!info?.has_update;
+    const latest = info?.latest_version ?? null;
+    const local = info?.local_version ?? null;
+    const error = info?.error ?? null;
+
+    let statusText: string;
+    let statusClass = "text-gray-400";
+    if (!info) {
+      statusText = "检查失败";
+    } else if (notInstalled) {
+      statusText = "未安装";
+    } else if (error && !latest) {
+      statusText = error;
+      statusClass = "text-red-500";
+    } else {
+      statusText = local ? `当前 ${local}` : "当前版本未知";
+      if (latest && latest !== local) {
+        statusText += ` → 最新 ${latest}`;
+        statusClass = "text-amber-600";
+      } else {
+        statusClass = "text-green-600";
+      }
+    }
+
+    const showAction = !!info && (notInstalled || hasUpdate);
+
+    return (
+      <div className="bg-gray-50 rounded-xl px-4 py-3 flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold text-gray-700">{name}</p>
+          <p
+            className={`text-[11px] mt-0.5 leading-snug break-all ${statusClass}`}
+          >
+            {statusText}
+          </p>
+        </div>
+        <div className="shrink-0">
+          {showAction ? (
+            <button
+              className="px-3.5 py-1.5 text-xs rounded-lg bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors flex items-center gap-1"
+              onClick={() => {
+                setUpdateResult(null);
+                handleDownload(name);
+              }}
+            >
+              <Download size={13} />
+              {notInstalled ? "下载" : "更新"}
+            </button>
+          ) : info ? (
+            <span className="text-[11px] text-green-600 font-medium">✓ 已是最新</span>
+          ) : (
+            <span className="text-[11px] text-gray-400">—</span>
+          )}
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -345,6 +413,30 @@ export default function ToolsSetting() {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: update check result ── */}
+      {updateResult && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" />
+          <div className="relative z-10 bg-white/80 backdrop-blur-xl rounded-2xl shadow-2xl p-8 w-[420px] border border-white/40">
+            <p className="text-sm font-semibold text-gray-800 mb-4 text-center">
+              检查更新结果
+            </p>
+            <div className="space-y-3">
+              {renderToolRow("yt-dlp", updateResult.yt)}
+              {renderToolRow("ffmpeg", updateResult.ff)}
+            </div>
+            <div className="mt-5 flex items-center justify-center">
+              <button
+                className="px-5 py-2 text-sm rounded-lg bg-gray-200 text-gray-600 font-medium hover:bg-gray-300 transition-colors"
+                onClick={() => setUpdateResult(null)}
+              >
+                关闭
+              </button>
+            </div>
           </div>
         </div>
       )}

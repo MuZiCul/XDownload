@@ -7,11 +7,13 @@ import {
   checkFfmpeg,
   checkVideoDownloaded,
   loadSettings,
+  openDownloadPath,
 } from "../../lib/bindings";
 import type { DownloadConfig, VideoInfo } from "../../lib/types";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
-import { Download, Ban, FileDown, Headphones, Monitor, RefreshCw } from "lucide-react";
+import { Download, Ban, FileDown, FolderOpen, Headphones, Monitor, RefreshCw } from "lucide-react";
+import { friendlyErrorMessage } from "../../lib/errorMessages";
 
 type Props = {
   config: DownloadConfig;
@@ -119,7 +121,7 @@ export default function DownloadControls({
     onError: (err: any) => {
       setDownloading(false);
       setDlProgress(null);
-      toast.error(`下载失败: ${err}`, { id: DOWNLOAD_TOAST });
+      toast.error(`下载失败: ${friendlyErrorMessage(err)}`, { id: DOWNLOAD_TOAST });
     },
   });
 
@@ -226,30 +228,31 @@ export default function DownloadControls({
       )}
 
       <div className="border-t border-zinc-100 pt-3 flex items-center gap-3 justify-end">
-        <div className="flex items-center gap-1.5">
-          <span className="text-[11px] text-zinc-400">重试</span>
-          <input
-            type="text"
-            inputMode="numeric"
-            pattern="[0-9]*"
-            value={config.retries}
-            onChange={(e) => {
-              const v = e.target.value.replace(/\D/g, "");
-              onConfigChange({ ...config, retries: v ? parseInt(v, 10) : 5 });
-            }}
-            className="w-[36px]"
-          />
-        </div>
-
         {!downloading ? (
-          <button
-            className="btn btn-primary px-5 py-2 text-sm font-semibold flex items-center gap-2 shadow-sm"
-            onClick={handleDownloadClick}
-            disabled={!videoInfo}
-          >
-            {alreadyDownloaded ? <RefreshCw size={15} /> : <Download size={15} />}
-            {alreadyDownloaded ? "重新下载" : "开始下载"}
-          </button>
+          <>
+            {alreadyDownloaded && (
+              <button
+                className="btn px-5 py-2 text-sm font-semibold flex items-center gap-2 shadow-sm"
+                onClick={() => {
+                  if (!videoInfo?.id) return;
+                  openDownloadPath(videoInfo.id).catch((e: any) =>
+                    toast.error(`打开文件位置失败: ${e}`)
+                  );
+                }}
+              >
+                <FolderOpen size={15} />
+                打开文件位置
+              </button>
+            )}
+            <button
+              className="btn btn-primary px-5 py-2 text-sm font-semibold flex items-center gap-2 shadow-sm"
+              onClick={handleDownloadClick}
+              disabled={!videoInfo}
+            >
+              {alreadyDownloaded ? <RefreshCw size={15} /> : <Download size={15} />}
+              {alreadyDownloaded ? "重新下载" : "开始下载"}
+            </button>
+          </>
         ) : (
           <button
             className="btn btn-danger px-5 py-2 text-sm font-semibold flex items-center gap-2"

@@ -180,6 +180,10 @@ export async function openDownloadDir(): Promise<void> {
   return invoke("open_download_dir");
 }
 
+export async function openDownloadPath(videoId: string): Promise<void> {
+  return invoke("open_download_path", { videoId });
+}
+
 export async function quitApp(): Promise<void> {
   return invoke("quit_app");
 }
@@ -225,8 +229,10 @@ export interface YtdlpUpdateResult {
   error?: string;
 }
 
-export async function checkYtdlpUpdate(): Promise<YtdlpUpdateResult> {
-  return invoke("check_ytdlp_update");
+export async function checkYtdlpUpdate(
+  localVersion?: string
+): Promise<YtdlpUpdateResult> {
+  return invoke("check_ytdlp_update", { localVersion });
 }
 
 export interface FfmpegUpdateResult {
