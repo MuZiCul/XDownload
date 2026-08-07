@@ -13,7 +13,7 @@
 <p align="center">
   <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg" />
   <img alt="Rust" src="https://img.shields.io/badge/Rust-edition%202021-orange.svg" />
-  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg" />
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-lightgrey.svg" />
 </p>
 
 ---
@@ -27,21 +27,23 @@ Powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp) + ffmpeg, wrapped in a cle
 ## Features
 
 - **Paste & parse** — paste a URL, instantly see title / duration / thumbnail / formats
-- **Smart formats** — best quality, video+audio, audio-only, or custom format ID
-- **Live progress** — visible progress bar with speed & ETA, including merge / post-process stages
-- **Download history** — know what you downloaded and when; re-download with one click
+- **Smart best quality** — always downloads the highest quality video + audio (merged automatically), no format picking needed
+- **Global progress** — live progress bar in the status bar with speed & ETA, visible on every tab; state survives tab switches
+- **Multi-media tweets** — downloads every video / image in a multi-media tweet
+- **Download history** — review what you downloaded and when; open / delete / clear records
+- **In-app updates** — download and install new versions right from the app (direct first, proxy fallback)
+- **System notifications** — get notified when a download finishes or fails, even when minimized to tray
 - **Proxy support** — HTTP or SOCKS5, with automatic system proxy detection
 - **Cookies** — import from your browser to access restricted content
 - **Built-in tools** — download yt-dlp + ffmpeg right from the settings page
 - **Update alerts** — startup checks for new versions of XDownload / yt-dlp / ffmpeg
+- **i18n** — English & 简体中文, switch instantly without restart
 
 ## Install
 
 Grab the latest installer from [Releases](https://github.com/MuZiCul/XDownload/releases).
 
 - **Windows**: `XDownload_2.5.2_x64-setup.exe` (NSIS) / `.msi`
-- **macOS**: `.dmg`
-- **Linux**: `.deb` / `.AppImage`
 
 First launch downloads yt-dlp + ffmpeg automatically — or drop them into `bin/` yourself.
 
