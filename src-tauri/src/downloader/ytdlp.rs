@@ -393,6 +393,12 @@ impl YtDlpDownloader {
             // Failure or cancellation — discard the staged cache so partial
             // files never leak into the download folder.
             Self::cleanup_download_cache();
+            // A user-initiated cancel (cancel button) should report a
+            // friendly message instead of the raw stderr from the killed
+            // process, which is often empty or garbled.
+            if self.cancel_flag.load(Ordering::SeqCst) {
+                return Err(anyhow::anyhow!("用户主动取消"));
+            }
             let stderr = result.stderr_text();
             if !stderr.is_empty() {
                 anyhow::bail!("下载失败: {}", stderr);

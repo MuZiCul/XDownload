@@ -98,31 +98,32 @@ export default function VideoInfoCard({
                   {t("video.cancelDownload")}
                 </button>
               ) : (
-                <>
-                  {info?.downloaded && (
-                    <button
-                      className="btn px-3 py-1 text-xs font-semibold flex items-center gap-1 shadow-sm"
-                      onClick={onOpenPath}
-                    >
-                      <FolderOpen size={13} />
-                      {t("video.openPath")}
-                    </button>
-                  )}
-                  <button
-                    className="btn btn-primary px-3 py-1 text-xs font-semibold flex items-center gap-1 shadow-sm"
-                    onClick={onDownload}
-                    disabled={!info}
-                  >
-                    {info?.downloaded ? (
-                      <RefreshCw size={13} />
-                    ) : (
-                      <Download size={13} />
+                info && (
+                  <>
+                    {info.downloaded && (
+                      <button
+                        className="btn px-3 py-1 text-xs font-semibold flex items-center gap-1 shadow-sm"
+                        onClick={onOpenPath}
+                      >
+                        <FolderOpen size={13} />
+                        {t("video.openPath")}
+                      </button>
                     )}
-                    {info?.downloaded
-                      ? t("video.redownload")
-                      : t("video.startDownload")}
-                  </button>
-                </>
+                    <button
+                      className="btn btn-primary px-3 py-1 text-xs font-semibold flex items-center gap-1 shadow-sm"
+                      onClick={onDownload}
+                    >
+                      {info.downloaded ? (
+                        <RefreshCw size={13} />
+                      ) : (
+                        <Download size={13} />
+                      )}
+                      {info.downloaded
+                        ? t("video.redownload")
+                        : t("video.startDownload")}
+                    </button>
+                  </>
+                )
               )}
             </div>
           </div>

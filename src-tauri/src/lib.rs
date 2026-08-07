@@ -168,6 +168,7 @@ pub fn run() {
             commands::bootstrap::open_root_dir,
             commands::bootstrap::get_config_dir,
             commands::bootstrap::open_config_dir,
+            commands::bootstrap::open_logs_dir,
             commands::bootstrap::open_download_dir,
             commands::bootstrap::open_download_path,
             commands::bootstrap::quit_app,

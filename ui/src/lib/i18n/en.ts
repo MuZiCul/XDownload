@@ -18,7 +18,9 @@ export const en: Record<string, string> = {
   "gbar.downloading": "Downloading...",
   "gbar.cancel": "Cancel",
   "gbar.complete": "Download complete",
+  "gbar.completeBody": "Video downloaded",
   "gbar.failed": "Download failed: {msg}",
+  "gbar.failedTitle": "Download failed",
   "gbar.close": "Close",
 
   // ===== URL bar =====
@@ -68,6 +70,7 @@ export const en: Record<string, string> = {
   "url.fetchFail": "Fetch failed: {err}",
 
   // ===== Friendly error messages (errorMessages.ts) =====
+  "error.cancelled": "User cancelled",
   "error.suspended": "This video's author has been suspended on X; content unavailable",
   "error.private": "This account is private/protected; log in and follow to view",
   "error.deleted": "This tweet has been deleted or is unavailable",
@@ -83,6 +86,7 @@ export const en: Record<string, string> = {
   // ===== Common =====
   "common.cancel": "Cancel",
   "common.loading": "Loading...",
+  "common.video": "Video",
   "common.save": "Save",
   "common.saving": "Saving...",
   "common.saveFail": "Save failed: {err}",
@@ -151,6 +155,9 @@ export const en: Record<string, string> = {
   "config.apply": "Apply Config",
   "config.dir": "Config Dir",
   "config.dirTitle": "Open the config folder under the root",
+  "config.logs": "Logs",
+  "config.logsTitle": "Open the logs folder under the root",
+  "config.logsOpened": "Logs directory opened",
   "config.quit": "Quit",
   "config.quitTitle": "Clean up processes and quit",
   "config.path": "Config: {path}",

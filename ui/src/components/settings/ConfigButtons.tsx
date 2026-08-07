@@ -9,11 +9,12 @@ import {
   applyAndPersistSettings,
   applyDefaultConfig,
   openConfigDir,
+  openLogsDir,
   quitApp,
 } from "../../lib/bindings";
 import type { AppSettings } from "../../lib/types";
 import { toast } from "sonner";
-import { Save, Upload, Folder, FolderOpen, FolderCog, Power, X } from "lucide-react";
+import { Save, Upload, Folder, FolderOpen, FolderCog, Power, ScrollText, X } from "lucide-react";
 import { useI18n } from "../../lib/i18n";
 
 type Props = {
@@ -114,6 +115,15 @@ export default function ConfigButtons({ settings, onApply }: Props) {
     }
   };
 
+  const handleOpenLogsDir = async () => {
+    try {
+      await openLogsDir();
+      toast.success(t("config.logsOpened"));
+    } catch (err: any) {
+      toast.error(t("common.openFail", { err }));
+    }
+  };
+
   const handleQuit = async () => {
     try {
       await quitApp();
@@ -148,6 +158,14 @@ export default function ConfigButtons({ settings, onApply }: Props) {
         >
           <FolderCog size={13} />
           {t("config.dir")}
+        </button>
+        <button
+          className="btn flex items-center gap-1"
+          onClick={handleOpenLogsDir}
+          title={t("config.logsTitle")}
+        >
+          <ScrollText size={13} />
+          {t("config.logs")}
         </button>
         <button
           className="btn flex items-center gap-1 text-red-600 hover:text-red-700"

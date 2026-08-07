@@ -58,6 +58,19 @@ pub fn open_config_dir(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| format!("failed to open config dir: {}", e))
 }
 
+/// Open the logs directory (root/logs) in the system file manager
+#[tauri::command]
+pub fn open_logs_dir(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let dir = crate::utils::app_home::AppHome::logs_dir();
+    // Make sure the folder exists so the file manager has something to open.
+    let _ = crate::utils::app_home::AppHome::ensure_logs_dir();
+    app.opener()
+        .open_path(dir.to_string_lossy().to_string(), None::<&str>)
+        .map_err(|e| format!("failed to open logs dir: {}", e))
+}
+
 /// Open the download directory in the system file manager.
 /// Uses the configured absolute `download_dir` when present, otherwise the
 /// default `downloads/` folder. Creates the directory if it does not exist.

@@ -13,6 +13,7 @@ import {
 } from "./bindings";
 import type { DownloadConfig } from "./types";
 import { friendlyErrorMessage } from "./errorMessages";
+import { t as i18nT } from "./i18n";
 
 export interface DlProgress {
   percent: number;
@@ -124,15 +125,21 @@ export function initDownloadStore() {
       completedAt: Date.now(),
       error: null,
     });
-    toast.success("下载完成", { id: "download-global" });
-    notify("下载完成", state.title || state.url || "视频下载完成");
+    toast.success(i18nT("gbar.complete"), { id: "download-global" });
+    notify(
+      i18nT("gbar.complete"),
+      state.title || state.url || i18nT("gbar.completeBody")
+    );
   });
 
   listen("download-error", (event) => {
-    const msg = String(event.payload ?? "下载失败");
+    const msg = friendlyErrorMessage(event.payload);
     setState({ downloading: false, error: msg, completed: false });
-    toast.error(`下载失败: ${msg}`, { id: "download-global" });
-    notify("下载失败", `${state.title || state.url || "视频"}：${msg}`);
+    toast.error(i18nT("gbar.failed", { msg }), { id: "download-global" });
+    notify(
+      i18nT("gbar.failedTitle"),
+      `${state.title || state.url || i18nT("common.video")}：${msg}`
+    );
   });
 
   // Recover a running download (e.g. dev hot-reload / window reopen mid-task).
@@ -163,13 +170,14 @@ export async function startDownloadGlobal(
       // The download-complete event usually fires first; this is a safety net.
       setState({ downloading: false, completed: true, completedAt: Date.now() });
     } else {
-      setState({ downloading: false, error: "下载失败" });
-      toast.error("下载失败", { id: "download-global" });
+      setState({ downloading: false, error: i18nT("gbar.failedTitle") });
+      toast.error(i18nT("gbar.failedTitle"), { id: "download-global" });
     }
     return ok;
   } catch (err) {
-    setState({ downloading: false, error: friendlyErrorMessage(err) });
-    toast.error(`下载失败: ${friendlyErrorMessage(err)}`, {
+    const msg = friendlyErrorMessage(err);
+    setState({ downloading: false, error: msg });
+    toast.error(i18nT("gbar.failed", { msg }), {
       id: "download-global",
     });
     throw err;

@@ -18,7 +18,9 @@ export const zh: Record<string, string> = {
   "gbar.downloading": "正在下载...",
   "gbar.cancel": "取消",
   "gbar.complete": "下载完成",
+  "gbar.completeBody": "视频下载完成",
   "gbar.failed": "下载失败: {msg}",
+  "gbar.failedTitle": "下载失败",
   "gbar.close": "关闭",
 
   // ===== URL bar =====
@@ -67,6 +69,7 @@ export const zh: Record<string, string> = {
   "url.fetchFail": "获取失败: {err}",
 
   // ===== Friendly error messages (errorMessages.ts) =====
+  "error.cancelled": "用户主动取消",
   "error.suspended": "该视频作者已被 X 封禁，无法获取视频内容",
   "error.private": "该账号为私密/受保护账号，需登录并关注后才能查看",
   "error.deleted": "该推文已被删除或不可用",
@@ -82,6 +85,7 @@ export const zh: Record<string, string> = {
   // ===== Common =====
   "common.cancel": "取消",
   "common.loading": "加载中...",
+  "common.video": "视频",
   "common.save": "保存",
   "common.saving": "保存中...",
   "common.saveFail": "保存失败: {err}",
@@ -148,6 +152,9 @@ export const zh: Record<string, string> = {
   "config.apply": "应用配置",
   "config.dir": "配置目录",
   "config.dirTitle": "打开根目录下的 config 文件夹",
+  "config.logs": "软件日志",
+  "config.logsTitle": "打开根目录下的 logs 文件夹",
+  "config.logsOpened": "已打开日志目录",
   "config.quit": "退出",
   "config.quitTitle": "清理进程并退出应用",
   "config.path": "配置: {path}",

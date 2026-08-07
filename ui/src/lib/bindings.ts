@@ -198,6 +198,10 @@ export async function openConfigDir(): Promise<void> {
   return invoke("open_config_dir");
 }
 
+export async function openLogsDir(): Promise<void> {
+  return invoke("open_logs_dir");
+}
+
 export async function openDownloadDir(): Promise<void> {
   return invoke("open_download_dir");
 }
