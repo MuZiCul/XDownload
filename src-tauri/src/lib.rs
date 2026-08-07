@@ -77,9 +77,11 @@ impl FormatTime for LocalTimer {
 /// Initialize the application
 pub fn run() {
     // Initialize logging: rotate by LOCAL date and stamp timestamps in the
-    // local timezone (previously UTC, off by up to a day / 8 hours).
+    // local timezone (previously UTC, off by up to a day / 8 hours). Logs live
+    // in logs/ (kept out of config/, and gitignored as a whole).
+    let _ = utils::app_home::AppHome::ensure_logs_dir();
     let (non_blocking, _guard) = tracing_appender::non_blocking(LocalDailyWriter::new(
-        utils::app_home::AppHome::config_dir(),
+        utils::app_home::AppHome::logs_dir(),
     ));
 
     tracing_subscriber::fmt()

@@ -10,4 +10,5 @@
 /bin/
 /progress/
 /config/
+/logs/
 /ui/src/components/settings/proxy-test/target/
