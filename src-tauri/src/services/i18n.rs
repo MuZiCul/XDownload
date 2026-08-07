@@ -46,7 +46,6 @@ fn tables() -> &'static (HashMap<String, String>, HashMap<String, String>) {
         );
         put(&mut zh, &mut en, "opt.browse", "浏览", "Browse");
         put(&mut zh, &mut en, "opt.audio", "仅提取音频 (MP3)", "Extract Audio (MP3)");
-        put(&mut zh, &mut en, "opt.retries", "重试次数:", "Retries:");
         put(&mut zh, &mut en, "opt.start", "状态信息", "Status");
         put(&mut zh, &mut en, "opt.download", "下载", "Download");
         put(&mut zh, &mut en, "opt.cancel", "取消", "CANCEL");

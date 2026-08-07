@@ -95,7 +95,7 @@ pub async fn check_update() -> serde_json::Value {
 /// 2. Fetch latest release from GitHub API
 /// 3. Semver-compare and return result
 #[tauri::command]
-pub async fn check_ytdlp_update() -> serde_json::Value {
+pub async fn check_ytdlp_update(local_version: Option<String>) -> serde_json::Value {
     // --- Step 1: get local yt-dlp version ---
     let ytdlp_path = crate::utils::process::find_ytdlp();
     if !ytdlp_path.exists() {
@@ -108,24 +108,42 @@ pub async fn check_ytdlp_update() -> serde_json::Value {
         });
     }
 
-    let ytdlp_str = ytdlp_path.to_str().unwrap_or("yt-dlp");
-    let local_version = match crate::utils::process::execute_with_timeout(
-        &[ytdlp_str, "--version"],
-        5,
-    )
-    .await
-    {
-        Ok(result) if result.is_success() && !result.stdout.is_empty() => {
-            result.stdout[0].trim().to_string()
-        }
+    // Reuse the version already fetched by check_ytdlp when the frontend
+    // provides it, avoiding a second yt-dlp spawn at startup. Otherwise
+    // detect it here with one retry (PyInstaller cold start can be slow).
+    let local_version = match local_version {
+        Some(v) if !v.is_empty() => v,
         _ => {
-            return serde_json::json!({
-                "has_update": false,
-                "local_version": Option::<String>::None,
-                "latest_version": Option::<String>::None,
-                "url": Option::<String>::None,
-                "error": "无法获取本地 yt-dlp 版本",
-            });
+            let ytdlp_str = ytdlp_path.to_str().unwrap_or("yt-dlp");
+            let mut version: Option<String> = None;
+            for attempt in 0..2 {
+                let result = crate::utils::process::execute_with_timeout(
+                    &[ytdlp_str, "--version"],
+                    15,
+                )
+                .await;
+                if let Ok(result) = result {
+                    if result.is_success() && !result.stdout.is_empty() {
+                        version = Some(result.stdout[0].trim().to_string());
+                        break;
+                    }
+                }
+                if attempt == 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                }
+            }
+            match version {
+                Some(v) => v,
+                None => {
+                    return serde_json::json!({
+                        "has_update": false,
+                        "local_version": Option::<String>::None,
+                        "latest_version": Option::<String>::None,
+                        "url": Option::<String>::None,
+                        "error": "无法获取本地 yt-dlp 版本",
+                    });
+                }
+            }
         }
     };
 

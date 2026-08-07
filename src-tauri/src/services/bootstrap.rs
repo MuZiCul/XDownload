@@ -42,7 +42,7 @@ impl Bootstrap {
         let mut builder = reqwest::Client::builder()
             .timeout(Duration::from_secs(120))
             .user_agent(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) XDownload/2.5",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) XDownload/2.5.1",
             );
 
         if let Some(proxy) = ProxyConfig::to_reqwest_proxy() {

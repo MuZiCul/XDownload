@@ -214,7 +214,7 @@ function App() {
       <div className="flex flex-col h-screen overflow-hidden bg-[#fafafa]">
         <TabBar activeTab={activeTab} onTabChange={setActiveTab} />
 
-        <main className="flex-1 overflow-auto">
+        <main className="flex-1 overflow-auto min-h-0">
           {activeTab === "download" && <DownloadPage />}
           {activeTab === "settings" && <SettingsPage />}
           {activeTab === "about" && <AboutPage />}

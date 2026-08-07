@@ -2,11 +2,13 @@ mod commands;
 mod downloader;
 mod models;
 mod services;
+mod tray;
 mod utils;
 
 use commands::download::DownloaderState;
 use downloader::ytdlp::YtDlpDownloader;
 use std::sync::Arc;
+use tauri::Manager;
 
 /// Initialize the application
 pub fn run() {
@@ -93,6 +95,7 @@ pub fn run() {
             commands::bootstrap::get_config_dir,
             commands::bootstrap::open_config_dir,
             commands::bootstrap::open_download_dir,
+            commands::bootstrap::open_download_path,
             commands::bootstrap::quit_app,
             commands::bootstrap::get_uninstall_info,
             commands::bootstrap::uninstall_app,
@@ -101,7 +104,24 @@ pub fn run() {
             commands::update::check_ytdlp_update,
             commands::update::check_ffmpeg_update,
         ])
-        .setup(|_app| {
+        .setup(|app| {
+            // System tray icon + context menu.
+            tray::init(app)?;
+
+            // Clicking the window close button hides the app to the system tray
+            // instead of quitting (the app keeps running in the background).
+            // Real exits happen via the tray menu or the quit_app command.
+            #[cfg(windows)]
+            if let Some(win) = app.get_webview_window("main") {
+                let tray_win = win.clone();
+                win.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = tray_win.hide();
+                    }
+                });
+            }
+
             Ok(())
         })
         .run(tauri::generate_context!())

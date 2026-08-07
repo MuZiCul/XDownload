@@ -24,8 +24,6 @@ pub struct DownloadConfig {
     pub write_thumbnail: bool,
     #[serde(default)]
     pub proxy: Option<String>,
-    #[serde(default = "default_retries")]
-    pub retries: i32,
     #[serde(default = "default_socket_timeout")]
     pub socket_timeout: i32,
     #[serde(default)]
@@ -41,7 +39,6 @@ pub struct DownloadConfig {
 fn default_format() -> String { "best".to_string() }
 fn default_output_dir() -> String { "downloads".to_string() }
 fn default_output_template() -> String { "%(title)s.%(ext)s".to_string() }
-fn default_retries() -> i32 { 5 }
 fn default_socket_timeout() -> i32 { 30 }
 
 impl DownloadConfig {
@@ -57,7 +54,6 @@ impl DownloadConfig {
             embed_thumbnail: false,
             write_thumbnail: false,
             proxy: None,
-            retries: default_retries(),
             socket_timeout: default_socket_timeout(),
             cookies_file: None,
             cookies_from_browser: None,

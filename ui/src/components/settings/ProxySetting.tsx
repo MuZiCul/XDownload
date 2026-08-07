@@ -4,6 +4,16 @@ import type { ProxyStatus, ProxyTestResult, AppSettings } from "../../lib/types"
 import { toast } from "sonner";
 import { Save } from "lucide-react";
 
+// Cache the last proxy connectivity test keyed by (host, port, scheme) so that
+// switching tabs (which remounts this component) does not re-test an unchanged
+// proxy configuration on every visit to the settings page.
+let cachedProxyTest: {
+  host: string;
+  port: number;
+  scheme: string;
+  state: "idle" | "success" | "error";
+} = { host: "", port: 0, scheme: "http", state: "idle" };
+
 type Props = {
   host?: string;
   port?: number;
@@ -21,6 +31,32 @@ export default function ProxySetting({ host, port, scheme, onChange }: Props) {
   const [sysProxyStr, setSysProxyStr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [testState, setTestState] = useState<"idle" | "testing" | "success" | "error">("idle");
+
+  // Run a connectivity test and cache the outcome (keyed by proxy config).
+  const runTest = (
+    host: string,
+    port: number,
+    scheme: string
+  ): Promise<ProxyTestResult> => {
+    setTestState("testing");
+    return testProxy(host, port, scheme).then(
+      (result: ProxyTestResult) => {
+        setTestState(result.success ? "success" : "error");
+        cachedProxyTest = {
+          host,
+          port,
+          scheme,
+          state: result.success ? "success" : "error",
+        };
+        return result;
+      },
+      (err: any) => {
+        setTestState("error");
+        cachedProxyTest = { host, port, scheme, state: "error" };
+        throw err;
+      }
+    );
+  };
 
   // Track committed state to enable/disable save button
   const [committedMode, setCommittedMode] = useState<"none" | "manual" | "system">("none");
@@ -79,12 +115,18 @@ export default function ProxySetting({ host, port, scheme, onChange }: Props) {
         }
       }
 
-      // 启动时主动测试代理连通性
+      // 启动时主动测试代理连通性；代理配置未变时复用上次缓存结果，
+      // 避免每次切到设置页都重复发起网络测试
       if (status.enabled && status.host && status.port > 0) {
-        setTestState("testing");
-        testProxy(status.host, status.port)
-          .then((result: ProxyTestResult) => setTestState(result.success ? "success" : "error"))
-          .catch(() => setTestState("error"));
+        if (
+          cachedProxyTest.host === status.host &&
+          cachedProxyTest.port === status.port &&
+          cachedProxyTest.scheme === sc
+        ) {
+          setTestState(cachedProxyTest.state);
+        } else {
+          runTest(status.host, status.port, sc);
+        }
       }
     }).catch(() => {});
   }, []);
@@ -115,20 +157,16 @@ export default function ProxySetting({ host, port, scheme, onChange }: Props) {
       toast.warning("请输入代理主机地址");
       return;
     }
-    setTestState("testing");
     try {
-      const result = await testProxy(effectiveHost, effectivePort, sc);
+      const result = await runTest(effectiveHost, effectivePort, sc);
       if (result.success) {
         onChange(effectiveHost, effectivePort);
         toast.success(`代理测试通过 (${result.elapsed_ms}ms)`);
-        setTestState("success");
       } else {
         toast.error(result.message);
-        setTestState("error");
       }
     } catch (err: any) {
       toast.error(`${err}`);
-      setTestState("error");
     }
   };
 
@@ -153,7 +191,7 @@ export default function ProxySetting({ host, port, scheme, onChange }: Props) {
       } else {
         // Apply proxy to runtime
         if (effectiveHost && effectivePort) {
-          await testProxy(effectiveHost, effectivePort, sc);
+          await runTest(effectiveHost, effectivePort, sc);
         }
         toast.success("代理已保存并应用");
       }
