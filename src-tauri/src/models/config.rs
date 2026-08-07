@@ -8,6 +8,10 @@ pub struct DownloadConfig {
     /// the download in the history so repeat downloads can be detected.
     #[serde(default)]
     pub video_id: Option<String>,
+    /// Video title, filled by the frontend after parsing. Stored in the
+    /// download history so the history page can show a human-readable title.
+    #[serde(default)]
+    pub title: Option<String>,
     #[serde(default = "default_format")]
     pub format_id: String,
     #[serde(default = "default_output_dir")]
@@ -34,9 +38,19 @@ pub struct DownloadConfig {
     pub max_height: i32,
     #[serde(default)]
     pub download_archive: Option<String>,
+    /// yt-dlp `--playlist-items` (e.g. "1", "1,2"). `None` downloads all media
+    /// entries (e.g. every video/image in a multi-media tweet).
+    #[serde(default)]
+    pub playlist_items: Option<String>,
 }
 
-fn default_format() -> String { "best".to_string() }
+fn default_format() -> String {
+    // Merge the best video-only + audio-only streams (X/Twitter videos are
+    // split into separate streams), falling back to a single best file when no
+    // mergeable pair exists. Plain `best` would pick a lower-quality single
+    // file, silently downgrading the resolution.
+    "bestvideo+bestaudio/best".to_string()
+}
 fn default_output_dir() -> String { "downloads".to_string() }
 fn default_output_template() -> String { "%(title)s.%(ext)s".to_string() }
 fn default_socket_timeout() -> i32 { 30 }
@@ -46,6 +60,7 @@ impl DownloadConfig {
         Self {
             url,
             video_id: None,
+            title: None,
             format_id: default_format(),
             output_dir: default_output_dir(),
             output_template: default_output_template(),
@@ -59,6 +74,7 @@ impl DownloadConfig {
             cookies_from_browser: None,
             max_height: 0,
             download_archive: None,
+            playlist_items: None,
         }
     }
 

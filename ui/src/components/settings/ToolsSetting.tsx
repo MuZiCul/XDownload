@@ -10,6 +10,7 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { Ban, Download, FolderOpen, HelpCircle, RefreshCw } from "lucide-react";
 import type { YtdlpUpdateResult, FfmpegUpdateResult } from "../../lib/bindings";
+import { useI18n } from "../../lib/i18n";
 
 type Phase =
   | { kind: "checking" }
@@ -31,6 +32,7 @@ function Dots() {
 }
 
 export default function ToolsSetting() {
+  const { t } = useI18n();
   const { ytStatus, ffStatus, hasYtUpdate, hasFfUpdate, refresh, download } = useToolStatus();
   const [phase, setPhase] = useState<Phase>(null);
   const [progress, setProgress] = useState(0);
@@ -48,7 +50,7 @@ export default function ToolsSetting() {
       const res = await refresh();
       setUpdateResult({ yt: res.ytUp, ff: res.ffUp });
     } catch (err: any) {
-      toast.error(`检查失败: ${err}`);
+      toast.error(t("tools.checkFail", { err }));
     } finally {
       setChecking(false);
     }
@@ -116,9 +118,9 @@ export default function ToolsSetting() {
   const handleOpenRootDir = async () => {
     try {
       await openRootDir();
-      toast.success("已打开根目录");
+      toast.success(t("tools.rootOpened"));
     } catch (err: any) {
-      toast.error(`打开失败: ${err}`);
+      toast.error(t("common.openFail", { err }));
     }
   };
 
@@ -135,16 +137,16 @@ export default function ToolsSetting() {
     let statusText: string;
     let statusClass = "text-gray-400";
     if (!info) {
-      statusText = "检查失败";
+      statusText = t("tools.statusCheckFailed");
     } else if (notInstalled) {
-      statusText = "未安装";
+      statusText = t("tools.statusNotInstalled");
     } else if (error && !latest) {
       statusText = error;
       statusClass = "text-red-500";
     } else {
-      statusText = local ? `当前 ${local}` : "当前版本未知";
+      statusText = local ? t("tools.statusCurrent", { ver: local }) : t("tools.statusUnknown");
       if (latest && latest !== local) {
-        statusText += ` → 最新 ${latest}`;
+        statusText += t("tools.statusLatest", { ver: latest });
         statusClass = "text-amber-600";
       } else {
         statusClass = "text-green-600";
@@ -173,10 +175,10 @@ export default function ToolsSetting() {
               }}
             >
               <Download size={13} />
-              {notInstalled ? "下载" : "更新"}
+              {notInstalled ? t("tools.downloadBtn") : t("tools.updateBtn")}
             </button>
           ) : info ? (
-            <span className="text-[11px] text-green-600 font-medium">✓ 已是最新</span>
+            <span className="text-[11px] text-green-600 font-medium">{t("tools.latest")}</span>
           ) : (
             <span className="text-[11px] text-gray-400">—</span>
           )}
@@ -222,7 +224,7 @@ export default function ToolsSetting() {
           onClick={() => setPhase({ kind: "guide" })}
         >
           <HelpCircle size={14} />
-          下载指南
+          {t("tools.guideTitle")}
         </button>
         <button
           className="btn flex items-center gap-1"
@@ -230,7 +232,7 @@ export default function ToolsSetting() {
           disabled={checking || phase !== null}
         >
           <RefreshCw size={13} className={checking ? "animate-spin" : ""} />
-          {checking ? "检查中..." : "检查更新"}
+          {checking ? t("tools.checking") : t("tools.checkUpdate")}
         </button>
       </div>
 
@@ -244,7 +246,7 @@ export default function ToolsSetting() {
             {phase.kind === "checking" && (
               <div className="text-center">
                 <p className="text-sm font-medium text-gray-700 mb-4">
-                  正在检测网络连接<Dots />
+                  {t("tools.checkingNetwork")}<Dots />
                 </p>
                 <div className="flex justify-center">
                   <div className="w-6 h-6 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
@@ -257,25 +259,23 @@ export default function ToolsSetting() {
               <div className="text-center">
                 <div className="text-amber-500 text-3xl mb-3">!</div>
                 <p className="text-sm font-medium text-gray-800 mb-1">
-                  无法连接到下载站
+                  {t("tools.networkFail")}
                 </p>
                 <p className="text-xs text-gray-500 mb-5 leading-relaxed">
-                  请检查网络连接或配置代理后重试。
-                  <br />
-                  是否仍然尝试下载 {phase.tool}？
+                  {t("tools.networkFailBody", { tool: phase.tool })}
                 </p>
                 <div className="flex items-center justify-center gap-3">
                   <button
                     className="px-5 py-2 text-sm rounded-lg bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors"
                     onClick={() => startDownload(phase.tool)}
                   >
-                    继续下载
+                    {t("tools.continueDownload")}
                   </button>
                   <button
                     className="px-5 py-2 text-sm rounded-lg bg-gray-200 text-gray-600 font-medium hover:bg-gray-300 transition-colors"
                     onClick={() => setPhase(null)}
                   >
-                    取消
+                    {t("common.cancel")}
                   </button>
                 </div>
               </div>
@@ -285,13 +285,13 @@ export default function ToolsSetting() {
             {phase.kind === "extracting" && (
               <div className="text-center">
                 <p className="text-sm font-medium text-gray-700 mb-4">
-                  正在解压 ffmpeg<Dots />
+                  {t("tools.extracting")}<Dots />
                 </p>
                 <div className="flex justify-center">
                   <div className="w-6 h-6 border-2 border-orange-400 border-t-transparent rounded-full animate-spin" />
                 </div>
                 <p className="text-[11px] text-gray-400 mt-3">
-                  正在提取 ffmpeg.exe / ffprobe.exe / ffplay.exe
+                  {t("tools.extractingDetail")}
                 </p>
               </div>
             )}
@@ -300,10 +300,10 @@ export default function ToolsSetting() {
             {phase.kind === "downloading" && (
               <div className="text-center">
                 <p className="text-sm font-medium text-gray-700 mb-5">
-                  正在下载 {phase.tool}
+                  {t("tools.downloading", { tool: phase.tool })}
                   {phase.tool === "ffmpeg"
-                    ? "（约 80MB，解压后 ~150MB）"
-                    : "（约 15MB）"}
+                    ? t("tools.ffmpegSize")
+                    : t("tools.ytdlpSize")}
                 </p>
 
                 <div className="w-full bg-gray-200/60 rounded-full h-3 overflow-hidden mb-2">
@@ -320,7 +320,7 @@ export default function ToolsSetting() {
                 </div>
 
                 <p className="text-xs text-gray-400 tabular-nums mb-5">
-                  {progress > 0 ? `${progress}%` : "正在连接..."}
+                  {progress > 0 ? `${progress}%` : t("tools.connecting")}
                 </p>
 
                 <button
@@ -328,7 +328,7 @@ export default function ToolsSetting() {
                   onClick={handleCancelDownload}
                 >
                   <Ban size={14} />
-                  取消下载
+                  {t("tools.cancelDownload")}
                 </button>
               </div>
             )}
@@ -338,7 +338,7 @@ export default function ToolsSetting() {
               <div className="text-center">
                 <div className="text-green-500 text-3xl mb-3">✓</div>
                 <p className="text-sm font-medium text-gray-700">
-                  {phase.tool} 下载完成
+                  {t("tools.downloadDone", { tool: phase.tool })}
                 </p>
               </div>
             )}
@@ -347,16 +347,12 @@ export default function ToolsSetting() {
             {phase.kind === "guide" && (
               <div>
                 <p className="text-sm font-medium text-gray-800 mb-4 text-center">
-                  下载指南
+                  {t("tools.guideTitle")}
                 </p>
 
                 <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-5">
                   <p className="text-xs text-amber-700 leading-relaxed">
-                    如遇下载慢或网络问题时，请先配置代理。
-                    <br />
-                    国内用户建议开启代理后再下载。
-                    <br />
-                    也可从下面地址下载后解压到根目录的bin中。
+                    {t("tools.guideTip")}
                   </p>
                 </div>
 
@@ -374,7 +370,7 @@ export default function ToolsSetting() {
                       https://github.com/yt-dlp/yt-dlp
                     </a>
                     <p className="text-[10px] text-gray-400 mt-1">
-                      视频解析与下载引擎 · 约 15MB
+                      {t("tools.ytdlpDesc")}
                     </p>
                   </div>
 
@@ -391,7 +387,7 @@ export default function ToolsSetting() {
                       https://ffmpeg.org/download.html
                     </a>
                     <p className="text-[10px] text-gray-400 mt-1">
-                      音视频合并与转码 · 约 80MB（解压后 ~150MB）
+                      {t("tools.ffmpegDesc")}
                     </p>
                   </div>
                 </div>
@@ -402,13 +398,13 @@ export default function ToolsSetting() {
                     onClick={handleOpenRootDir}
                   >
                     <FolderOpen size={14} />
-                    根目录
+                    {t("tools.rootDir")}
                   </button>
                   <button
                     className="px-5 py-2 text-sm rounded-lg bg-gray-200 text-gray-600 font-medium hover:bg-gray-300 transition-colors"
                     onClick={() => setPhase(null)}
                   >
-                    关闭
+                    {t("common.close")}
                   </button>
                 </div>
               </div>
@@ -423,7 +419,7 @@ export default function ToolsSetting() {
           <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" />
           <div className="relative z-10 bg-white/80 backdrop-blur-xl rounded-2xl shadow-2xl p-8 w-[420px] border border-white/40">
             <p className="text-sm font-semibold text-gray-800 mb-4 text-center">
-              检查更新结果
+              {t("tools.checkResultTitle")}
             </p>
             <div className="space-y-3">
               {renderToolRow("yt-dlp", updateResult.yt)}
@@ -434,7 +430,7 @@ export default function ToolsSetting() {
                 className="px-5 py-2 text-sm rounded-lg bg-gray-200 text-gray-600 font-medium hover:bg-gray-300 transition-colors"
                 onClick={() => setUpdateResult(null)}
               >
-                关闭
+                {t("common.close")}
               </button>
             </div>
           </div>

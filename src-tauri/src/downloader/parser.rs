@@ -24,6 +24,7 @@ pub fn parse_video_json(json: &str) -> Result<VideoInfo, String> {
         like_count: root["like_count"].as_i64().unwrap_or(0),
         webpage_url: root["webpage_url"].as_str().map(|s| s.to_string()),
         formats: vec![],
+        media_count: 1,
         // Download status — filled by the command layer, not by yt-dlp.
         downloaded: false,
         downloaded_at: None,

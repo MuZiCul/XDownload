@@ -9,8 +9,10 @@ import CookiesSetting from "./CookiesSetting";
 import ToolsSetting from "./ToolsSetting";
 import LanguageSetting from "./LanguageSetting";
 import ConfigButtons from "./ConfigButtons";
+import { useI18n } from "../../lib/i18n";
 
 export default function SettingsPage() {
+  const { t } = useI18n();
   const [settings, setSettings] = useState<AppSettings>({});
   const [loaded, setLoaded] = useState(false);
   // Bump on every "应用配置" to force children with internal state
@@ -34,9 +36,11 @@ export default function SettingsPage() {
   }, []);
 
   return (
-    <div className="p-3 max-w-[680px] mx-auto">
+    <div className="p-3 max-w-[900px] mx-auto">
       {!loaded ? (
-        <div className="flex items-center justify-center h-40 text-zinc-400 text-sm">加载中...</div>
+        <div className="flex items-center justify-center h-40 text-zinc-400 text-sm">
+          {t("common.loading")}
+        </div>
       ) : (
         <div className="space-y-3">
           <DirSetting

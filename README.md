@@ -39,7 +39,7 @@ Powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp) + ffmpeg, wrapped in a cle
 
 Grab the latest installer from [Releases](https://github.com/MuZiCul/XDownload/releases).
 
-- **Windows**: `XDownload_2.5.1_x64-setup.exe` (NSIS) / `.msi`
+- **Windows**: `XDownload_2.5.2_x64-setup.exe` (NSIS) / `.msi`
 - **macOS**: `.dmg`
 - **Linux**: `.deb` / `.AppImage`
 

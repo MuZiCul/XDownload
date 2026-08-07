@@ -27,6 +27,8 @@ export interface VideoInfo {
   like_count: number;
   webpage_url: string | null;
   formats: Format[];
+  /** Number of media entries in this URL (1 for a normal video; >1 for multi-media tweets). */
+  media_count?: number;
   // Download status (filled by the backend command layer)
   downloaded: boolean;
   downloaded_at: number | null;
@@ -46,6 +48,8 @@ export interface DownloadStatus {
 export interface DownloadConfig {
   url: string;
   video_id: string | null;
+  /** Video title, stored in download history for display. */
+  title?: string | null;
   format_id: string;
   output_dir: string;
   output_template: string;
@@ -108,6 +112,8 @@ export interface CookiesValidationResult {
   message: string;
   cookie_count: number;
   username?: string;
+  /** Machine-readable failure reason for i18n (e.g. "token_invalid"). */
+  error_code?: string | null;
 }
 
 // --- Tools ---
@@ -115,6 +121,16 @@ export interface CookiesValidationResult {
 export interface ToolStatus {
   available: boolean;
   version: string | null;
+}
+
+/** A single download-history record (from config/downloads.json). */
+export interface DownloadHistoryItem {
+  id: string;
+  title: string | null;
+  file_path: string | null;
+  downloaded_at: number;
+  /** Whether the saved file still exists on disk. */
+  file_exists: boolean;
 }
 
 export interface BootstrapProgress {

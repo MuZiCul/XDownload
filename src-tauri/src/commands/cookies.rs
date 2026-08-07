@@ -22,19 +22,20 @@ pub async fn validate_cookies(app: AppHandle, browser: String) -> Result<serde_j
         return Err("yt-dlp 未安装，请先在设置页面的 Tools 中下载 yt-dlp".to_string());
     }
 
-    emit(&app, &format!("[1/3] 正在从 {} 提取 cookies...", browser));
+    emit_step(&app, 1, &browser);
 
     let auth_token = match dump_and_extract_auth_token(&app, &browser).await {
         Ok(t) => {
-            emit(&app, "[2/3] 已提取到 x.com auth_token，正在验证登录状态...");
+            emit_step(&app, 2, &browser);
             t
         }
-        Err(e) => {
-            emit(&app, &format!("[-] 提取失败: {}", e));
+        Err((msg, code)) => {
+            emit_fail(&app, &browser, code);
             return Ok(serde_json::json!({
                 "success": false,
-                "message": e,
+                "message": msg,
                 "cookie_count": 0,
+                "error_code": code,
             }));
         }
     };
@@ -42,33 +43,56 @@ pub async fn validate_cookies(app: AppHandle, browser: String) -> Result<serde_j
     // Verify the token works on x.com and get the username
     match verify_x_auth_token(&auth_token).await {
         Ok(username) => {
-            emit(&app, &format!("[3/3] 验证成功！x.com 登录有效 — 用户: @{}", username));
+            emit_step(&app, 3, &browser);
             Ok(serde_json::json!({
                 "success": true,
-                "message": format!("[+] x.com 登录有效 — 用户: @{}", username),
+                "message": username,
                 "cookie_count": 1,
                 "username": username,
+                "error_code": null,
             }))
         }
-        Err(msg) => {
-            emit(&app, &format!("[-] API 验证失败: {}", msg));
+        Err((msg, code)) => {
+            emit_fail(&app, &browser, code);
             Ok(serde_json::json!({
                 "success": false,
-                "message": format!("[-] x.com auth_token 无效: {}", msg),
+                "message": msg,
                 "cookie_count": 0,
+                "error_code": code,
             }))
         }
     }
 }
 
-fn emit(app: &AppHandle, msg: &str) {
-    let _ = app.emit("cookies-progress", msg.to_string());
+/// Emit a structured progress step (1 = extracting, 2 = verifying, 3 = success).
+fn emit_step(app: &AppHandle, step: u8, browser: &str) {
+    let _ = app.emit(
+        "cookies-progress",
+        serde_json::json!({ "step": step, "browser": browser }),
+    );
+}
+
+/// Emit a structured failure step (0 = failed, with an error_code for i18n).
+fn emit_fail(app: &AppHandle, browser: &str, code: &str) {
+    let _ = app.emit(
+        "cookies-progress",
+        serde_json::json!({
+            "step": 0,
+            "browser": browser,
+            "error_code": code,
+        }),
+    );
 }
 
 /// Dump browser cookies to a temp file via yt-dlp and extract x.com `auth_token`.
-async fn dump_and_extract_auth_token(_app: &AppHandle, browser: &str) -> Result<String, String> {
+/// Returns `(message, error_code)` on failure.
+async fn dump_and_extract_auth_token(
+    _app: &AppHandle,
+    browser: &str,
+) -> Result<String, (String, &'static str)> {
     let temp_dir = std::env::temp_dir().join("xdownload_cookies");
-    std::fs::create_dir_all(&temp_dir).map_err(|e| format!("创建临时目录失败: {}", e))?;
+    std::fs::create_dir_all(&temp_dir)
+        .map_err(|e| (format!("创建临时目录失败: {}", e), "unknown"))?;
 
     let cookie_file = temp_dir.join("cookies.txt");
     let _ = std::fs::remove_file(&cookie_file);
@@ -122,24 +146,30 @@ async fn dump_and_extract_auth_token(_app: &AppHandle, browser: &str) -> Result<
             if lower.contains("could not copy")
                 || (lower.contains("copy") && lower.contains("database"))
             {
-                Err(format!(
-                    "{} 正在运行，Cookie 数据库被锁定，请关闭浏览器后重试",
-                    browser
+                Err((
+                    format!("{} 正在运行，Cookie 数据库被锁定，请关闭浏览器后重试", browser),
+                    "browser_locked",
                 ))
             } else if lower.contains("could not find") || lower.contains("not found") {
-                Err(format!("未找到 {} Cookie 数据库（浏览器未安装或从未使用）", browser))
+                Err((
+                    format!("未找到 {} Cookie 数据库（浏览器未安装或从未使用）", browser),
+                    "browser_not_found",
+                ))
             } else {
-                Err(format!(
-                    "未在浏览器 cookie 中找到 x.com 的 auth_token，请确保已在浏览器中登录 x.com"
+                Err((
+                    format!(
+                        "未在浏览器 cookie 中找到 x.com 的 auth_token，请确保已在浏览器中登录 x.com"
+                    ),
+                    "no_auth_token",
                 ))
             }
         }
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("timeout") {
-                Err(format!("{} 验证超时", browser))
+                Err((format!("{} 验证超时", browser), "timeout"))
             } else {
-                Err(format!("cookies 提取异常: {}", msg))
+                Err((format!("cookies 提取异常: {}", msg), "unknown"))
             }
         }
     }
@@ -174,7 +204,8 @@ fn parse_auth_token(path: &std::path::Path) -> Result<String, String> {
 /// Verify the auth_token by fetching x.com/home with the cookie.
 /// If the cookie is valid, the page returns a 200 with the user's info embedded.
 /// If invalid or expired, x.com redirects to the login page (302 or different content).
-async fn verify_x_auth_token(auth_token: &str) -> Result<String, String> {
+/// Returns `(message, error_code)` on failure.
+async fn verify_x_auth_token(auth_token: &str) -> Result<String, (String, &'static str)> {
     let mut builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none()) // don't follow redirects — 302 = not authenticated
         .timeout(std::time::Duration::from_secs(15));
@@ -183,7 +214,9 @@ async fn verify_x_auth_token(auth_token: &str) -> Result<String, String> {
         builder = builder.proxy(proxy);
     }
 
-    let client = builder.build().map_err(|e| format!("创建请求客户端失败: {}", e))?;
+    let client = builder
+        .build()
+        .map_err(|e| (format!("创建请求客户端失败: {}", e), "unknown"))?;
 
     let resp = client
         .get("https://x.com/home")
@@ -195,9 +228,9 @@ async fn verify_x_auth_token(auth_token: &str) -> Result<String, String> {
         .await
         .map_err(|e| {
             if e.is_timeout() {
-                "请求超时，请检查网络或代理".to_string()
+                ("请求超时，请检查网络或代理".to_string(), "timeout")
             } else {
-                format!("无法访问 x.com: {}", e)
+                (format!("无法访问 x.com: {}", e), "network")
             }
         })?;
 
@@ -205,11 +238,17 @@ async fn verify_x_auth_token(auth_token: &str) -> Result<String, String> {
 
     // If x.com redirects us, the cookie is invalid
     if status.is_redirection() {
-        return Err("auth_token 已过期或无效，请在浏览器中重新登录 x.com".to_string());
+        return Err((
+            "auth_token 已过期或无效，请在浏览器中重新登录 x.com".to_string(),
+            "token_invalid",
+        ));
     }
 
     if !status.is_success() {
-        return Err(format!("x.com 返回错误 (HTTP {})", status.as_u16()));
+        return Err((
+            format!("x.com 返回错误 (HTTP {})", status.as_u16()),
+            "token_invalid",
+        ));
     }
 
     let body = resp.text().await.unwrap_or_default();
@@ -234,7 +273,10 @@ async fn verify_x_auth_token(auth_token: &str) -> Result<String, String> {
         }
     }
 
-    Err("未能从 x.com 页面中解析出用户名，可能页面结构已变更".to_string())
+    Err((
+        "未能从 x.com 页面中解析出用户名，可能页面结构已变更".to_string(),
+        "parse",
+    ))
 }
 
 /// Extract screen_name from x.com HTML by looking for it in embedded JSON state.

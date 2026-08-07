@@ -2,8 +2,10 @@ import { useState } from "react";
 import { Github, RefreshCw } from "lucide-react";
 import { checkUpdate } from "../../lib/bindings";
 import { toast } from "sonner";
+import { useI18n } from "../../lib/i18n";
 
 export default function AboutPage() {
+  const { t } = useI18n();
   const [checking, setChecking] = useState(false);
 
   const handleCheckUpdate = async () => {
@@ -16,10 +18,12 @@ export default function AboutPage() {
       if (result.error) {
         toast.error(result.error);
       } else if (result.has_update) {
-        toast(`发现新版本 v${result.latest_version}`, {
-          description: `当前版本 v${result.current_version}`,
+        toast(t("about.newVersion", { ver: result.latest_version }), {
+          description: t("about.currentVersion", {
+            ver: result.current_version,
+          }),
           action: {
-            label: "前往下载",
+            label: t("about.goDownload"),
             onClick: () => {
               const url =
                 result.url ?? "https://github.com/MuZiCul/XDownload/releases";
@@ -29,10 +33,10 @@ export default function AboutPage() {
           duration: 8000,
         });
       } else {
-        toast.success("已是最新版本");
+        toast.success(t("about.upToDate"));
       }
     } catch {
-      toast.error("检测失败，请检查网络连接");
+      toast.error(t("about.checkFail"));
     } finally {
       setChecking(false);
     }
@@ -46,7 +50,7 @@ export default function AboutPage() {
 
           {/* Version + check update button */}
           <div className="flex items-center justify-center gap-2 mb-2">
-            <p className="text-sm text-gray-500">v2.5.1</p>
+            <p className="text-sm text-gray-500">v2.5.2</p>
             <button
               className="inline-flex items-center gap-1 text-[11px] text-blue-500 hover:text-blue-600 hover:underline disabled:text-gray-300 disabled:no-underline transition-colors"
               onClick={handleCheckUpdate}
@@ -56,13 +60,13 @@ export default function AboutPage() {
                 size={12}
                 className={checking ? "animate-spin" : ""}
               />
-              {checking ? "检测中..." : "检测更新"}
+              {checking ? t("about.checking") : t("about.checkUpdate")}
             </button>
           </div>
 
           <div className="h-5" />
           <p className="text-sm text-gray-600 leading-relaxed mb-1">
-            基于 yt-dlp 的视频下载器
+            {t("about.desc")}
           </p>
           <p className="text-xs text-gray-500 mb-3">By MuZiCul</p>
           <a

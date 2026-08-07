@@ -6,6 +6,7 @@
 /node_modules/
 /src-tauri/target/
 /src-tauri/downloads/
+/src-tauri/config/
 /bin/
 /progress/
 /config/

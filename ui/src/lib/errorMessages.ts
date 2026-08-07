@@ -1,64 +1,54 @@
 /**
  * Convert raw error messages (from backend / yt-dlp) into friendly,
- * user-facing Chinese messages.
+ * user-facing messages. Matched rules return an i18n key that is translated
+ * through the active UI language; unmatched text is returned verbatim.
  *
  * The rules are matched against the raw yt-dlp error text (mostly from the
  * Twitter/X extractor). The FIRST matching rule wins, so order matters —
  * put the most specific rules first.
  */
+import { t as i18nT } from "./i18n";
 
-type Rule = { pattern: RegExp; message: string };
+type Rule = { pattern: RegExp; key: string };
 
 const RULES: Rule[] = [
   // Account suspended (author banned by X).
-  { pattern: /suspended/i, message: "该视频作者已被 X 封禁，无法获取视频内容" },
+  { pattern: /suspended/i, key: "error.suspended" },
   // Private / protected account — must be logged in and following.
   {
     pattern: /protected|not authorized|private account/i,
-    message: "该账号为私密/受保护账号，需登录并关注后才能查看",
+    key: "error.private",
   },
   // Tweet deleted / no longer available / tombstoned.
   {
     pattern: /tweet.*(?:unavailable|no longer|deleted)/i,
-    message: "该推文已被删除或不可用",
+    key: "error.deleted",
   },
   // NSFW / age-restricted content.
   {
     pattern: /nsfw|age.?restricted|requires authentication/i,
-    message: "该内容需要登录或年龄验证后才能查看",
+    key: "error.nsfw",
   },
   // The tweet contains no downloadable video / the selected item is not a video.
   {
     pattern: /no video could be found|is not a video/i,
-    message: "该推文中没有可下载的视频",
+    key: "error.noVideo",
   },
   // Guest token / guest mode failure (X anti-bot measures).
-  {
-    pattern: /guest mode|guest token/i,
-    message: "获取访客身份失败，请尝试设置 Cookies 或代理后重试",
-  },
+  { pattern: /guest mode|guest token/i, key: "error.guestToken" },
   // Rate limiting.
-  {
-    pattern: /rate.?limit|http error 429/i,
-    message: "请求过于频繁，请稍后重试",
-  },
+  { pattern: /rate.?limit|http error 429/i, key: "error.rateLimit" },
   // Geo restriction.
   {
     pattern: /geoblocked|not available in your country/i,
-    message: "该内容在您所在地区不可用",
+    key: "error.geoblocked",
   },
   // Broadcast / live.
-  { pattern: /broadcast no longer exists/i, message: "该直播已结束或不存在" },
+  { pattern: /broadcast no longer exists/i, key: "error.broadcast" },
   // Twitter Spaces.
-  {
-    pattern: /space not found|space.*ended/i,
-    message: "该 Space 不存在或已结束",
-  },
+  { pattern: /space not found|space.*ended/i, key: "error.space" },
   // Generic API error.
-  {
-    pattern: /error\(s\) while querying api/i,
-    message: "X 接口返回异常，请稍后重试",
-  },
+  { pattern: /error\(s\) while querying api/i, key: "error.api" },
 ];
 
 export function friendlyErrorMessage(err: unknown): string {
@@ -70,7 +60,7 @@ export function friendlyErrorMessage(err: unknown): string {
         : `${err}`;
   for (const rule of RULES) {
     if (rule.pattern.test(raw)) {
-      return rule.message;
+      return i18nT(rule.key);
     }
   }
   return raw;

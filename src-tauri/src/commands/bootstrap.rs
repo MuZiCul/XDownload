@@ -170,6 +170,19 @@ pub async fn check_ytdlp() -> serde_json::Value {
     serde_json::json!({ "available": false, "version": Option::<String>::None })
 }
 
+/// Whether the bundled ffmpeg exists on disk under `bin/` (not from PATH).
+/// Used by the frontend to warn before a download that highest-quality
+/// video+audio merging may be unavailable.
+#[tauri::command]
+pub fn is_ffmpeg_bundled() -> bool {
+    let bin_dir = crate::utils::app_home::AppHome::bin_dir();
+    #[cfg(windows)]
+    let bundled = bin_dir.join("ffmpeg.exe");
+    #[cfg(not(windows))]
+    let bundled = bin_dir.join("ffmpeg");
+    bundled.exists()
+}
+
 /// Check if ffmpeg is available and get its version
 #[tauri::command]
 pub async fn check_ffmpeg() -> serde_json::Value {

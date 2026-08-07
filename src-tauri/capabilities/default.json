@@ -7,6 +7,8 @@
     "opener:default",
     "dialog:default",
     "shell:default",
+    "clipboard-manager:default",
+    "notification:default",
     {
       "identifier": "shell:allow-execute",
       "allow": [

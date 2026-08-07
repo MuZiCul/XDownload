@@ -2,6 +2,7 @@ import { useState } from "react";
 import { saveLanguage } from "../../lib/bindings";
 import { toast } from "sonner";
 import { Save } from "lucide-react";
+import { useI18n, setLang, type Lang } from "../../lib/i18n";
 
 type Props = {
   lang: string;
@@ -9,6 +10,7 @@ type Props = {
 };
 
 export default function LanguageSetting({ lang, onChange }: Props) {
+  const { t } = useI18n();
   const [saving, setSaving] = useState(false);
   const [committed, setCommitted] = useState(lang);
   const changed = lang !== committed;
@@ -18,9 +20,15 @@ export default function LanguageSetting({ lang, onChange }: Props) {
     try {
       await saveLanguage(lang);
       setCommitted(lang);
-      toast.success(`语言已保存: ${lang === "zh" ? "中文" : "English"}（重启后完全生效）`);
+      // Apply immediately (no restart needed).
+      setLang(lang === "en" ? "en" : "zh");
+      toast.success(
+        t("lang.saved", {
+          lang: lang === "zh" ? t("lang.zh") : t("lang.en"),
+        })
+      );
     } catch (err: any) {
-      toast.error(`保存失败: ${err}`);
+      toast.error(t("common.saveFail", { err }));
     } finally {
       setSaving(false);
     }
@@ -28,15 +36,15 @@ export default function LanguageSetting({ lang, onChange }: Props) {
 
   return (
     <div className="section-card">
-      <div className="section-title">语言 / Language</div>
+      <div className="section-title">{t("lang.title")}</div>
       <div className="flex items-center gap-2">
         <select
           value={lang}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => onChange(e.target.value as Lang)}
           className="text-xs"
         >
-          <option value="zh">中文</option>
-          <option value="en">English</option>
+          <option value="zh">{t("lang.zh")}</option>
+          <option value="en">{t("lang.en")}</option>
         </select>
         <button
           className="btn flex items-center gap-1"
@@ -44,9 +52,9 @@ export default function LanguageSetting({ lang, onChange }: Props) {
           disabled={saving || !changed}
         >
           <Save size={13} />
-          {saving ? "..." : "保存"}
+          {saving ? "..." : t("common.save")}
         </button>
-        <span className="text-[11px] text-zinc-400">保存后重启生效</span>
+        <span className="text-[11px] text-zinc-400">{t("lang.hintImmediate")}</span>
       </div>
     </div>
   );

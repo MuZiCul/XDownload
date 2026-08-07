@@ -37,19 +37,61 @@ const FFMPEG_URLS: &[&str] = &[
 ];
 
 impl Bootstrap {
-    /// Build a reqwest client that respects the global proxy config.
-    fn build_client() -> Result<reqwest::Client> {
-        let mut builder = reqwest::Client::builder()
-            .timeout(Duration::from_secs(120))
-            .user_agent(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) XDownload/2.5.1",
-            );
+    /// Build a direct (no-proxy) client with a fast-failing connect timeout
+    /// (8s) so a blocked local network fails quickly before falling back to
+    /// the configured proxy. The overall timeout stays generous for large
+    /// downloads (ffmpeg zip etc.).
+    fn build_direct_client() -> Result<reqwest::Client> {
+        reqwest::Client::builder()
+            .no_proxy()
+            .connect_timeout(Duration::from_secs(8))
+            .timeout(Duration::from_secs(180))
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) XDownload/2.5.2")
+            .build()
+            .context("failed to build direct HTTP client")
+    }
 
-        if let Some(proxy) = ProxyConfig::to_reqwest_proxy() {
-            builder = builder.proxy(proxy);
+    /// Build a client routed through the configured proxy, or None when no
+    /// proxy is configured.
+    fn build_proxy_client() -> Result<Option<reqwest::Client>> {
+        let Some(proxy) = ProxyConfig::to_reqwest_proxy() else {
+            return Ok(None);
+        };
+        reqwest::Client::builder()
+            .proxy(proxy)
+            .timeout(Duration::from_secs(180))
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) XDownload/2.5.2")
+            .build()
+            .map(Some)
+            .context("failed to build proxy HTTP client")
+    }
+
+    /// Download a file from `url` to `dest` with progress reporting.
+    ///
+    /// Strategy: try the local network **direct** first (fast-failing connect
+    /// timeout), then fall back to the configured proxy when the direct
+    /// attempt fails. Without a configured proxy only the direct attempt runs.
+    pub async fn download_with_fallback(
+        url: &str,
+        dest: &Path,
+        progress_cb: &impl Fn(u32),
+    ) -> Result<()> {
+        let direct = Self::build_direct_client()?;
+        match Self::download_to_file(&direct, url, dest, progress_cb).await {
+            Ok(()) => return Ok(()),
+            Err(direct_err) => {
+                tracing::warn!(
+                    "direct download failed ({}), trying configured proxy",
+                    url
+                );
+                if let Some(proxy_client) = Self::build_proxy_client()? {
+                    return Self::download_to_file(&proxy_client, url, dest, progress_cb)
+                        .await
+                        .with_context(|| format!("直连与代理下载均失败: {}", url));
+                }
+                Err(direct_err)
+            }
         }
-
-        builder.build().context("failed to build HTTP client")
     }
 
     // ==================== yt-dlp ====================
@@ -68,15 +110,13 @@ impl Bootstrap {
             bin_dir.join("yt-dlp")
         };
 
-        let client = Self::build_client()?;
-
         let mut last_error: Option<anyhow::Error> = None;
         for (i, url) in YTDLP_URLS.iter().enumerate() {
             if i > 0 {
                 tracing::info!("switching to mirror source {} for yt-dlp", i + 1);
             }
 
-            match Self::download_to_file(&client, url, &dest, &progress_cb).await {
+            match Self::download_with_fallback(url, &dest, &progress_cb).await {
                 Ok(_) => {
                     // Set executable on Unix
                     #[cfg(unix)]
@@ -137,7 +177,6 @@ impl Bootstrap {
         std::fs::create_dir_all(&bin_dir)
             .context("failed to create bin directory")?;
 
-        let client = Self::build_client()?;
         let temp_zip = bin_dir.join("ffmpeg-temp.zip");
 
         let mut on_extracting = Some(on_extracting);
@@ -147,7 +186,7 @@ impl Bootstrap {
                 tracing::info!("switching to mirror source {} for ffmpeg", i + 1);
             }
 
-            match Self::download_to_file(&client, url, &temp_zip, &progress_cb).await {
+            match Self::download_with_fallback(url, &temp_zip, &progress_cb).await {
                 Ok(_) => {
                     if let Some(cb) = on_extracting.take() {
                         cb();

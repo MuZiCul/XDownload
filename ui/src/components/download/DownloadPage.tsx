@@ -1,19 +1,34 @@
-import { useState, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { fetchVideoInfo, loadSettings, checkYtdlp } from "../../lib/bindings";
+import {
+  fetchVideoInfo,
+  loadSettings,
+  checkYtdlp,
+  checkFfmpeg,
+  isFfmpegBundled,
+  checkVideoDownloaded,
+  openDownloadPath,
+} from "../../lib/bindings";
 import type { VideoInfo, DownloadConfig } from "../../lib/types";
 import { toast } from "sonner";
 import UrlBar from "./UrlBar";
 import VideoInfoCard from "./VideoInfoCard";
 import FormatTable from "./FormatTable";
-import DownloadControls from "./DownloadControls";
+import {
+  useDownloadStore,
+  startDownloadGlobal,
+  cancelDownloadGlobal,
+} from "../../lib/downloadStore";
 import { friendlyErrorMessage } from "../../lib/errorMessages";
+import { useI18n } from "../../lib/i18n";
 
 function defaultConfig(): DownloadConfig {
   return {
     url: "",
     video_id: null,
-    format_id: "best",
+    title: null,
+    // 固定智能最佳：合并最佳视频流+音频流，无分离流时降级到最佳单文件
+    format_id: "bestvideo+bestaudio/best",
     output_dir: "downloads",
     output_template: "%(title)s.%(ext)s",
     extract_audio: false,
@@ -30,8 +45,33 @@ function defaultConfig(): DownloadConfig {
 }
 
 export default function DownloadPage() {
+  const { t } = useI18n();
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
   const [config, setConfig] = useState<DownloadConfig>(defaultConfig());
+  const [confirming, setConfirming] = useState(false);
+  // The freshest config built right before download (used when the user
+  // confirms a repeat download, so it also uses the latest settings).
+  const [pendingCfg, setPendingCfg] = useState<DownloadConfig | null>(null);
+  // Global download state — survives tab switches / page unmounts.
+  const { downloading, completed } = useDownloadStore();
+
+  // When a download completes, mark the video as downloaded so the info card
+  // refreshes (badge + "重新下载") in real time.
+  const prevCompleted = useRef(false);
+  useEffect(() => {
+    if (completed && !prevCompleted.current) {
+      setVideoInfo((prev) =>
+        prev
+          ? {
+              ...prev,
+              downloaded: true,
+              downloaded_at: Math.floor(Date.now() / 1000),
+            }
+          : prev
+      );
+    }
+    prevCompleted.current = completed;
+  }, [completed]);
 
   // Load saved settings into download config on mount and when config is applied
   const reloadConfigFromSettings = () => {
@@ -57,20 +97,27 @@ export default function DownloadPage() {
     mutationFn: async (url: string) => {
       const ytStatus = await checkYtdlp();
       if (!ytStatus.available) {
-        throw new Error("yt-dlp 未安装，请先在设置页面的 Tools 中下载 yt-dlp");
+        throw new Error(t("tools.missing.ytdlp"));
       }
       return fetchVideoInfo(url);
     },
     onMutate: () => {
-      toast.loading("正在获取视频信息...", { id: "fetch-video" });
+      toast.loading(t("prog.fetching"), { id: "fetch-video" });
     },
     onSuccess: (data) => {
       setVideoInfo(data);
-      setConfig((c) => ({ ...c, url: data.url, video_id: data.id }));
-      toast.success("获取成功", { id: "fetch-video" });
+      setConfig((c) => ({
+        ...c,
+        url: data.url,
+        video_id: data.id,
+        title: data.title,
+      }));
+      toast.success(t("url.fetchOk"), { id: "fetch-video" });
     },
     onError: (err: any) => {
-      toast.error(`获取失败: ${friendlyErrorMessage(err)}`, { id: "fetch-video" });
+      toast.error(t("url.fetchFail", { err: friendlyErrorMessage(err) }), {
+        id: "fetch-video",
+      });
     },
   });
 
@@ -78,44 +125,114 @@ export default function DownloadPage() {
     fetchMutation.mutate(url);
   };
 
-  const handleFormatSelect = (formatId: string) => {
-    setConfig((c) => ({ ...c, format_id: formatId }));
+  const checkTools = async () => {
+    const ytStatus = await checkYtdlp();
+    if (!ytStatus.available) {
+      throw new Error(t("tools.missing.ytdlp"));
+    }
+    const ffStatus = await checkFfmpeg();
+    if (!ffStatus.available) {
+      throw new Error(t("tools.missing.ffmpeg"));
+    }
+    // ffmpeg 可用但不在内置 bin 目录（依赖系统 PATH）：告知用户最高画质
+    // （音视频合并）可能无法下载，但不阻断下载。
+    try {
+      const bundled = await isFfmpegBundled();
+      if (!bundled) {
+        toast.warning(t("tools.ffmpegNotBundled"));
+      }
+    } catch {
+      // 提示失败不影响下载
+    }
   };
 
-  const handleFormatQuick = (formatId: string) => {
-    setConfig((c) => ({ ...c, format_id: formatId }));
+  // Before downloading, pull the latest settings from disk so the download
+  // always uses fresh output_dir / cookies (avoids stale config from the
+  // settings page).
+  const buildLatestConfig = async (): Promise<DownloadConfig> => {
+    try {
+      const s = await loadSettings();
+      return {
+        ...config,
+        output_dir: s.download_dir ?? "downloads",
+        cookies_from_browser: s.cookies_from_browser ?? null,
+      };
+    } catch {
+      return config;
+    }
+  };
+
+  // Before downloading, re-check on disk whether this video already exists.
+  // This happens right before the request, so if the user deleted the file
+  // after seeing the "已下载" hint, we download again without asking.
+  // Note: tool checks (yt-dlp --version / ffmpeg -version) are deferred to the
+  // confirm / actual-download step so the repeat-download dialog responds
+  // instantly instead of waiting for child-process startup.
+  const handleDownloadClick = async () => {
+    if (downloading) return;
+    const latest = await buildLatestConfig();
+    setPendingCfg(latest);
+
+    if (videoInfo?.id) {
+      try {
+        const status = await checkVideoDownloaded(videoInfo.id);
+        if (status.downloaded) {
+          setConfirming(true);
+          return;
+        }
+      } catch {
+        // Check failed — don't block the download.
+      }
+    }
+
+    try {
+      await checkTools();
+    } catch (err: any) {
+      toast.error(err.message);
+      return;
+    }
+    startDownloadGlobal(latest, { title: videoInfo?.title ?? null });
+  };
+
+  const handleConfirmDownload = async () => {
+    setConfirming(false);
+    try {
+      await checkTools();
+    } catch (err: any) {
+      toast.error(err.message);
+      setPendingCfg(null);
+      return;
+    }
+    startDownloadGlobal(pendingCfg ?? config, {
+      title: videoInfo?.title ?? null,
+    });
+    setPendingCfg(null);
+  };
+
+  const handleOpenPath = () => {
+    if (!videoInfo?.id) return;
+    openDownloadPath(videoInfo.id).catch((e: any) =>
+      toast.error(t("video.openPathFail", { err: e }))
+    );
   };
 
   return (
     <div className="p-3 max-w-[900px] mx-auto">
       <UrlBar onFetch={handleFetch} isLoading={fetchMutation.isPending} />
 
-      <div className="space-y-3">
-        <VideoInfoCard info={videoInfo} />
-        <FormatTable
-          formats={videoInfo?.formats ?? []}
-          selectedFormat={config.format_id}
-          onSelect={handleFormatSelect}
-        />
-        <DownloadControls
-          config={config}
-          videoInfo={videoInfo}
-          onConfigChange={setConfig}
-          onFormatQuick={handleFormatQuick}
-          onDownloadComplete={() => {
-            // Mark the video as downloaded locally so the button becomes
-            // "重新下载" and the info card shows the completion time.
-            setVideoInfo((prev) =>
-              prev
-                ? {
-                    ...prev,
-                    downloaded: true,
-                    downloaded_at: Math.floor(Date.now() / 1000),
-                  }
-                : prev
-            );
-          }}
-        />
+      <VideoInfoCard
+        info={videoInfo}
+        downloading={downloading}
+        confirming={confirming}
+        onDownload={handleDownloadClick}
+        onConfirmDownload={handleConfirmDownload}
+        onCancelConfirm={() => setConfirming(false)}
+        onCancelDownload={cancelDownloadGlobal}
+        onOpenPath={handleOpenPath}
+      />
+
+      <div className="mt-3">
+        <FormatTable formats={videoInfo?.formats ?? []} />
       </div>
     </div>
   );

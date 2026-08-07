@@ -80,7 +80,34 @@ pub fn parse_progress_line(line: &str) -> Option<DownloadProgress> {
         });
     }
 
-    // Old --progress-template pipe-delimited format: "bytes|total|speed|eta|percent|status"
+    // --progress-template pipe-delimited format (emitted to stdout once per
+    // progress update, keeping HLS downloads smooth):
+    //   "download:<bytes>|<total>|<speed>|<eta>|<percent>|<status>"
+    // e.g. download:1234567|4567890|1.5MiB/s|00:05|45.2%|downloading
+    if line.starts_with("download:") && line.contains('|') {
+        let rest = &line["download:".len()..];
+        let parts: Vec<&str> = rest.split('|').collect();
+        if parts.len() >= 5 {
+            let downloaded = parse_long_safe(parts[0]);
+            let total = parse_long_safe(parts[1]);
+            let speed = parts.get(2).map(|s| s.to_string()).unwrap_or_default();
+            let eta = parts.get(3).map(|s| s.to_string()).unwrap_or_default();
+            let percent = parts.get(4).map(|s| s.to_string()).unwrap_or_default();
+            let status = parts.get(5).map(|s| s.to_string()).unwrap_or_default();
+
+            return Some(DownloadProgress {
+                downloaded_bytes: downloaded,
+                total_bytes: total,
+                speed,
+                eta,
+                percent,
+                status,
+            });
+        }
+    }
+
+    // Backward-compat pipe-delimited format without the "download:" prefix:
+    // "bytes|total|speed|eta|percent|status"
     if line.contains('|') {
         let parts: Vec<&str> = line.split('|').collect();
         if parts.len() >= 5 {

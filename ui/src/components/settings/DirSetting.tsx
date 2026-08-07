@@ -4,6 +4,7 @@ import { saveSettings, loadSettings, openDownloadDir } from "../../lib/bindings"
 import type { AppSettings } from "../../lib/types";
 import { toast } from "sonner";
 import { Save, FolderOpen } from "lucide-react";
+import { useI18n } from "../../lib/i18n";
 
 type Props = {
   dir: string;
@@ -11,6 +12,7 @@ type Props = {
 };
 
 export default function DirSetting({ dir, onChange }: Props) {
+  const { t } = useI18n();
   const [saving, setSaving] = useState(false);
   const [committed, setCommitted] = useState(dir);
   const changed = dir !== committed;
@@ -24,7 +26,7 @@ export default function DirSetting({ dir, onChange }: Props) {
     try {
       await openDownloadDir();
     } catch (err: any) {
-      toast.error(`打开失败: ${err}`);
+      toast.error(t("common.openFail", { err }));
     }
   };
 
@@ -35,9 +37,9 @@ export default function DirSetting({ dir, onChange }: Props) {
       cfg.download_dir = dir || undefined;
       await saveSettings(cfg);
       setCommitted(dir);
-      toast.success("视频保存位置已保存");
+      toast.success(t("dir.saved"));
     } catch (err: any) {
-      toast.error(`保存失败: ${err}`);
+      toast.error(t("common.saveFail", { err }));
     } finally {
       setSaving(false);
     }
@@ -45,7 +47,7 @@ export default function DirSetting({ dir, onChange }: Props) {
 
   return (
     <div className="section-card">
-      <div className="section-title">视频保存位置</div>
+      <div className="section-title">{t("dir.title")}</div>
       <div className="flex items-center gap-2">
         <input
           type="text"
@@ -55,11 +57,11 @@ export default function DirSetting({ dir, onChange }: Props) {
           className="flex-1"
         />
         <button className="btn" onClick={handleBrowse}>
-          浏览
+          {t("dir.browse")}
         </button>
         <button className="btn flex items-center gap-1" onClick={handleOpen}>
           <FolderOpen size={13} />
-          打开
+          {t("dir.open")}
         </button>
         <button
           className="btn flex items-center gap-1"
@@ -67,7 +69,7 @@ export default function DirSetting({ dir, onChange }: Props) {
           disabled={saving || !changed}
         >
           <Save size={13} />
-          {saving ? "保存中..." : "保存"}
+          {saving ? t("common.saving") : t("common.save")}
         </button>
       </div>
     </div>
