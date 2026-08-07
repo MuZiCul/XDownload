@@ -104,20 +104,33 @@ pub fn open_download_path(app: tauri::AppHandle, video_id: String) -> Result<(),
 
     #[cfg(windows)]
     {
-        // `explorer /select,<path>` opens the parent folder and highlights the
-        // file. Pass the path as a single argument and let Rust apply the
-        // standard Windows command-line quoting (spaces inside the path are
-        // quoted automatically). Wrapping in `cmd /C` would re-parse the inner
-        // quotes, split the path and make explorer open "This PC" instead.
-        std::process::Command::new("explorer")
-            .arg(format!("/select,{}", path.display()))
-            .spawn()
-            .map_err(|e| format!("failed to open file location: {}", e))?;
-        tracing::info!(
-            "open_download_path: selecting '{}' in explorer",
-            path.display()
-        );
-        Ok(())
+        // Use the plugin's official "reveal in file manager" API, which on
+        // Windows calls SHOpenFolderAndSelectItems. This is immune to the
+        // command-line quoting pitfalls of `explorer /select,<path>` — with a
+        // space in the filename explorer mis-parses the argument and opens an
+        // unrelated folder (e.g. Documents).
+        use tauri_plugin_opener::OpenerExt;
+        match app.opener().reveal_item_in_dir(&path) {
+            Ok(_) => {
+                tracing::info!(
+                    "open_download_path: revealing '{}' in explorer",
+                    path.display()
+                );
+                Ok(())
+            }
+            Err(e) => {
+                // Reveal failed — fall back to opening the parent directory so
+                // the user can still reach the file.
+                tracing::warn!(
+                    "open_download_path: reveal failed ({}), opening parent dir",
+                    e
+                );
+                let dir = path.parent().unwrap_or(&path);
+                app.opener()
+                    .open_path(dir.to_string_lossy().to_string(), None::<&str>)
+                    .map_err(|e| format!("failed to open file location: {}", e))
+            }
+        }
     }
     #[cfg(not(windows))]
     {
@@ -168,6 +181,19 @@ pub async fn check_ytdlp() -> serde_json::Value {
     }
 
     serde_json::json!({ "available": false, "version": Option::<String>::None })
+}
+
+/// Whether the bundled ffmpeg exists on disk under `bin/` (not from PATH).
+/// Used by the frontend to warn before a download that highest-quality
+/// video+audio merging may be unavailable.
+#[tauri::command]
+pub fn is_ffmpeg_bundled() -> bool {
+    let bin_dir = crate::utils::app_home::AppHome::bin_dir();
+    #[cfg(windows)]
+    let bundled = bin_dir.join("ffmpeg.exe");
+    #[cfg(not(windows))]
+    let bundled = bin_dir.join("ffmpeg");
+    bundled.exists()
 }
 
 /// Check if ffmpeg is available and get its version

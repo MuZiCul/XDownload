@@ -8,16 +8,12 @@ pub async fn test_proxy(
     scheme: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let scheme = scheme.unwrap_or_else(|| "http".to_string());
-    // Temporarily set the proxy for testing
+
+    // Pure connectivity test for the given host/port/scheme. It does NOT touch
+    // the runtime proxy state and does NOT persist anything — applying and
+    // saving the proxy are handled explicitly by the frontend (save flow).
     let port_u16 = port.min(65535) as u16;
-    ProxyConfig::set_proxy_full(&host, port_u16, &scheme);
-
-    let result = ProxyConfig::test_proxy().await;
-
-    if result.success {
-        // Save on successful test
-        let _ = crate::services::config::ConfigManager::save_proxy(&host, port, &scheme);
-    }
+    let result = ProxyConfig::test_proxy_config(&host, port_u16, &scheme).await;
 
     Ok(serde_json::json!({
         "success": result.success,

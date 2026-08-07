@@ -1,6 +1,6 @@
 [package]
 name = "xdownload"
-version = "2.5.1"
+version = "2.6.0"
 edition = "2021"
 description = "X/Twitter video downloader based on yt-dlp, rewritten in Rust"
 authors = ["MuZiCul"]
@@ -24,6 +24,8 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
 hmac = "0.12"
 sha2 = "0.10"

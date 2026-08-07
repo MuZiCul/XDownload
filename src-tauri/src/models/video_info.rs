@@ -26,6 +26,10 @@ pub struct VideoInfo {
     pub webpage_url: Option<String>,
     #[serde(default)]
     pub formats: Vec<Format>,
+    /// Number of media entries in this URL (e.g. a tweet containing several
+    /// videos/images). 1 for a normal single-media video.
+    #[serde(default)]
+    pub media_count: usize,
     // ===== Download status (filled by the command layer, not by yt-dlp) =====
     /// Whether this video has already been downloaded (record exists AND the
     /// saved file still exists on disk).

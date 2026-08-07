@@ -3,19 +3,25 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster, toast } from "sonner";
 import TabBar from "./components/layout/TabBar";
 import StatusBar from "./components/layout/StatusBar";
+import GlobalDownloadBar from "./components/layout/GlobalDownloadBar";
 import DownloadPage from "./components/download/DownloadPage";
 import SettingsPage from "./components/settings/SettingsPage";
+import HistoryPage from "./components/history/HistoryPage";
 import AboutPage from "./components/about/AboutPage";
 import DisclaimerPage from "./components/about/DisclaimerPage";
 import { CONTENT } from "./components/about/DisclaimerPage";
-import type { Lang } from "./components/about/DisclaimerPage";
+import { initDownloadStore } from "./lib/downloadStore";
+import type { DownloadHistoryItem } from "./lib/types";
+import { initI18n, useI18n } from "./lib/i18n";
 import {
   acceptDisclaimer,
   checkUpdate,
   checkYtdlpUpdate,
   checkFfmpegUpdate,
+  downloadUpdate,
   getDisclaimerAccepted,
   getUninstallInfo,
+  installUpdate,
   loadSettings,
   openUninstallPanel,
   uninstallApp,
@@ -25,7 +31,8 @@ import type {
   YtdlpUpdateResult,
   FfmpegUpdateResult,
 } from "./lib/bindings";
-import { ArrowUpRight, Loader2, Trash2, X } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
+import { ArrowUpRight, Download, Loader2, Trash2, X } from "lucide-react";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -33,7 +40,7 @@ const queryClient = new QueryClient({
   },
 });
 
-type Tab = "download" | "settings" | "about" | "disclaimer";
+type Tab = "download" | "settings" | "history" | "about" | "disclaimer";
 
 function ToolCard({
   label,
@@ -46,6 +53,7 @@ function ToolCard({
   update: YtdlpUpdateResult | FfmpegUpdateResult | null;
   button: React.ReactNode;
 }) {
+  const { t } = useI18n();
   if (!update) return null;
 
   return (
@@ -54,9 +62,11 @@ function ToolCard({
 
       {update.not_installed ? (
         <div>
-          <p className="text-sm font-medium text-red-600 mb-1">未安装</p>
+          <p className="text-sm font-medium text-red-600 mb-1">
+            {t("tools.statusNotInstalled")}
+          </p>
           <p className="text-[11px] text-gray-400 mb-3">
-            请先在设置页面下载 {label}，否则无法使用下载功能
+            {t("app.toolNotInstalled", { label })}
           </p>
           {button}
         </div>
@@ -67,7 +77,7 @@ function ToolCard({
               v{update.latest_version}
             </p>
             <p className="text-[11px] text-gray-400">
-              当前 v{update.local_version}
+              {t("app.currentVersion", { ver: update.local_version })}
             </p>
           </div>
           {button}
@@ -99,6 +109,7 @@ const FFMPEG_COLOR = {
 } as const;
 
 function App() {
+  const { lang, t } = useI18n();
   const [activeTab, setActiveTab] = useState<Tab>("download");
   const [appUpdate, setAppUpdate] = useState<UpdateCheckResult | null>(null);
   const [ytdlpUpdate, setYtdlpUpdate] = useState<YtdlpUpdateResult | null>(null);
@@ -106,25 +117,8 @@ function App() {
 
   // --- Forced disclaimer (first launch) ---
   const [disclaimerAccepted, setDisclaimerAccepted] = useState<boolean | null>(null);
-  const [disclaimerLang, setDisclaimerLang] = useState<Lang>("zh");
   const [showDeclineConfirm, setShowDeclineConfirm] = useState(false);
   const [uninstalling, setUninstalling] = useState(false);
-
-  // Load language for the disclaimer content
-  useEffect(() => {
-    let active = true;
-    loadSettings()
-      .then((settings) => {
-        if (!active) return;
-        setDisclaimerLang(settings.lang === "en" ? "en" : "zh");
-      })
-      .catch(() => {
-        if (active) setDisclaimerLang("zh");
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
 
   // Check disclaimer acceptance on startup (takes priority over update modal)
   useEffect(() => {
@@ -140,6 +134,16 @@ function App() {
     return () => {
       active = false;
     };
+  }, []);
+
+  // Initialize the global download store (event listeners + state recovery).
+  useEffect(() => {
+    initDownloadStore();
+  }, []);
+
+  // Load the persisted UI language.
+  useEffect(() => {
+    initI18n();
   }, []);
 
   // Auto-check for updates on startup (app + yt-dlp + ffmpeg)
@@ -165,9 +169,51 @@ function App() {
     setAppUpdate(null);
     setYtdlpUpdate(null);
     setFfmpegUpdate(null);
+    setUpdatePhase("idle");
+    setUpdatePercent(0);
+    setUpdatePath(null);
   };
 
-  const d = CONTENT[disclaimerLang];
+  // --- In-app updater flow: download installer → install ---
+  type UpdatePhase = "idle" | "downloading" | "downloaded" | "installing";
+  const [updatePhase, setUpdatePhase] = useState<UpdatePhase>("idle");
+  const [updatePercent, setUpdatePercent] = useState(0);
+  const [updatePath, setUpdatePath] = useState<string | null>(null);
+
+  const handleDownloadUpdate = async () => {
+    if (!appUpdate?.download_url || updatePhase === "downloading") return;
+    setUpdatePhase("downloading");
+    setUpdatePercent(0);
+    const unlisten = await listen<any>("update-download-progress", (e) => {
+      const pct = Number(e.payload?.percent ?? 0);
+      setUpdatePercent(Math.min(Math.max(pct, 0), 100));
+    });
+    try {
+      const path = await downloadUpdate(appUpdate.download_url);
+      setUpdatePath(path);
+      setUpdatePhase("downloaded");
+    } catch (err: any) {
+      toast.error(t("app.downloadFail", { err }));
+      setUpdatePhase("idle");
+      setUpdatePercent(0);
+    } finally {
+      unlisten();
+    }
+  };
+
+  const handleInstallUpdate = async () => {
+    if (!updatePath || updatePhase !== "downloaded") return;
+    setUpdatePhase("installing");
+    try {
+      await installUpdate(updatePath);
+      // The app exits after launching the installer.
+    } catch (err: any) {
+      toast.error(t("app.installFail", { err }));
+      setUpdatePhase("downloaded");
+    }
+  };
+
+  const d = CONTENT[lang];
 
   // Accept → persist and enter the app.
   const handleAcceptDisclaimer = async () => {
@@ -215,8 +261,24 @@ function App() {
         <TabBar activeTab={activeTab} onTabChange={setActiveTab} />
 
         <main className="flex-1 overflow-auto min-h-0">
-          {activeTab === "download" && <DownloadPage />}
+          {/* DownloadPage stays mounted so its state (parsed video info,
+              format selection, download progress) survives tab switches. */}
+          <div className={activeTab === "download" ? "" : "hidden"}>
+            <DownloadPage />
+          </div>
           {activeTab === "settings" && <SettingsPage />}
+          {activeTab === "history" && (
+            <HistoryPage
+              onRedownload={(item: DownloadHistoryItem) => {
+                // Switch to the download tab and let DownloadPage fill the
+                // info card and start the download automatically.
+                setActiveTab("download");
+                window.dispatchEvent(
+                  new CustomEvent("history-redownload", { detail: item })
+                );
+              }}
+            />
+          )}
           {activeTab === "about" && <AboutPage />}
           {activeTab === "disclaimer" && <DisclaimerPage />}
         </main>
@@ -248,13 +310,13 @@ function App() {
             <button
               className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 transition-colors"
               onClick={closeModal}
-              aria-label="关闭"
+              aria-label={t("common.close")}
             >
               <X size={18} />
             </button>
 
             <p className="text-base font-semibold text-gray-800 mb-5">
-              {appUpdate ? "发现新版本" : "工具状态提醒"}
+              {appUpdate ? t("app.newVersion") : t("app.toolStatus")}
             </p>
 
             {/* App update */}
@@ -263,29 +325,80 @@ function App() {
                 <p className="text-xs font-semibold text-gray-500 mb-1">
                   XDownload
                 </p>
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-3">
                   <div>
                     <p className="text-lg font-bold text-blue-600">
                       v{appUpdate.latest_version}
                     </p>
                     <p className="text-[11px] text-gray-400">
-                      当前 v{appUpdate.current_version}
+                      {t("app.currentVersion", { ver: appUpdate.current_version })}
                     </p>
                   </div>
-                  <a
-                    href={
-                      appUpdate.url ??
-                      "https://github.com/MuZiCul/XDownload/releases"
-                    }
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={`px-4 py-2 text-xs rounded-lg ${APP_COLOR.btn} text-white font-medium ${APP_COLOR.btnHover} transition-colors inline-flex items-center gap-1`}
-                    onClick={() => setAppUpdate(null)}
-                  >
-                    下载
-                    <ArrowUpRight size={12} />
-                  </a>
+                  {appUpdate.download_url ? (
+                    updatePhase === "idle" && (
+                      <button
+                        className={`px-4 py-2 text-xs rounded-lg ${APP_COLOR.btn} text-white font-medium ${APP_COLOR.btnHover} transition-colors inline-flex items-center gap-1`}
+                        onClick={handleDownloadUpdate}
+                      >
+                        <Download size={12} />
+                        {t("app.downloadUpdate")}
+                      </button>
+                    )
+                  ) : (
+                    <a
+                      href={
+                        appUpdate.url ??
+                        "https://github.com/MuZiCul/XDownload/releases"
+                      }
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={`px-4 py-2 text-xs rounded-lg ${APP_COLOR.btn} text-white font-medium ${APP_COLOR.btnHover} transition-colors inline-flex items-center gap-1`}
+                      onClick={() => setAppUpdate(null)}
+                    >
+                      {t("app.download")}
+                      <ArrowUpRight size={12} />
+                    </a>
+                  )}
                 </div>
+
+                {/* In-app download progress */}
+                {appUpdate.download_url && updatePhase === "downloading" && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <div className="flex-1 h-1.5 bg-white/70 rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all duration-200"
+                        style={{
+                          width: `${Math.max(updatePercent, 2)}%`,
+                          background: "linear-gradient(90deg, #3b82f6, #6366f1)",
+                        }}
+                      />
+                    </div>
+                    <span className="text-[11px] tabular-nums text-gray-500 shrink-0">
+                      {updatePercent}%
+                    </span>
+                  </div>
+                )}
+
+                {/* Install button */}
+                {appUpdate.download_url && updatePhase === "downloaded" && (
+                  <div className="mt-2 flex items-center justify-end">
+                    <button
+                      className="px-4 py-2 text-xs rounded-lg bg-emerald-500 text-white font-medium hover:bg-emerald-600 transition-colors inline-flex items-center gap-1"
+                      onClick={handleInstallUpdate}
+                    >
+                      <Download size={12} />
+                      {t("app.installUpdate")}
+                    </button>
+                  </div>
+                )}
+
+                {/* Installing */}
+                {appUpdate.download_url && updatePhase === "installing" && (
+                  <div className="mt-2 flex items-center justify-end text-[11px] text-gray-500 gap-1.5">
+                    <Loader2 size={12} className="animate-spin" />
+                    {t("app.installing")}
+                  </div>
+                )}
               </div>
             )}
 
@@ -302,7 +415,7 @@ function App() {
                     setActiveTab("settings");
                   }}
                 >
-                  前往设置下载
+                  {t("app.goToSettings")}
                 </button>
               }
             />
@@ -320,7 +433,7 @@ function App() {
                     setActiveTab("settings");
                   }}
                 >
-                  前往设置下载
+                  {t("app.goToSettings")}
                 </button>
               }
             />

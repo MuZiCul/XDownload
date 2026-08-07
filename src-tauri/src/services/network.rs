@@ -42,10 +42,20 @@ impl NetworkDetect {
         }
     }
 
-    /// Check whether GitHub is accessible without proxy.
-    /// Used to decide if yt-dlp / ffmpeg can be downloaded directly.
+    /// Check whether GitHub is accessible — direct first, then via the
+    /// configured proxy. Used to decide if yt-dlp / ffmpeg can be downloaded.
     pub async fn is_github_accessible() -> bool {
-        let client = Self::direct_client(FULL_TIMEOUT);
+        // Fast direct probe first (no proxy).
+        {
+            let client = Self::direct_client(QUICK_TIMEOUT);
+            if let Ok(resp) = client.head("https://github.com").send().await {
+                if resp.status().as_u16() > 0 {
+                    return true;
+                }
+            }
+        }
+        // Fall back to the configured proxy (if any).
+        let client = Self::proxy_client(FULL_TIMEOUT);
         match client.head("https://github.com").send().await {
             Ok(resp) => resp.status().as_u16() > 0,
             Err(_) => false,

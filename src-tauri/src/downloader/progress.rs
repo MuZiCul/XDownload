@@ -48,6 +48,7 @@ pub fn parse_progress_line(line: &str) -> Option<DownloadProgress> {
             eta: caps.name("eta").map(|m| m.as_str().to_string()).unwrap_or_default(),
             percent: caps.name("percent").map(|m| m.as_str().to_string()).unwrap_or_default(),
             status: "downloading".to_string(),
+            stage: String::new(),
         });
     }
 
@@ -60,6 +61,7 @@ pub fn parse_progress_line(line: &str) -> Option<DownloadProgress> {
             eta: caps.name("eta").map(|m| m.as_str().to_string()).unwrap_or_default(),
             percent: "100%".to_string(),
             status: "finished".to_string(),
+            stage: String::new(),
         });
     }
 
@@ -77,10 +79,41 @@ pub fn parse_progress_line(line: &str) -> Option<DownloadProgress> {
             eta: String::new(),
             percent: "100%".to_string(),
             status: status.to_string(),
+            stage: "merge".to_string(),
         });
     }
 
-    // Old --progress-template pipe-delimited format: "bytes|total|speed|eta|percent|status"
+    // --progress-template pipe-delimited format (emitted to stdout once per
+    // progress update, keeping HLS downloads smooth):
+    //   "download:<bytes>|<total>|<speed>|<eta>|<percent>|<status>|<acodec>|<vcodec>"
+    // e.g. download:1234567|4567890|1.5MiB/s|00:05|45.2%|downloading|none|h264
+    if line.starts_with("download:") && line.contains('|') {
+        let rest = &line["download:".len()..];
+        let parts: Vec<&str> = rest.split('|').collect();
+        if parts.len() >= 5 {
+            let downloaded = parse_long_safe(parts[0]);
+            let total = parse_long_safe(parts[1]);
+            let speed = parts.get(2).map(|s| s.to_string()).unwrap_or_default();
+            let eta = parts.get(3).map(|s| s.to_string()).unwrap_or_default();
+            let percent = parts.get(4).map(|s| s.to_string()).unwrap_or_default();
+            let status = parts.get(5).map(|s| s.to_string()).unwrap_or_default();
+            let acodec = parts.get(6).map(|s| s.to_string()).unwrap_or_default();
+            let vcodec = parts.get(7).map(|s| s.to_string()).unwrap_or_default();
+
+            return Some(DownloadProgress {
+                downloaded_bytes: downloaded,
+                total_bytes: total,
+                speed,
+                eta,
+                percent,
+                status,
+                stage: stage_from_codecs(&acodec, &vcodec),
+            });
+        }
+    }
+
+    // Backward-compat pipe-delimited format without the "download:" prefix:
+    // "bytes|total|speed|eta|percent|status"
     if line.contains('|') {
         let parts: Vec<&str> = line.split('|').collect();
         if parts.len() >= 5 {
@@ -90,6 +123,8 @@ pub fn parse_progress_line(line: &str) -> Option<DownloadProgress> {
             let eta = parts.get(3).map(|s| s.to_string()).unwrap_or_default();
             let percent = parts.get(4).map(|s| s.to_string()).unwrap_or_default();
             let status = parts.get(5).map(|s| s.to_string()).unwrap_or_default();
+            let acodec = parts.get(6).map(|s| s.to_string()).unwrap_or_default();
+            let vcodec = parts.get(7).map(|s| s.to_string()).unwrap_or_default();
 
             return Some(DownloadProgress {
                 downloaded_bytes: downloaded,
@@ -98,11 +133,27 @@ pub fn parse_progress_line(line: &str) -> Option<DownloadProgress> {
                 eta,
                 percent,
                 status,
+                stage: stage_from_codecs(&acodec, &vcodec),
             });
         }
     }
 
     None
+}
+
+/// Derive the download stage from the stream's codecs: a video-only stream
+/// (`vcodec` present, `acodec` = none) is the video stage, an audio-only
+/// stream the audio stage; a combined file counts as the video stage.
+fn stage_from_codecs(acodec: &str, vcodec: &str) -> String {
+    let has_v = !vcodec.is_empty() && vcodec != "none";
+    let has_a = !acodec.is_empty() && acodec != "none";
+    if has_a && !has_v {
+        "audio".to_string()
+    } else if has_v {
+        "video".to_string()
+    } else {
+        String::new()
+    }
 }
 
 fn parse_long_safe(s: &str) -> i64 {

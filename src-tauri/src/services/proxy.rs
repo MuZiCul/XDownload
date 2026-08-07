@@ -143,7 +143,10 @@ impl ProxyConfig {
         if !s.enabled || s.host.is_empty() {
             return None;
         }
-        let url = format!("http://{}:{}", s.host, s.port);
+        // Honor the configured scheme (http/https/socks5/...). Previously this
+        // hard-coded "http://", so SOCKS5 proxies were silently tunneled via
+        // HTTP CONNECT here while yt-dlp used the real socks5 scheme.
+        let url = format!("{}://{}:{}", s.scheme, s.host, s.port);
         reqwest::Proxy::all(&url).ok()
     }
 
@@ -305,17 +308,14 @@ impl ProxyConfig {
 
     // ==================== Proxy Testing ====================
 
-    /// Test whether the configured proxy can reach x.com.
-    /// Returns a ProxyTestResult with success, HTTP status, elapsed_ms, and message.
-    pub async fn test_proxy() -> ProxyTestResult {
-        let (scheme, host, port) = {
-            let s = state().lock().unwrap();
-            if !s.enabled || s.host.is_empty() {
-                return ProxyTestResult::new(false, -1, 0, "proxy not enabled".to_string());
-            }
-            (s.scheme.clone(), s.host.clone(), s.port)
-        };
-
+    /// Test whether a given proxy (host / port / scheme) can reach x.com.
+    /// This is a **pure** connectivity test: it does NOT touch the global proxy
+    /// state and does NOT persist anything. Returns a ProxyTestResult with
+    /// success, HTTP status, elapsed_ms, and message.
+    pub async fn test_proxy_config(host: &str, port: u16, scheme: &str) -> ProxyTestResult {
+        if host.is_empty() || port == 0 {
+            return ProxyTestResult::new(false, -1, 0, "proxy not configured".to_string());
+        }
         let proxy_url = format!("{}://{}:{}", scheme, host, port);
         let proxy = match reqwest::Proxy::all(&proxy_url) {
             Ok(p) => p,
@@ -366,6 +366,18 @@ impl ProxyConfig {
                 ProxyTestResult::new(false, -1, elapsed, message)
             }
         }
+    }
+
+    /// Test the currently configured proxy (reads the global state).
+    pub async fn test_proxy() -> ProxyTestResult {
+        let (scheme, host, port) = {
+            let s = state().lock().unwrap();
+            if !s.enabled || s.host.is_empty() {
+                return ProxyTestResult::new(false, -1, 0, "proxy not enabled".to_string());
+            }
+            (s.scheme.clone(), s.host.clone(), s.port)
+        };
+        Self::test_proxy_config(&host, port, &scheme).await
     }
 }
 

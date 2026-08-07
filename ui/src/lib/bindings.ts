@@ -8,6 +8,7 @@ import type {
   ProxyTestResult,
   CookiesValidationResult,
   ToolStatus,
+  DownloadHistoryItem,
 } from "./types";
 
 // --- Download ---
@@ -32,6 +33,22 @@ export async function startDownload(config: DownloadConfig): Promise<boolean> {
 
 export async function cancelDownload(): Promise<void> {
   return invoke("cancel_download");
+}
+
+export async function listDownloadHistory(): Promise<DownloadHistoryItem[]> {
+  return invoke("list_download_history");
+}
+
+export async function deleteDownloadHistory(id: string): Promise<void> {
+  return invoke("delete_download_history", { id });
+}
+
+export async function clearDownloadHistory(): Promise<void> {
+  return invoke("clear_download_history");
+}
+
+export async function isDownloading(): Promise<boolean> {
+  return invoke("is_downloading");
 }
 
 // --- Settings ---
@@ -140,6 +157,11 @@ export async function checkFfmpeg(): Promise<ToolStatus> {
   return invoke("check_ffmpeg");
 }
 
+/** Whether the bundled ffmpeg (bin/ffmpeg.exe) exists on disk. */
+export async function isFfmpegBundled(): Promise<boolean> {
+  return invoke("is_ffmpeg_bundled");
+}
+
 export async function downloadYtDlp(): Promise<string> {
   return invoke("download_ytdlp");
 }
@@ -213,11 +235,23 @@ export interface UpdateCheckResult {
   latest_version: string | null;
   current_version: string;
   url: string | null;
+  /** Direct download URL of the installer asset (null when unavailable). */
+  download_url?: string | null;
   error?: string;
 }
 
 export async function checkUpdate(): Promise<UpdateCheckResult> {
   return invoke("check_update");
+}
+
+/** Download the new-version installer (direct first, then proxy). Returns the local path. */
+export async function downloadUpdate(url: string): Promise<string> {
+  return invoke("download_update", { url });
+}
+
+/** Launch the downloaded installer silently and exit the app. */
+export async function installUpdate(path: string): Promise<void> {
+  return invoke("install_update", { path });
 }
 
 export interface YtdlpUpdateResult {

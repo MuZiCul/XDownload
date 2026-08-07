@@ -17,13 +17,17 @@ pub fn parse_video_json(json: &str) -> Result<VideoInfo, String> {
             .to_string(),
         title: root["title"].as_str().map(|s| s.to_string()),
         description: root["description"].as_str().map(|s| s.to_string()),
-        duration: root["duration"].as_i64().unwrap_or(0),
+        // yt-dlp reports duration as a float (seconds). as_i64() only matches
+        // integer JSON values, so use as_f64() (handles ints and floats alike)
+        // and truncate to whole seconds.
+        duration: root["duration"].as_f64().unwrap_or(0.0) as i64,
         thumbnail: root["thumbnail"].as_str().map(|s| s.to_string()),
         uploader: root["uploader"].as_str().map(|s| s.to_string()),
         view_count: root["view_count"].as_i64().unwrap_or(0),
         like_count: root["like_count"].as_i64().unwrap_or(0),
         webpage_url: root["webpage_url"].as_str().map(|s| s.to_string()),
         formats: vec![],
+        media_count: 1,
         // Download status — filled by the command layer, not by yt-dlp.
         downloaded: false,
         downloaded_at: None,

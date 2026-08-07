@@ -6,9 +6,19 @@ use crate::models::video_info::VideoInfo;
 use crate::services::proxy::ProxyConfig;
 use crate::utils::process;
 use anyhow::{Context, Result};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
+
+/// RAII guard that releases the download-in-progress flag when dropped, so the
+/// mutual-exclusion lock is freed on success, error, and cancellation alike.
+struct DownloadLock<'a>(&'a AtomicBool);
+
+impl Drop for DownloadLock<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
 
 /// Core downloader wrapping yt-dlp CLI.
 pub struct YtDlpDownloader {
@@ -16,6 +26,10 @@ pub struct YtDlpDownloader {
     cookies_from_browser: Mutex<Option<String>>,
     cookies_file: Mutex<Option<String>>,
     cancel_flag: Arc<AtomicBool>,
+    /// Whether a download task is currently running. Acts as a mutex so two
+    /// yt-dlp processes can never run concurrently (the frontend may lose its
+    /// local `downloading` state when switching tabs).
+    is_downloading: Arc<AtomicBool>,
     /// PID of the currently running download child process (yt-dlp).
     /// Used to actually terminate the process tree on cancellation.
     current_pid: Arc<Mutex<Option<u32>>>,
@@ -33,8 +47,14 @@ impl YtDlpDownloader {
             cookies_from_browser: Mutex::new(None),
             cookies_file: Mutex::new(None),
             cancel_flag: Arc::new(AtomicBool::new(false)),
+            is_downloading: Arc::new(AtomicBool::new(false)),
             current_pid: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Whether a download task is currently running.
+    pub fn is_downloading(&self) -> bool {
+        self.is_downloading.load(Ordering::SeqCst)
     }
 
     pub fn set_cookies_from_browser(&self, browser: &str) {
@@ -113,24 +133,33 @@ impl YtDlpDownloader {
         }
 
         // `--dump-json` may emit several JSON lines (e.g. a tweet containing
-        // multiple media entries) plus non-JSON log lines. Parse line by line
-        // and take the FIRST valid JSON object instead of `.last()` (which
-        // silently drops earlier entries) or a raw whole-output parse (which
-        // fails when the output is not a single JSON document).
+        // multiple media entries) plus non-JSON log lines. Parse EVERY valid
+        // JSON line so multi-media tweets report all entries; the first entry
+        // becomes the main info and `media_count` records the total.
         let mut parsed: Option<VideoInfo> = None;
+        let mut media_count = 0usize;
         for line in json.lines() {
             let line = line.trim();
             if !line.starts_with('{') {
                 continue; // skip log / warning lines
             }
             if let Ok(info) = parse_video_json(line) {
-                parsed = Some(info);
-                break;
+                if parsed.is_none() {
+                    parsed = Some(info);
+                }
+                media_count += 1;
             }
         }
 
         match parsed {
-            Some(info) => Ok(info),
+            Some(mut info) => {
+                // Always report at least one media entry, and keep the original
+                // input URL so the download step targets the whole tweet
+                // (i.e. all of its media entries).
+                info.media_count = media_count.max(1);
+                info.url = url.to_string();
+                Ok(info)
+            }
             None => {
                 let preview: String = json.chars().take(300).collect();
                 anyhow::bail!(
@@ -149,16 +178,46 @@ impl YtDlpDownloader {
         config: &DownloadConfig,
         progress_cb: impl Fn(DownloadProgress) + Send + 'static,
     ) -> Result<Option<String>> {
+        // Mutual exclusion: reject concurrent downloads. The flag is released
+        // automatically by `DownloadLock` when this method returns.
+        if self.is_downloading.swap(true, Ordering::SeqCst) {
+            anyhow::bail!("已有下载任务正在进行，请等待当前任务完成");
+        }
+        let _lock = DownloadLock(&self.is_downloading);
+
         self.reset_cancel();
+
+        // Stage the download inside a dedicated cache folder first. Finished
+        // files are moved into the real download directory only after yt-dlp
+        // completes, so an interrupted download never leaves partial files in
+        // the user-visible folder — and the cache is wiped on failure/cancel.
+        let cache_dir = crate::utils::app_home::AppHome::download_cache_dir();
+        std::fs::create_dir_all(&cache_dir).ok();
+        Self::cleanup_download_cache();
 
         let mut cmd = self.build_base_command();
         cmd.push("-f".to_string());
         cmd.push(config.format_id.clone());
         cmd.push("-o".to_string());
-        cmd.push(config.output_path());
+        cmd.push(format!(
+            "{}{}{}",
+            cache_dir.to_string_lossy(),
+            std::path::MAIN_SEPARATOR,
+            config.output_template
+        ));
         cmd.push("--socket-timeout".to_string());
         cmd.push(config.socket_timeout.to_string());
-        cmd.push("--no-playlist".to_string());
+        // Deliberately NOT passing --no-playlist here: a tweet with several
+        // media entries is exposed by yt-dlp as multiple playlist items, and
+        // --no-playlist would silently download only the first one. An
+        // explicit playlist_items narrows the download; otherwise all media
+        // entries of the tweet are downloaded.
+        if let Some(ref items) = config.playlist_items {
+            if !items.is_empty() {
+                cmd.push("--playlist-items".to_string());
+                cmd.push(items.clone());
+            }
+        }
 
         std::fs::create_dir_all(&config.output_dir).ok();
 
@@ -227,6 +286,18 @@ impl YtDlpDownloader {
         // would redirect to stdout and trigger GBK pipe errors on Windows).
         cmd.push("--newline".to_string());
         cmd.push("--progress".to_string());
+        // Force a periodic, machine-readable progress line. Without a
+        // --progress-template, HLS/native downloads only emit a handful of
+        // progress lines (0% → 100%), so the UI would jump straight to 100%.
+        // The pipe-delimited format is parsed by parse_progress_line.
+        cmd.push("--progress-template".to_string());
+        // Append the stream codecs so the parser can tell the video stage from
+        // the audio stage of a bestvideo+bestaudio download (acodec/vcodec
+        // columns); the merge stage comes from [Merger] lines.
+        cmd.push(
+            "download:%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress._speed_str)s|%(progress._eta_str)s|%(progress._percent_str)s|%(progress.status)s|%(info.acodec)s|%(info.vcodec)s"
+                .to_string(),
+        );
 
         // Record the final file path (after all post-processing) to a temp
         // file so we can remember where the video was saved.
@@ -238,32 +309,68 @@ impl YtDlpDownloader {
 
         cmd.push(config.url.clone());
 
+        // Diagnostic: log the full command so the actually-selected format can
+        // be confirmed from the log file (used to debug resolution mismatches).
+        tracing::info!("yt-dlp download command: {}", cmd.join(" "));
+
         let cancel = self.cancel_flag.clone();
         let args_refs: Vec<&str> = cmd.iter().map(|s| s.as_str()).collect();
 
-        // NOTE: yt-dlp writes download progress to **stdout**, not stderr.
-        // So we must capture stdout and parse progress from its lines, while
-        // stderr is used only for error logging.
+        // Parse progress from BOTH pipes: depending on the downloader and
+        // options, yt-dlp may write "[download] xx%" to stdout or stderr.
+        // The callback is shared behind a Mutex; a counter tells us how many
+        // progress lines were actually parsed (logged after the download).
+        let progress_cb = Arc::new(Mutex::new(progress_cb));
+        let stdout_progress = progress_cb.clone();
+        let stderr_progress = progress_cb.clone();
+        let progress_count = Arc::new(AtomicUsize::new(0));
+        let progress_count_stdout = progress_count.clone();
+        let progress_count_stderr = progress_count.clone();
+        let cancel_stderr = cancel.clone();
         let current_pid = self.current_pid.clone();
         let result = process::execute_with_callbacks_pid(
             &args_refs,
-            // stdout → progress lines
+            // stdout → informational lines + possible progress lines
             Some(Box::new(move |line: String| {
                 if cancel.load(Ordering::SeqCst) {
                     return;
                 }
                 if let Some(progress) = parse_progress_line(&line) {
-                    progress_cb(progress);
+                    if let Ok(guard) = stdout_progress.lock() {
+                        guard(progress);
+                    }
+                    progress_count_stdout.fetch_add(1, Ordering::SeqCst);
+                }
+                // Log key format-selection / merge lines for diagnosis, but
+                // skip pure progress lines like "[download]  45.2%".
+                let is_pure_progress = line.starts_with("[download]") && line.contains('%');
+                if !is_pure_progress
+                    && (line.contains("[info]")
+                        || line.contains("[Merger]")
+                        || line.contains("[ExtractAudio]")
+                        || line.contains("ERROR")
+                        || line.contains("WARNING"))
+                {
+                    tracing::info!("yt-dlp: {}", line);
                 }
             })),
-            // stderr → error logging only
-            Some(Box::new(|line: String| {
+            // stderr → yt-dlp progress lines ("[download] xx% ...") + errors
+            Some(Box::new(move |line: String| {
+                if cancel_stderr.load(Ordering::SeqCst) {
+                    return;
+                }
+                if let Some(progress) = parse_progress_line(&line) {
+                    if let Ok(guard) = stderr_progress.lock() {
+                        guard(progress);
+                    }
+                    progress_count_stderr.fetch_add(1, Ordering::SeqCst);
+                }
                 if line.contains("ERROR") || line.contains("error") {
                     tracing::error!("{}", line);
                 }
             })),
             None,
-            true, // capture_stdout = true — progress is emitted on stdout
+            true, // capture_stdout — informational lines + possible progress
             move |pid| {
                 if let Ok(mut guard) = current_pid.lock() {
                     *guard = Some(pid);
@@ -272,12 +379,20 @@ impl YtDlpDownloader {
         )
         .await?;
 
+        tracing::info!(
+            "download progress lines parsed: {}",
+            progress_count.load(Ordering::SeqCst)
+        );
+
         // Download finished (or was cancelled) — clear the tracked PID.
         if let Ok(mut guard) = self.current_pid.lock() {
             *guard = None;
         }
 
         if !result.is_success() {
+            // Failure or cancellation — discard the staged cache so partial
+            // files never leak into the download folder.
+            Self::cleanup_download_cache();
             let stderr = result.stderr_text();
             if !stderr.is_empty() {
                 anyhow::bail!("下载失败: {}", stderr);
@@ -285,35 +400,84 @@ impl YtDlpDownloader {
             return Ok(None);
         }
 
-        // Read the actual saved path written by --print-to-file.
-        let saved_path = std::fs::read_to_string(&tmp_path)
+        // Read the actual saved paths written by --print-to-file. When multiple
+        // media entries are downloaded (multi-media tweets) the file contains
+        // one path per line, in download order.
+        let saved_paths: Vec<String> = std::fs::read_to_string(&tmp_path)
             .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
+            .map(|s| {
+                s.lines()
+                    .map(|l| l.trim().to_string())
+                    .filter(|l| !l.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
 
-        // Clean the filename (keep only Chinese / letters / digits / - # +)
-        // so the saved file (and the history record) has a clean name.
-        let saved_path = saved_path.map(|p| {
-            let new_path =
-                crate::services::download_history::DownloadHistory::sanitize_filename(&p);
-            if new_path == p {
-                return p;
+        // Move every finished file out of the cache into the real download
+        // directory, sanitizing each filename (collapse spaces, strip Windows
+        // illegal chars). Files listed by --print-to-file are moved first and
+        // the LAST one becomes the history path; any remaining finished extras
+        // (thumbnails, subtitles) are moved too so nothing is lost. Files that
+        // still end in .part are discarded with the cache wipe afterwards.
+        std::fs::create_dir_all(&config.output_dir).ok();
+        let mut saved_path: Option<String> = None;
+        for p in &saved_paths {
+            if let Some(dst) = Self::move_to_download_dir(std::path::Path::new(p), &config.output_dir) {
+                saved_path = Some(dst);
             }
-            let src = std::path::Path::new(&p);
-            let dst = std::path::Path::new(&new_path);
-            if dst.exists() {
-                // A cleaned-name file already exists (e.g. a previous download) —
-                // drop the just-downloaded source file and keep the existing one.
-                tracing::info!("cleaned target exists, keeping {} and discarding {}", dst.display(), src.display());
-                let _ = std::fs::remove_file(src);
-            } else {
-                tracing::info!("renaming {} -> {}", src.display(), dst.display());
-                let _ = std::fs::rename(src, dst);
+        }
+        if let Ok(entries) = std::fs::read_dir(&cache_dir) {
+            for entry in entries.flatten() {
+                let _ = Self::move_to_download_dir(&entry.path(), &config.output_dir);
             }
-            new_path
-        });
+        }
+        // Nothing finished should remain; wipe whatever is left (.part, info).
+        Self::cleanup_download_cache();
 
         Ok(saved_path)
+    }
+
+    /// Move a finished file out of the download cache into the real download
+    /// directory, sanitizing its filename. Returns the destination path.
+    fn move_to_download_dir(src: &std::path::Path, output_dir: &str) -> Option<String> {
+        if !src.is_file() {
+            return None;
+        }
+        if src.extension().and_then(|e| e.to_str()) == Some("part") {
+            return None;
+        }
+        let target = std::path::Path::new(output_dir).join(src.file_name().unwrap_or_default());
+        let dst = std::path::PathBuf::from(
+            crate::services::download_history::DownloadHistory::sanitize_filename(
+                &target.to_string_lossy(),
+            ),
+        );
+        tracing::info!("moving {} -> {}", src.display(), dst.display());
+        if std::fs::rename(src, &dst).is_err() {
+            // Cross-device move or locked target — fall back to copy + remove.
+            if std::fs::copy(src, &dst).is_ok() {
+                let _ = std::fs::remove_file(src);
+            }
+        }
+        Some(dst.to_string_lossy().to_string())
+    }
+
+    /// Remove everything currently staged in the download cache — partial
+    /// downloads, info files, or finished outputs that never got moved.
+    /// Called at startup (to wipe leftovers from a previous session) and
+    /// after each download attempt.
+    pub fn cleanup_download_cache() {
+        let dir = crate::utils::app_home::AppHome::download_cache_dir();
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    let _ = std::fs::remove_dir_all(&p);
+                } else {
+                    let _ = std::fs::remove_file(&p);
+                }
+            }
+        }
     }
 
     fn build_base_command(&self) -> Vec<String> {
@@ -327,6 +491,17 @@ impl YtDlpDownloader {
         // PYTHONUTF8=1 is not enough for the PyInstaller-built yt-dlp.exe.
         cmd.push("--encoding".to_string());
         cmd.push("utf-8".to_string());
+
+        // Tell yt-dlp where the bundled ffmpeg lives so `bestvideo+bestaudio`
+        // and `-x` merging actually work. Without this yt-dlp cannot find the
+        // bundled binary and the merge fails (small / partial files).
+        let ffmpeg = process::find_ffmpeg();
+        if ffmpeg.exists() {
+            if let Some(dir) = ffmpeg.parent() {
+                cmd.push("--ffmpeg-location".to_string());
+                cmd.push(dir.to_string_lossy().to_string());
+            }
+        }
 
         if let Some(proxy_url) = ProxyConfig::to_proxy_url() {
             cmd.push("--proxy".to_string());

@@ -9,9 +9,10 @@ import {
 import { toast } from "sonner";
 import { Save } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
+import { useI18n } from "../../lib/i18n";
 
 const BROWSERS = [
-  { value: "none", label: "无" },
+  { value: "none", label: "cookies.none" },
   { value: "chrome", label: "Chrome" },
   { value: "firefox", label: "Firefox" },
   { value: "edge", label: "Edge" },
@@ -25,6 +26,7 @@ type Props = {
 };
 
 export default function CookiesSetting({ browser, onChange }: Props) {
+  const { t } = useI18n();
   const [selected, setSelected] = useState(browser || "none");
   const [validating, setValidating] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -77,25 +79,44 @@ export default function CookiesSetting({ browser, onChange }: Props) {
 
     const ytStatus = await checkYtdlp();
     if (!ytStatus.available) {
-      toast.error("yt-dlp 未安装，请先在设置页面的 Tools 中下载 yt-dlp");
+      toast.error(t("tools.missing.ytdlp"));
       return;
     }
 
     setValidating(true);
     setVerified(false);
 
-    const unlisten = await listen<string>("cookies-progress", (event) => {
-      toast.info(event.payload, { duration: 3000 });
+    const unlisten = await listen<any>("cookies-progress", (event) => {
+      const p = event.payload ?? {};
+      const browser = p.browser ?? selected;
+      if (p.step === 1) {
+        toast.loading(t("cookies.step1", { browser }), { id: "cookies-progress" });
+      } else if (p.step === 2) {
+        toast.loading(t("cookies.step2"), { id: "cookies-progress" });
+      } else if (p.step === 3) {
+        toast.loading(t("cookies.step3"), { id: "cookies-progress" });
+      }
+      // step 0 (failure) is surfaced by the validateCookies result below.
     });
 
     try {
       const result = await validateCookies(selected);
       if (result.success) {
-        toast.success(result.message);
+        toast.success(
+          t("cookies.verifiedOk", { user: `@${result.username ?? ""}` }),
+          { id: "cookies-progress" }
+        );
         setVerified(true);
         setVerifiedUsername(result.username ?? null);
       } else {
-        toast.error(result.message);
+        const code = result.error_code ?? "unknown";
+        toast.error(
+          t(`cookies.error.${code}`, {
+            browser: selected,
+            msg: result.message ?? "",
+          }),
+          { id: "cookies-progress" }
+        );
         setVerifiedUsername(null);
       }
     } catch (err: any) {
@@ -115,12 +136,12 @@ export default function CookiesSetting({ browser, onChange }: Props) {
       setLoadedBrowser(selected);
       setLoadedUsername(verifiedUsername); // carry verified username to loaded state
       onChange(selected);
-      toast.success(`Cookies 已保存并加载: ${selected}`);
+      toast.success(t("cookies.saved", { browser: selected }));
 
       // Notify other pages (e.g. DownloadPage) to reload the latest config.
       window.dispatchEvent(new CustomEvent("config-applied"));
     } catch (err: any) {
-      toast.error(`保存失败: ${err}`);
+      toast.error(t("common.saveFail", { err }));
     } finally {
       setSaving(false);
     }
@@ -133,20 +154,22 @@ export default function CookiesSetting({ browser, onChange }: Props) {
   let statusText: string;
   let statusColor: string;
   if (validating) {
-    statusText = `验证中: ${selected}`;
+    statusText = t("cookies.statusValidating", { browser: selected });
     statusColor = "text-amber-500";
   } else if (verified && selected !== loadedBrowser) {
-    statusText = `已验证: ${selected}${
-      verifiedUsername ? ` — @${verifiedUsername}` : ""
-    }，请保存并加载生效`;
+    statusText = t("cookies.statusVerified", {
+      browser: selected,
+      user: verifiedUsername ? ` — @${verifiedUsername}` : "",
+    });
     statusColor = "text-green-600";
   } else if (loadedBrowser) {
-    statusText = `已加载: ${loadedBrowser}${
-      loadedUsername ? ` — @${loadedUsername}` : ""
-    }`;
+    statusText = t("cookies.statusLoaded", {
+      browser: loadedBrowser,
+      user: loadedUsername ? ` — @${loadedUsername}` : "",
+    });
     statusColor = "text-green-600";
   } else {
-    statusText = "无 cookies";
+    statusText = t("cookies.statusNone");
     statusColor = "text-gray-400";
   }
 
@@ -159,7 +182,7 @@ export default function CookiesSetting({ browser, onChange }: Props) {
         </span>
       </div>
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs text-gray-500">浏览器:</span>
+        <span className="text-xs text-gray-500">{t("cookies.browser")}</span>
         <select
           value={selected}
           onChange={(e) => handleSelect(e.target.value)}
@@ -167,12 +190,12 @@ export default function CookiesSetting({ browser, onChange }: Props) {
         >
           {BROWSERS.map((b) => (
             <option key={b.value} value={b.value}>
-              {b.label}
+              {t(b.label)}
             </option>
           ))}
         </select>
         <button className="btn" onClick={handleValidate} disabled={selected === "none" || validating}>
-          {validating ? "验证中..." : "验证"}
+          {validating ? t("cookies.validatingBtn") : t("cookies.validate")}
         </button>
         <button
           className="btn flex items-center gap-1"
@@ -180,7 +203,7 @@ export default function CookiesSetting({ browser, onChange }: Props) {
           disabled={!verified || selected === loadedBrowser || saving}
         >
           <Save size={13} />
-          {saving ? "保存中..." : "保存并加载"}
+          {saving ? t("common.saving") : t("cookies.saveAndApply")}
         </button>
       </div>
     </div>

@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
-import { testProxy, setProxyMode, getProxyStatus, loadSettings, saveSettings } from "../../lib/bindings";
+import { testProxy, setProxyMode, getProxyStatus, loadSettings, saveSettings, applySavedProxy } from "../../lib/bindings";
 import type { ProxyStatus, ProxyTestResult, AppSettings } from "../../lib/types";
 import { toast } from "sonner";
 import { Save } from "lucide-react";
+import { useI18n } from "../../lib/i18n";
 
 // Cache the last proxy connectivity test keyed by (host, port, scheme) so that
 // switching tabs (which remounts this component) does not re-test an unchanged
@@ -22,6 +23,7 @@ type Props = {
 };
 
 export default function ProxySetting({ host, port, scheme, onChange }: Props) {
+  const { t } = useI18n();
   const [mode, setMode] = useState<"none" | "manual" | "system">("none");
   const [h, setH] = useState(host || "127.0.0.1");
   const [p, setP] = useState(port || 7890);
@@ -142,7 +144,7 @@ export default function ProxySetting({ host, port, scheme, onChange }: Props) {
       if (sysProxyHost) {
         onChange(sysProxyHost, sysProxyPort);
       } else {
-        toast.warning("未检测到系统代理，请先开启系统代理或选择手动代理");
+        toast.warning(t("proxy.noSystem"));
       }
     } else {
       setProxyMode(true);
@@ -154,16 +156,16 @@ export default function ProxySetting({ host, port, scheme, onChange }: Props) {
 
   const handleTest = async () => {
     if (!effectiveHost) {
-      toast.warning("请输入代理主机地址");
+      toast.warning(t("proxy.hostRequired"));
       return;
     }
     try {
       const result = await runTest(effectiveHost, effectivePort, sc);
       if (result.success) {
         onChange(effectiveHost, effectivePort);
-        toast.success(`代理测试通过 (${result.elapsed_ms}ms)`);
+        toast.success(t("proxy.testPassed", { ms: result.elapsed_ms }));
       } else {
-        toast.error(result.message);
+        toast.error(t("proxy.testFail", { msg: result.message }));
       }
     } catch (err: any) {
       toast.error(`${err}`);
@@ -187,13 +189,13 @@ export default function ProxySetting({ host, port, scheme, onChange }: Props) {
 
       if (mode === "none") {
         setProxyMode(false);
-        toast.success("代理已禁用并保存");
+        toast.success(t("proxy.disabledSaved"));
       } else {
-        // Apply proxy to runtime
-        if (effectiveHost && effectivePort) {
-          await runTest(effectiveHost, effectivePort, sc);
-        }
-        toast.success("代理已保存并应用");
+        // Apply the just-saved proxy to runtime explicitly. Testing is a
+        // separate concern (the "测试" button / mount-time check) and is NOT
+        // part of saving, so saving stays fast and never misleads.
+        await applySavedProxy();
+        toast.success(t("proxy.savedApplied"));
       }
 
       // Mark as clean
@@ -205,7 +207,7 @@ export default function ProxySetting({ host, port, scheme, onChange }: Props) {
       // Notify other pages (e.g. DownloadPage) to reload the latest config.
       window.dispatchEvent(new CustomEvent("config-applied"));
     } catch (err: any) {
-      toast.error(`保存失败: ${err}`);
+      toast.error(t("common.saveFail", { err }));
     } finally {
       setSaving(false);
     }
@@ -216,31 +218,31 @@ export default function ProxySetting({ host, port, scheme, onChange }: Props) {
   return (
     <div className="section-card">
       <div className="section-title">
-        代理
+        {t("proxy.title")}
         {testState === "testing" && (
-          <span className="normal-case font-normal text-[10px] text-yellow-600 ml-2">● 测试中...</span>
+          <span className="normal-case font-normal text-[10px] text-yellow-600 ml-2">{t("proxy.testing")}</span>
         )}
         {testState === "success" && (
-          <span className="normal-case font-normal text-[10px] text-green-600 ml-2">● 测试通过</span>
+          <span className="normal-case font-normal text-[10px] text-green-600 ml-2">{t("proxy.ok")}</span>
         )}
         {testState === "error" && (
-          <span className="normal-case font-normal text-[10px] text-red-600 ml-2">● 代理异常</span>
+          <span className="normal-case font-normal text-[10px] text-red-600 ml-2">{t("proxy.error")}</span>
         )}
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <label className="flex items-center gap-1 text-xs cursor-pointer">
           <input type="radio" name="proxyMode" checked={mode === "none"} onChange={() => handleModeChange("none")} className="size-3" />
-          无
+          {t("proxy.none")}
         </label>
         <label className="flex items-center gap-1 text-xs cursor-pointer">
           <input type="radio" name="proxyMode" checked={mode === "manual"} onChange={() => handleModeChange("manual")} className="size-3" />
-          手动
+          {t("proxy.manual")}
         </label>
         <label className="flex items-center gap-1 text-xs cursor-pointer">
           <input type="radio" name="proxyMode" checked={mode === "system"} onChange={() => handleModeChange("system")} className="size-3" />
-          系统
+          {t("proxy.system")}
         </label>
-        <span className="text-xs text-gray-500">类型:</span>
+        <span className="text-xs text-gray-500">{t("proxy.type")}</span>
         <select
           value={sc}
           onChange={(e) => {
@@ -248,20 +250,20 @@ export default function ProxySetting({ host, port, scheme, onChange }: Props) {
             setTestState("idle");
           }}
           disabled={manualDisabled}
-          className="text-xs w-[75px] px-1"
+          className="text-xs px-1"
         >
           <option value="http">HTTP</option>
           <option value="socks5">SOCKS5</option>
         </select>
-        <span className="text-xs text-gray-500">主机:</span>
+        <span className="text-xs text-gray-500">{t("proxy.host")}</span>
         <input
           type="text"
           value={effectiveHost}
           onChange={(e) => { setH(e.target.value); setTestState("idle"); }}
           disabled={manualDisabled}
-          className="w-[80px]"
+          className="[field-sizing:content]"
         />
-        <span className="text-xs text-gray-500">端口:</span>
+        <span className="text-xs text-gray-500">{t("proxy.port")}</span>
         <input
           type="text"
           inputMode="numeric"
@@ -273,10 +275,10 @@ export default function ProxySetting({ host, port, scheme, onChange }: Props) {
             setTestState("idle");
           }}
           disabled={manualDisabled}
-          className="w-[50px]"
+          className="[field-sizing:content]"
         />
         <button className="btn text-xs px-2" onClick={handleTest} disabled={mode === "none"}>
-          测试
+          {t("proxy.test")}
         </button>
         <button
           className="btn flex items-center gap-1 text-xs px-2"
@@ -284,7 +286,7 @@ export default function ProxySetting({ host, port, scheme, onChange }: Props) {
           disabled={saving || !changed}
         >
           <Save size={12} />
-          {saving ? "..." : "保存"}
+          {saving ? "..." : t("common.save")}
         </button>
       </div>
     </div>

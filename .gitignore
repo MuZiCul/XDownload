@@ -6,7 +6,9 @@
 /node_modules/
 /src-tauri/target/
 /src-tauri/downloads/
+/src-tauri/config/
 /bin/
 /progress/
 /config/
+/logs/
 /ui/src/components/settings/proxy-test/target/

@@ -14,6 +14,7 @@ import {
 import type { AppSettings } from "../../lib/types";
 import { toast } from "sonner";
 import { Save, Upload, Folder, FolderOpen, FolderCog, Power, X } from "lucide-react";
+import { useI18n } from "../../lib/i18n";
 
 type Props = {
   settings: AppSettings;
@@ -21,6 +22,7 @@ type Props = {
 };
 
 export default function ConfigButtons({ settings, onApply }: Props) {
+  const { t } = useI18n();
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [showApplyDialog, setShowApplyDialog] = useState(false);
   const [configPath, setConfigPath] = useState("");
@@ -48,20 +50,20 @@ export default function ConfigButtons({ settings, onApply }: Props) {
 
       try {
         await saveSettingsToPath(settings, filePath);
-        toast.success(`配置已导出\n路径: ${filePath}`);
+        toast.success(t("config.exported", { path: filePath }));
       } catch (err: any) {
-        toast.error(`保存失败: ${err}`);
+        toast.error(t("common.saveFail", { err }));
       }
     } else {
       // Save to active config
       try {
         await saveSettings(settings);
-        toast.success(`配置已保存\n路径: ${configPath}`);
+        toast.success(t("config.saved", { path: configPath }));
 
         // Notify other pages (e.g. DownloadPage) to reload the latest config.
         window.dispatchEvent(new CustomEvent("config-applied"));
       } catch (err: any) {
-        toast.error(`保存失败: ${err}`);
+        toast.error(t("common.saveFail", { err }));
       }
     }
   };
@@ -88,16 +90,16 @@ export default function ConfigButtons({ settings, onApply }: Props) {
         await applyAndPersistSettings(loaded);
         onApply(loaded);
         window.dispatchEvent(new CustomEvent("config-applied"));
-        toast.success(`配置已导入并持久化\n来源: ${filePath}`);
+        toast.success(t("config.imported", { path: filePath }));
       } else {
         // Restore from default config → apply + persist to active config
         const defaults = await applyDefaultConfig();
         onApply(defaults);
         window.dispatchEvent(new CustomEvent("config-applied"));
-        toast.success(`已恢复默认配置\n路径: ${configPath}`);
+        toast.success(t("config.restored", { path: configPath }));
       }
     } catch (err: any) {
-      toast.error(`应用失败: ${err}`);
+      toast.error(t("common.applyFail", { err }));
     }
   };
 
@@ -106,9 +108,9 @@ export default function ConfigButtons({ settings, onApply }: Props) {
   const handleOpenConfigDir = async () => {
     try {
       await openConfigDir();
-      toast.success("已打开配置目录");
+      toast.success(t("config.dirOpened"));
     } catch (err: any) {
-      toast.error(`打开失败: ${err}`);
+      toast.error(t("common.openFail", { err }));
     }
   };
 
@@ -116,7 +118,7 @@ export default function ConfigButtons({ settings, onApply }: Props) {
     try {
       await quitApp();
     } catch (err: any) {
-      toast.error(`退出失败: ${err}`);
+      toast.error(t("common.quitFail", { err }));
     }
   };
 
@@ -130,34 +132,34 @@ export default function ConfigButtons({ settings, onApply }: Props) {
           onClick={() => setShowSaveDialog(true)}
         >
           <Save size={13} />
-          保存配置
+          {t("config.save")}
         </button>
         <button
           className="btn flex items-center gap-1"
           onClick={() => setShowApplyDialog(true)}
         >
           <Upload size={13} />
-          应用配置
+          {t("config.apply")}
         </button>
         <button
           className="btn flex items-center gap-1"
           onClick={handleOpenConfigDir}
-          title="打开根目录下的 config 文件夹"
+          title={t("config.dirTitle")}
         >
           <FolderCog size={13} />
-          配置目录
+          {t("config.dir")}
         </button>
         <button
           className="btn flex items-center gap-1 text-red-600 hover:text-red-700"
           onClick={handleQuit}
-          title="清理进程并退出应用"
+          title={t("config.quitTitle")}
         >
           <Power size={13} />
-          退出
+          {t("config.quit")}
         </button>
         {configPath && (
           <span className="text-[10px] text-zinc-400 ml-auto truncate max-w-[260px]">
-            配置: {configPath}
+            {t("config.path", { path: configPath })}
           </span>
         )}
       </div>
@@ -166,7 +168,9 @@ export default function ConfigButtons({ settings, onApply }: Props) {
         <div className="dialog-overlay" onClick={() => setShowSaveDialog(false)}>
           <div className="dialog-content" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-semibold text-zinc-900">选择保存位置</h3>
+              <h3 className="text-sm font-semibold text-zinc-900">
+                {t("config.saveDialogTitle")}
+              </h3>
               <button
                 className="text-zinc-400 hover:text-zinc-600 transition-colors"
                 onClick={() => setShowSaveDialog(false)}
@@ -175,7 +179,7 @@ export default function ConfigButtons({ settings, onApply }: Props) {
               </button>
             </div>
             <p className="text-xs text-zinc-500 mb-4">
-              默认目录保存到应用内配置，自定义目录导出到其他位置
+              {t("config.saveDialogBody")}
             </p>
             <div className="flex flex-col gap-2">
               <button
@@ -183,14 +187,14 @@ export default function ConfigButtons({ settings, onApply }: Props) {
                 onClick={() => handleSave(false)}
               >
                 <Folder size={15} />
-                默认目录（应用内配置）
+                {t("config.saveDefault")}
               </button>
               <button
                 className="btn w-full text-sm flex items-center justify-center gap-2 py-2.5"
                 onClick={() => handleSave(true)}
               >
                 <FolderOpen size={15} />
-                自定义目录（导出）
+                {t("config.saveCustom")}
               </button>
             </div>
           </div>
@@ -201,7 +205,9 @@ export default function ConfigButtons({ settings, onApply }: Props) {
         <div className="dialog-overlay" onClick={() => setShowApplyDialog(false)}>
           <div className="dialog-content" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-semibold text-zinc-900">选择配置来源</h3>
+              <h3 className="text-sm font-semibold text-zinc-900">
+                {t("config.applyDialogTitle")}
+              </h3>
               <button
                 className="text-zinc-400 hover:text-zinc-600 transition-colors"
                 onClick={() => setShowApplyDialog(false)}
@@ -210,7 +216,7 @@ export default function ConfigButtons({ settings, onApply }: Props) {
               </button>
             </div>
             <p className="text-xs text-zinc-500 mb-4">
-              默认目录恢复出厂设置，自定义目录从外部文件导入
+              {t("config.applyDialogBody")}
             </p>
             <div className="flex flex-col gap-2">
               <button
@@ -218,14 +224,14 @@ export default function ConfigButtons({ settings, onApply }: Props) {
                 onClick={() => handleApply(false)}
               >
                 <Folder size={15} />
-                恢复默认
+                {t("config.applyDefault")}
               </button>
               <button
                 className="btn w-full text-sm flex items-center justify-center gap-2 py-2.5"
                 onClick={() => handleApply(true)}
               >
                 <FolderOpen size={15} />
-                自定义目录（导入）
+                {t("config.applyCustom")}
               </button>
             </div>
           </div>
