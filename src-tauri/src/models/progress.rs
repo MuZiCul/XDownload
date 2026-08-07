@@ -9,6 +9,13 @@ pub struct DownloadProgress {
     pub eta: String,
     pub percent: String,
     pub status: String,
+    /// Current stage of a merged download:
+    /// - `video`  — downloading the video-only stream
+    /// - `audio`  — downloading the audio-only stream
+    /// - `merge`  — ffmpeg merging / post-processing
+    /// - empty    — unknown / single-file download
+    #[serde(default)]
+    pub stage: String,
 }
 
 impl DownloadProgress {

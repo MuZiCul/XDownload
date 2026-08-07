@@ -6,33 +6,9 @@ use crate::models::video_info::VideoInfo;
 use crate::services::proxy::ProxyConfig;
 use crate::utils::process;
 use anyhow::{Context, Result};
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
-
-/// Return a path that does not currently exist by appending " (n)" before the
-/// extension: `name.ext` -> `name (1).ext`, `name (2).ext`, ...
-fn unique_path(path: &std::path::Path) -> PathBuf {
-    let parent = path.parent().unwrap_or(std::path::Path::new(""));
-    let name = path.file_name().unwrap_or_default().to_string_lossy();
-    let (stem, ext) = match name.rfind('.') {
-        Some(idx) if idx > 0 => (name[..idx].to_string(), Some(name[idx..].to_string())),
-        _ => (name.to_string(), None),
-    };
-    let mut n = 1;
-    loop {
-        let candidate = match &ext {
-            Some(e) => format!("{} ({}){}", stem, n, e),
-            None => format!("{} ({})", stem, n),
-        };
-        let cand_path = parent.join(&candidate);
-        if !cand_path.exists() {
-            return cand_path;
-        }
-        n += 1;
-    }
-}
 
 /// RAII guard that releases the download-in-progress flag when dropped, so the
 /// mutual-exclusion lock is freed on success, error, and cancellation alike.
@@ -211,11 +187,24 @@ impl YtDlpDownloader {
 
         self.reset_cancel();
 
+        // Stage the download inside a dedicated cache folder first. Finished
+        // files are moved into the real download directory only after yt-dlp
+        // completes, so an interrupted download never leaves partial files in
+        // the user-visible folder — and the cache is wiped on failure/cancel.
+        let cache_dir = crate::utils::app_home::AppHome::download_cache_dir();
+        std::fs::create_dir_all(&cache_dir).ok();
+        Self::cleanup_download_cache();
+
         let mut cmd = self.build_base_command();
         cmd.push("-f".to_string());
         cmd.push(config.format_id.clone());
         cmd.push("-o".to_string());
-        cmd.push(config.output_path());
+        cmd.push(format!(
+            "{}{}{}",
+            cache_dir.to_string_lossy(),
+            std::path::MAIN_SEPARATOR,
+            config.output_template
+        ));
         cmd.push("--socket-timeout".to_string());
         cmd.push(config.socket_timeout.to_string());
         // Deliberately NOT passing --no-playlist here: a tweet with several
@@ -302,8 +291,11 @@ impl YtDlpDownloader {
         // progress lines (0% → 100%), so the UI would jump straight to 100%.
         // The pipe-delimited format is parsed by parse_progress_line.
         cmd.push("--progress-template".to_string());
+        // Append the stream codecs so the parser can tell the video stage from
+        // the audio stage of a bestvideo+bestaudio download (acodec/vcodec
+        // columns); the merge stage comes from [Merger] lines.
         cmd.push(
-            "download:%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress._speed_str)s|%(progress._eta_str)s|%(progress._percent_str)s|%(progress.status)s"
+            "download:%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress._speed_str)s|%(progress._eta_str)s|%(progress._percent_str)s|%(progress.status)s|%(info.acodec)s|%(info.vcodec)s"
                 .to_string(),
         );
 
@@ -398,6 +390,9 @@ impl YtDlpDownloader {
         }
 
         if !result.is_success() {
+            // Failure or cancellation — discard the staged cache so partial
+            // files never leak into the download folder.
+            Self::cleanup_download_cache();
             let stderr = result.stderr_text();
             if !stderr.is_empty() {
                 anyhow::bail!("下载失败: {}", stderr);
@@ -405,52 +400,84 @@ impl YtDlpDownloader {
             return Ok(None);
         }
 
-        // Read the actual saved path written by --print-to-file. When multiple
+        // Read the actual saved paths written by --print-to-file. When multiple
         // media entries are downloaded (multi-media tweets) the file contains
-        // one path per line — keep the LAST one for the history record.
-        let saved_path = std::fs::read_to_string(&tmp_path)
+        // one path per line, in download order.
+        let saved_paths: Vec<String> = std::fs::read_to_string(&tmp_path)
             .ok()
             .map(|s| {
                 s.lines()
-                    .last()
                     .map(|l| l.trim().to_string())
-                    .unwrap_or_default()
+                    .filter(|l| !l.is_empty())
+                    .collect()
             })
-            .filter(|s| !s.is_empty());
+            .unwrap_or_default();
 
-        // Clean the filename (keep only Chinese / letters / digits / - # +)
-        // so the saved file (and the history record) has a clean name. When the
-        // cleaned target already exists (e.g. a previous download), the freshly
-        // downloaded file is kept under a numbered name instead of being
-        // discarded — otherwise re-downloads would silently keep the old file
-        // while the history still records a success.
-        let saved_path = saved_path.map(|p| {
-            let new_path =
-                crate::services::download_history::DownloadHistory::sanitize_filename(&p);
-            if new_path == p {
-                return p;
+        // Move every finished file out of the cache into the real download
+        // directory, sanitizing each filename (collapse spaces, strip Windows
+        // illegal chars). Files listed by --print-to-file are moved first and
+        // the LAST one becomes the history path; any remaining finished extras
+        // (thumbnails, subtitles) are moved too so nothing is lost. Files that
+        // still end in .part are discarded with the cache wipe afterwards.
+        std::fs::create_dir_all(&config.output_dir).ok();
+        let mut saved_path: Option<String> = None;
+        for p in &saved_paths {
+            if let Some(dst) = Self::move_to_download_dir(std::path::Path::new(p), &config.output_dir) {
+                saved_path = Some(dst);
             }
-            let src = std::path::Path::new(&p);
-            let dst = std::path::Path::new(&new_path);
-            if dst.exists() {
-                // A cleaned-name file already exists — keep the new download
-                // under a numbered name (name (1).ext, name (2).ext, …).
-                let unique = unique_path(dst);
-                tracing::info!(
-                    "cleaned target exists, renaming {} -> {}",
-                    src.display(),
-                    unique.display()
-                );
-                let _ = std::fs::rename(src, &unique);
-                unique.to_string_lossy().to_string()
-            } else {
-                tracing::info!("renaming {} -> {}", src.display(), dst.display());
-                let _ = std::fs::rename(src, dst);
-                new_path
+        }
+        if let Ok(entries) = std::fs::read_dir(&cache_dir) {
+            for entry in entries.flatten() {
+                let _ = Self::move_to_download_dir(&entry.path(), &config.output_dir);
             }
-        });
+        }
+        // Nothing finished should remain; wipe whatever is left (.part, info).
+        Self::cleanup_download_cache();
 
         Ok(saved_path)
+    }
+
+    /// Move a finished file out of the download cache into the real download
+    /// directory, sanitizing its filename. Returns the destination path.
+    fn move_to_download_dir(src: &std::path::Path, output_dir: &str) -> Option<String> {
+        if !src.is_file() {
+            return None;
+        }
+        if src.extension().and_then(|e| e.to_str()) == Some("part") {
+            return None;
+        }
+        let target = std::path::Path::new(output_dir).join(src.file_name().unwrap_or_default());
+        let dst = std::path::PathBuf::from(
+            crate::services::download_history::DownloadHistory::sanitize_filename(
+                &target.to_string_lossy(),
+            ),
+        );
+        tracing::info!("moving {} -> {}", src.display(), dst.display());
+        if std::fs::rename(src, &dst).is_err() {
+            // Cross-device move or locked target — fall back to copy + remove.
+            if std::fs::copy(src, &dst).is_ok() {
+                let _ = std::fs::remove_file(src);
+            }
+        }
+        Some(dst.to_string_lossy().to_string())
+    }
+
+    /// Remove everything currently staged in the download cache — partial
+    /// downloads, info files, or finished outputs that never got moved.
+    /// Called at startup (to wipe leftovers from a previous session) and
+    /// after each download attempt.
+    pub fn cleanup_download_cache() {
+        let dir = crate::utils::app_home::AppHome::download_cache_dir();
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    let _ = std::fs::remove_dir_all(&p);
+                } else {
+                    let _ = std::fs::remove_file(&p);
+                }
+            }
+        }
     }
 
     fn build_base_command(&self) -> Vec<String> {

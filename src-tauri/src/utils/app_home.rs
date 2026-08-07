@@ -66,6 +66,14 @@ impl AppHome {
         Self::root().join("downloads")
     }
 
+    /// Temporary staging area where in-progress downloads are written before
+    /// being moved to the real download directory on success. Because files
+    /// only appear in the final folder after a successful (atomic) finish,
+    /// an interrupted download leaves at most a partial file in the cache.
+    pub fn download_cache_dir() -> PathBuf {
+        Self::root().join("download_cache")
+    }
+
     /// Ensure config/ directory exists
     pub fn ensure_config_dir() -> std::io::Result<()> {
         std::fs::create_dir_all(Self::config_dir())
@@ -74,5 +82,10 @@ impl AppHome {
     /// Ensure downloads/ directory exists
     pub fn ensure_downloads_dir() -> std::io::Result<()> {
         std::fs::create_dir_all(Self::downloads_dir())
+    }
+
+    /// Ensure download_cache/ directory exists
+    pub fn ensure_download_cache_dir() -> std::io::Result<()> {
+        std::fs::create_dir_all(Self::download_cache_dir())
     }
 }

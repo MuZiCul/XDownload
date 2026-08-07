@@ -50,6 +50,13 @@ export interface DownloadConfig {
   video_id: string | null;
   /** Video title, stored in download history for display. */
   title?: string | null;
+  /** Video thumbnail URL, stored in download history for the cover. */
+  thumbnail?: string | null;
+  /** Video metadata, stored in download history for the history page. */
+  uploader?: string | null;
+  duration?: number;
+  view_count?: number;
+  like_count?: number;
   format_id: string;
   output_dir: string;
   output_template: string;
@@ -127,6 +134,15 @@ export interface ToolStatus {
 export interface DownloadHistoryItem {
   id: string;
   title: string | null;
+  /** Video thumbnail URL (may be absent for legacy records). */
+  thumbnail: string | null;
+  /** Original video URL (may be absent for legacy records). */
+  url: string | null;
+  /** Video metadata (may be zero / null for legacy records). */
+  uploader: string | null;
+  duration: number;
+  view_count: number;
+  like_count: number;
   file_path: string | null;
   downloaded_at: number;
   /** Whether the saved file still exists on disk. */

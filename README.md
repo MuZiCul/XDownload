@@ -29,8 +29,10 @@ Powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp) + ffmpeg, wrapped in a cle
 - **Paste & parse** — paste a URL, instantly see title / duration / thumbnail / formats
 - **Smart best quality** — always downloads the highest quality video + audio (merged automatically), no format picking needed
 - **Global progress** — live progress bar in the status bar with speed & ETA, visible on every tab; state survives tab switches
+- **Staged progress** — separated video / audio streams show "video" then "audio" stages, with an indeterminate running bar while ffmpeg merges
 - **Multi-media tweets** — downloads every video / image in a multi-media tweet
-- **Download history** — review what you downloaded and when; open / delete / clear records
+- **Atomic downloads** — files only appear in your download folder after a successful (merged) finish; interrupted / cancelled downloads leave no partial files behind
+- **Download history** — review what you downloaded and when: cover, author, duration, views, likes, download time; re-download (re-parses the link), open file location, delete / clear records
 - **In-app updates** — download and install new versions right from the app (direct first, proxy fallback)
 - **System notifications** — get notified when a download finishes or fails, even when minimized to tray
 - **Proxy support** — HTTP or SOCKS5, with automatic system proxy detection
@@ -43,7 +45,7 @@ Powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp) + ffmpeg, wrapped in a cle
 
 Grab the latest installer from [Releases](https://github.com/MuZiCul/XDownload/releases).
 
-- **Windows**: `XDownload_2.5.2_x64-setup.exe` (NSIS) / `.msi`
+- **Windows**: `XDownload_2.6.0_x64-setup.exe` (NSIS) / `.msi`
 
 First launch downloads yt-dlp + ffmpeg automatically — or drop them into `bin/` yourself.
 

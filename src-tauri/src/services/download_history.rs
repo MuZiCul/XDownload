@@ -16,6 +16,21 @@ use std::path::PathBuf;
 pub struct DownloadRecord {
     pub id: String,
     pub title: Option<String>,
+    /// Video thumbnail URL, shown as the cover on the history page.
+    #[serde(default)]
+    pub thumbnail: Option<String>,
+    /// Original video URL, used to re-download from the history page.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Video metadata shown on the history page (author / duration / views / likes).
+    #[serde(default)]
+    pub uploader: Option<String>,
+    #[serde(default)]
+    pub duration: i64,
+    #[serde(default)]
+    pub view_count: i64,
+    #[serde(default)]
+    pub like_count: i64,
     /// Absolute path of the final saved file (may no longer exist).
     pub file_path: Option<String>,
     /// Unix timestamp (seconds) of when the download completed.
@@ -90,13 +105,29 @@ impl DownloadHistory {
     }
 
     /// Record a successful download.
-    pub fn record(id: &str, title: Option<String>, file_path: Option<String>) -> Result<()> {
+    pub fn record(
+        id: &str,
+        title: Option<String>,
+        thumbnail: Option<String>,
+        url: Option<String>,
+        uploader: Option<String>,
+        duration: i64,
+        view_count: i64,
+        like_count: i64,
+        file_path: Option<String>,
+    ) -> Result<()> {
         let mut data = Self::load_data();
         data.records.insert(
             id.to_string(),
             DownloadRecord {
                 id: id.to_string(),
                 title,
+                thumbnail,
+                url,
+                uploader,
+                duration,
+                view_count,
+                like_count,
                 file_path,
                 downloaded_at: chrono::Utc::now().timestamp(),
             },
@@ -104,9 +135,12 @@ impl DownloadHistory {
         Self::save_data(&data)
     }
 
-    /// Clean a filename so it only keeps Chinese characters, ASCII letters,
-    /// digits, and `-` / `#` / `+`. Everything else (spaces, punctuation,
-    /// brackets, emoji, dots inside the name, …) is removed.
+    /// Make a filename valid on Windows while keeping it readable:
+    /// - Strips characters that Windows forbids in filenames: `\ / : * ? " < > |`
+    /// - Collapses runs of consecutive spaces into a single space
+    ///
+    /// Everything else (Chinese, letters, digits, punctuation, brackets, dots
+    /// inside the name, emoji, …) is kept as-is.
     ///
     /// Only the **stem** of the filename (before the last `.`) is filtered —
     /// the extension is preserved. Pure path transformation, performs no file
@@ -127,7 +161,23 @@ impl DownloadHistory {
             _ => (name.to_string(), None),
         };
 
-        let cleaned: String = stem.chars().filter(|c| is_keep_char(*c)).collect();
+        let mut cleaned = String::with_capacity(stem.len());
+        let mut prev_space = false;
+        for c in stem.chars() {
+            if matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                continue; // illegal on Windows — drop it
+            }
+            if c == ' ' {
+                // Collapse consecutive spaces into a single one.
+                if prev_space {
+                    continue;
+                }
+                prev_space = true;
+            } else {
+                prev_space = false;
+            }
+            cleaned.push(c);
+        }
 
         // Never produce an empty filename — keep the original in that case.
         if cleaned.is_empty() {
@@ -144,16 +194,4 @@ impl DownloadHistory {
         }
         p.with_file_name(new_name).to_string_lossy().to_string()
     }
-}
-
-/// Whether a character is allowed in a cleaned filename:
-/// Chinese (CJK Unified Ideographs + Extension A), ASCII letters, digits,
-/// and the three permitted special characters `-` `#` `+`.
-fn is_keep_char(c: char) -> bool {
-    c.is_ascii_alphanumeric()
-        || c == '-'
-        || c == '#'
-        || c == '+'
-        || ('\u{4E00}'..='\u{9FFF}').contains(&c)
-        || ('\u{3400}'..='\u{4DBF}').contains(&c)
 }

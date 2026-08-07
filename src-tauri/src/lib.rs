@@ -103,6 +103,10 @@ pub fn run() {
     // Apply saved proxy (highest priority — overrides env and system detection)
     services::config::ConfigManager::apply_saved_proxy();
 
+    // Wipe any partial files left in the download cache by a previous
+    // interrupted session, so each session starts from a clean slate.
+    YtDlpDownloader::cleanup_download_cache();
+
     // Create the downloader
     let downloader = Arc::new(YtDlpDownloader::new());
 

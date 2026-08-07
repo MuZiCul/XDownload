@@ -19,6 +19,7 @@ export interface DlProgress {
   speed: string;
   eta: string;
   status: string; // downloading | merging | postprocess | finished
+  stage: string; // video | audio | merge | ""
 }
 
 export interface DownloadState {
@@ -46,7 +47,14 @@ let state: DownloadState = initialState;
 const listeners = new Set<() => void>();
 
 function setState(partial: Partial<DownloadState>) {
-  state = { ...state, ...partial };
+  const next = { ...state, ...partial };
+  // "Completed" and "error" are mutually exclusive (error wins): a stale
+  // error left over from an earlier failure must not render next to the
+  // green completion check, and vice versa. Centralizing this here covers
+  // every update path (events, promise safety nets, recovery).
+  if (next.completed) next.error = null;
+  if (next.error) next.completed = false;
+  state = next;
   listeners.forEach((l) => l());
 }
 
@@ -104,6 +112,7 @@ export function initDownloadStore() {
         speed: p.speed ?? "",
         eta: p.eta ?? "",
         status: p.status ?? "downloading",
+        stage: p.stage ?? "",
       },
     });
   });
@@ -141,7 +150,7 @@ export async function startDownloadGlobal(
 ): Promise<boolean> {
   setState({
     downloading: true,
-    progress: { percent: 0, speed: "", eta: "", status: "downloading" },
+    progress: { percent: 0, speed: "", eta: "", status: "downloading", stage: "" },
     title: opts?.title ?? null,
     url: cfg.url,
     error: null,

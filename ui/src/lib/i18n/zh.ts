@@ -11,6 +11,10 @@ export const zh: Record<string, string> = {
   "tab.disclaimer": "免责声明",
 
   // ===== Global download bar =====
+  "gbar.progressLabel": "下载进度",
+  "gbar.stageVideo": "下载进度[视频]",
+  "gbar.stageAudio": "下载进度[音频]",
+  "gbar.stageMerge": "音视频合并",
   "gbar.downloading": "正在下载...",
   "gbar.cancel": "取消",
   "gbar.complete": "下载完成",
@@ -46,6 +50,8 @@ export const zh: Record<string, string> = {
   "video.repeatTitle": "重复下载",
   "video.repeatBody": "该视频已下载{time}，是否重新下载？",
   "video.openPathFail": "打开文件位置失败: {err}",
+  "video.openInBrowser": "在浏览器中打开",
+  "video.openUrlFail": "在浏览器中打开失败: {err}",
   "num.billion": "亿",
   "num.tenThousand": "万",
 
@@ -215,6 +221,9 @@ export const zh: Record<string, string> = {
   "history.clearAll": "清空全部",
   "history.empty": "暂无下载历史",
   "history.fileDeleted": "文件已删除",
+  "history.downloadedAt": "下载时间",
+  "history.noUrl": "该历史记录缺少原始链接，请先获取视频信息后再下载",
+  "history.busy": "已有下载任务正在进行，请等待当前任务完成",
   "history.open": "打开",
   "history.delete": "删除",
   "history.cleared": "已清空下载历史",

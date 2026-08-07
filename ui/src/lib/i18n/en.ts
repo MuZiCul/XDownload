@@ -11,6 +11,10 @@ export const en: Record<string, string> = {
   "tab.disclaimer": "Disclaimer",
 
   // ===== Global download bar =====
+  "gbar.progressLabel": "Progress",
+  "gbar.stageVideo": "Downloading [Video]",
+  "gbar.stageAudio": "Downloading [Audio]",
+  "gbar.stageMerge": "Merging",
   "gbar.downloading": "Downloading...",
   "gbar.cancel": "Cancel",
   "gbar.complete": "Download complete",
@@ -47,6 +51,8 @@ export const en: Record<string, string> = {
   "video.repeatTitle": "Re-download",
   "video.repeatBody": "This video was already downloaded{time}. Re-download?",
   "video.openPathFail": "Failed to open file location: {err}",
+  "video.openInBrowser": "Open in browser",
+  "video.openUrlFail": "Failed to open in browser: {err}",
   "num.billion": "B",
   "num.tenThousand": "K",
 
@@ -222,6 +228,9 @@ export const en: Record<string, string> = {
   "history.clearAll": "Clear All",
   "history.empty": "No download history",
   "history.fileDeleted": "File deleted",
+  "history.downloadedAt": "Downloaded at",
+  "history.noUrl": "This record has no original URL. Fetch the video info first and try again.",
+  "history.busy": "A download is already in progress. Please wait for it to finish.",
   "history.open": "Open",
   "history.delete": "Delete",
   "history.cleared": "Download history cleared",

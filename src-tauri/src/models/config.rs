@@ -12,6 +12,20 @@ pub struct DownloadConfig {
     /// download history so the history page can show a human-readable title.
     #[serde(default)]
     pub title: Option<String>,
+    /// Video thumbnail URL, filled by the frontend after parsing. Stored in
+    /// the download history so the history page can show a cover image.
+    #[serde(default)]
+    pub thumbnail: Option<String>,
+    /// Video metadata stored in the download history for display on the
+    /// history page (author / duration / views / likes).
+    #[serde(default)]
+    pub uploader: Option<String>,
+    #[serde(default)]
+    pub duration: i64,
+    #[serde(default)]
+    pub view_count: i64,
+    #[serde(default)]
+    pub like_count: i64,
     #[serde(default = "default_format")]
     pub format_id: String,
     #[serde(default = "default_output_dir")]
@@ -61,6 +75,11 @@ impl DownloadConfig {
             url,
             video_id: None,
             title: None,
+            thumbnail: None,
+            uploader: None,
+            duration: 0,
+            view_count: 0,
+            like_count: 0,
             format_id: default_format(),
             output_dir: default_output_dir(),
             output_template: default_output_template(),
@@ -78,14 +97,6 @@ impl DownloadConfig {
         }
     }
 
-    pub fn output_path(&self) -> String {
-        let dir = if self.output_dir.ends_with('/') || self.output_dir.ends_with('\\') {
-            self.output_dir.clone()
-        } else {
-            format!("{}{}", self.output_dir, std::path::MAIN_SEPARATOR)
-        };
-        format!("{}{}", dir, self.output_template)
-    }
 }
 
 impl Default for DownloadConfig {

@@ -184,7 +184,17 @@ pub async fn start_download(
                         id,
                         saved_path
                     );
-                    let _ = DownloadHistory::record(id, config.title.clone(), Some(saved_path));
+                    let _ = DownloadHistory::record(
+                        id,
+                        config.title.clone(),
+                        config.thumbnail.clone(),
+                        Some(config.url.clone()),
+                        config.uploader.clone(),
+                        config.duration,
+                        config.view_count,
+                        config.like_count,
+                        Some(saved_path),
+                    );
                 }
             }
             let _ = app.emit("download-complete", &config.url);

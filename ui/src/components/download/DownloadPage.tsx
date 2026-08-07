@@ -9,7 +9,7 @@ import {
   checkVideoDownloaded,
   openDownloadPath,
 } from "../../lib/bindings";
-import type { VideoInfo, DownloadConfig } from "../../lib/types";
+import type { VideoInfo, DownloadConfig, DownloadHistoryItem } from "../../lib/types";
 import { toast } from "sonner";
 import UrlBar from "./UrlBar";
 import VideoInfoCard from "./VideoInfoCard";
@@ -27,6 +27,7 @@ function defaultConfig(): DownloadConfig {
     url: "",
     video_id: null,
     title: null,
+    thumbnail: null,
     // 固定智能最佳：合并最佳视频流+音频流，无分离流时降级到最佳单文件
     format_id: "bestvideo+bestaudio/best",
     output_dir: "downloads",
@@ -54,6 +55,86 @@ export default function DownloadPage() {
   const [pendingCfg, setPendingCfg] = useState<DownloadConfig | null>(null);
   // Global download state — survives tab switches / page unmounts.
   const { downloading, completed } = useDownloadStore();
+
+  // Latest `downloading` value for event handlers registered once (which only
+  // see the initial render's state).
+  const downloadingRef = useRef(downloading);
+  useEffect(() => {
+    downloadingRef.current = downloading;
+  }, [downloading]);
+
+  // Re-download from the history page: `App` switches to this tab and fires
+  // this event with a DownloadHistoryItem. We parse the URL with yt-dlp for
+  // live data (format list, title, thumbnail, …), then fill the info card and
+  // start the download automatically — history records are not re-used.
+  useEffect(() => {
+    const handler = async (e: Event) => {
+      const item = (e as CustomEvent<DownloadHistoryItem>).detail;
+      if (!item?.id || !item.url) {
+        toast.warning(t("history.noUrl"));
+        return;
+      }
+      if (downloadingRef.current) {
+        toast.warning(t("history.busy"));
+        return;
+      }
+      toast.loading(t("prog.fetching"), { id: "fetch-video" });
+      try {
+        const ytStatus = await checkYtdlp();
+        if (!ytStatus.available) {
+          throw new Error(t("tools.missing.ytdlp"));
+        }
+        const data = await fetchVideoInfo(item.url);
+        // Fill the info card with the freshly parsed data (incl. formats).
+        setVideoInfo(data);
+        setConfig((c) => ({
+          ...c,
+          url: data.url,
+          video_id: data.id,
+          title: data.title,
+          thumbnail: data.thumbnail,
+          uploader: data.uploader,
+          duration: data.duration,
+          view_count: data.view_count,
+          like_count: data.like_count,
+        }));
+        toast.success(t("url.fetchOk"), { id: "fetch-video" });
+
+        // Build a fresh config (latest settings) and start downloading.
+        const s = await loadSettings().catch(() => null);
+        const cfg: DownloadConfig = {
+          url: data.url,
+          video_id: data.id,
+          title: data.title,
+          thumbnail: data.thumbnail,
+          uploader: data.uploader,
+          duration: data.duration,
+          view_count: data.view_count,
+          like_count: data.like_count,
+          format_id: "bestvideo+bestaudio/best",
+          output_dir: s?.download_dir ?? "downloads",
+          output_template: "%(title)s.%(ext)s",
+          extract_audio: false,
+          embed_subtitles: false,
+          embed_thumbnail: false,
+          write_thumbnail: false,
+          proxy: null,
+          socket_timeout: 30,
+          cookies_file: null,
+          cookies_from_browser: s?.cookies_from_browser ?? null,
+          max_height: 0,
+          download_archive: null,
+        };
+        startDownloadGlobal(cfg, { title: data.title ?? item.title });
+      } catch (err: any) {
+        toast.error(t("url.fetchFail", { err: friendlyErrorMessage(err) }), {
+          id: "fetch-video",
+        });
+      }
+    };
+    window.addEventListener("history-redownload", handler);
+    return () => window.removeEventListener("history-redownload", handler);
+  }, [t]);
 
   // When a download completes, mark the video as downloaded so the info card
   // refreshes (badge + "重新下载") in real time.
@@ -111,6 +192,11 @@ export default function DownloadPage() {
         url: data.url,
         video_id: data.id,
         title: data.title,
+        thumbnail: data.thumbnail,
+        uploader: data.uploader,
+        duration: data.duration,
+        view_count: data.view_count,
+        like_count: data.like_count,
       }));
       toast.success(t("url.fetchOk"), { id: "fetch-video" });
     },

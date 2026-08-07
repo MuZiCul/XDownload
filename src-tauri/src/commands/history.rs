@@ -18,6 +18,12 @@ pub fn list_download_history() -> Vec<serde_json::Value> {
             serde_json::json!({
                 "id": rec.id,
                 "title": rec.title,
+                "thumbnail": rec.thumbnail,
+                "url": rec.url,
+                "uploader": rec.uploader,
+                "duration": rec.duration,
+                "view_count": rec.view_count,
+                "like_count": rec.like_count,
                 "file_path": rec.file_path,
                 "downloaded_at": rec.downloaded_at,
                 "file_exists": file_exists,

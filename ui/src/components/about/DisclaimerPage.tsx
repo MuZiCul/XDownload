@@ -160,7 +160,8 @@ export default function DisclaimerPage() {
   };
 
   return (
-    <div className="min-h-full flex items-center justify-center py-10 px-6">
+    <div className="h-full overflow-y-auto flex">
+      <div className="min-h-full w-full flex items-center justify-center p-4">
         <div className="w-[90%] max-w-[90%]">
           <div className="section-card text-left">
             <div className="text-[13px] font-semibold text-zinc-800 mb-3">
@@ -173,18 +174,20 @@ export default function DisclaimerPage() {
               ))}
             </ol>
 
-            <p className="mt-3 text-[13px] font-medium text-gray-800">
-              {t.footer}
-            </p>
-
-            {/* Uninstall button */}
-            <button
-              className="btn btn-danger mt-3 flex items-center gap-1.5"
-              onClick={() => setShowUninstallModal(true)}
-            >
-              <Trash2 size={13} />
-              {t.uninstall.button}
-            </button>
+            {/* "不同意条款" footer text + uninstall button on the same row,
+                button right-aligned */}
+            <div className="mt-3 flex items-center justify-between gap-3 flex-wrap">
+              <p className="text-[13px] font-medium text-gray-800">
+                {t.footer}
+              </p>
+              <button
+                className="btn btn-danger flex items-center gap-1.5"
+                onClick={() => setShowUninstallModal(true)}
+              >
+                <Trash2 size={13} />
+                {t.uninstall.button}
+              </button>
+            </div>
 
             {/* Copyright complaint channel */}
             <div className="mt-6 pt-5 border-t border-zinc-200">
@@ -199,15 +202,17 @@ export default function DisclaimerPage() {
                   {line}
                 </p>
               ))}
-              <a
-                href={ISSUES_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-3 inline-flex items-center gap-1 px-4 py-2 text-xs rounded-lg bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors"
-              >
-                {t.complaint.button}
-                <ExternalLink size={13} />
-              </a>
+              <div className="mt-3 flex justify-end">
+                <a
+                  href={ISSUES_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 px-4 py-2 text-xs rounded-lg bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors"
+                >
+                  {t.complaint.button}
+                  <ExternalLink size={13} />
+                </a>
+              </div>
             </div>
           </div>
         </div>
@@ -266,6 +271,7 @@ export default function DisclaimerPage() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

@@ -11,6 +11,7 @@ import AboutPage from "./components/about/AboutPage";
 import DisclaimerPage from "./components/about/DisclaimerPage";
 import { CONTENT } from "./components/about/DisclaimerPage";
 import { initDownloadStore } from "./lib/downloadStore";
+import type { DownloadHistoryItem } from "./lib/types";
 import { initI18n, useI18n } from "./lib/i18n";
 import {
   acceptDisclaimer,
@@ -266,7 +267,18 @@ function App() {
             <DownloadPage />
           </div>
           {activeTab === "settings" && <SettingsPage />}
-          {activeTab === "history" && <HistoryPage />}
+          {activeTab === "history" && (
+            <HistoryPage
+              onRedownload={(item: DownloadHistoryItem) => {
+                // Switch to the download tab and let DownloadPage fill the
+                // info card and start the download automatically.
+                setActiveTab("download");
+                window.dispatchEvent(
+                  new CustomEvent("history-redownload", { detail: item })
+                );
+              }}
+            />
+          )}
           {activeTab === "about" && <AboutPage />}
           {activeTab === "disclaimer" && <DisclaimerPage />}
         </main>

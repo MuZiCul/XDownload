@@ -50,7 +50,7 @@ export default function AboutPage() {
 
           {/* Version + check update button */}
           <div className="flex items-center justify-center gap-2 mb-2">
-            <p className="text-sm text-gray-500">v2.5.2</p>
+            <p className="text-sm text-gray-500">v2.6.0</p>
             <button
               className="inline-flex items-center gap-1 text-[11px] text-blue-500 hover:text-blue-600 hover:underline disabled:text-gray-300 disabled:no-underline transition-colors"
               onClick={handleCheckUpdate}

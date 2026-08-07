@@ -1,32 +1,9 @@
 import { Ban, Download, FolderOpen, RefreshCw } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { toast } from "sonner";
 import type { VideoInfo } from "../../lib/types";
 import { useI18n, type Lang } from "../../lib/i18n";
-
-function formatDuration(seconds: number): string {
-  if (!seconds || seconds <= 0) return "?";
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
-
-function formatNumber(
-  n: number,
-  t: (key: string) => string
-): string {
-  if (n >= 100_000_000) return `${(n / 100_000_000).toFixed(1)}${t("num.billion")}`;
-  if (n >= 10_000) return `${(n / 10_000).toFixed(1)}${t("num.tenThousand")}`;
-  return n.toLocaleString();
-}
-
-function formatDateTime(ts: number): string {
-  const d = new Date(ts * 1000);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(
-    d.getHours()
-  )}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
+import { formatDuration, formatNumber, formatDateTime } from "../../lib/format";
 
 type Props = {
   info: VideoInfo | null;
@@ -50,6 +27,13 @@ export default function VideoInfoCard({
   onOpenPath,
 }: Props) {
   const { t, lang } = useI18n();
+  const openLink = info?.webpage_url || info?.url || null;
+  const handleOpenLink = () => {
+    if (!openLink) return;
+    openUrl(openLink).catch((e: any) =>
+      toast.error(t("video.openUrlFail", { err: e }))
+    );
+  };
   const timeSuffix = info?.downloaded_at
     ? lang === "zh"
       ? `（${formatDateTime(info.downloaded_at)}）`
@@ -69,7 +53,15 @@ export default function VideoInfoCard({
           />
         )}
         <div className="flex-1 min-w-0">
-          <h3 className="text-[13px] font-semibold text-zinc-900 leading-snug line-clamp-2 mb-2">
+          <h3
+            onClick={handleOpenLink}
+            title={openLink ? t("video.openInBrowser") : undefined}
+            className={`text-[13px] font-semibold leading-snug line-clamp-2 mb-2 ${
+              openLink
+                ? "cursor-pointer hover:text-blue-600 hover:underline"
+                : "text-zinc-900"
+            }`}
+          >
             {info?.title ?? "—"}
           </h3>
           <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs">
