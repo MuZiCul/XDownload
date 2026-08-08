@@ -6,12 +6,13 @@ mod tray;
 mod utils;
 
 use commands::download::DownloaderState;
+use downloader::queue::DownloadQueue;
 use downloader::ytdlp::YtDlpDownloader;
 use std::fs::{File, OpenOptions};
 use std::io::Write as IoWrite;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tracing_subscriber::fmt::time::FormatTime;
 use tracing_subscriber::fmt::format::Writer;
 
@@ -126,15 +127,23 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
-        .manage(DownloaderState {
-            downloader: downloader.clone(),
-        })
         .invoke_handler(tauri::generate_handler![
             commands::download::fetch_video_info,
             commands::download::check_video_downloaded,
-            commands::download::start_download,
-            commands::download::cancel_download,
-            commands::download::is_downloading,
+            commands::download::enqueue_download,
+            commands::download::cancel_queue_task,
+            commands::download::cancel_all_tasks,
+            commands::download::has_active_tasks,
+            commands::download::clear_download_queue,
+            commands::download::start_queue,
+            commands::download::pause_queue,
+            commands::download::resume_queue,
+            commands::download::pause_queue_task,
+            commands::download::resume_queue_task,
+            commands::download::pause_all_tasks,
+            commands::download::resume_all_tasks,
+            commands::download::queue_status,
+            commands::download::update_task_info,
             commands::settings::load_settings,
             commands::settings::save_settings,
             commands::settings::save_settings_to_path,
@@ -184,20 +193,48 @@ pub fn run() {
             commands::history::delete_download_history,
             commands::history::clear_download_history,
         ])
-        .setup(|app| {
+        .setup(move |app| {
             // System tray icon + context menu.
             tray::init(app)?;
 
-            // Clicking the window close button hides the app to the system tray
-            // instead of quitting (the app keeps running in the background).
-            // Real exits happen via the tray menu or the quit_app command.
+            // The multi-task queue needs the app handle for events — created
+            // here and managed so commands can access it.
+            let queue = Arc::new(DownloadQueue::new(app.handle().clone(), downloader.clone()));
+            app.manage(DownloaderState {
+                downloader: downloader.clone(),
+                queue: queue.clone(),
+            });
+            // Restore unfinished multi-task downloads when the persist setting
+            // is enabled (re-enqueues and starts draining).
+            queue.restore_if_enabled();
+
+            // Clicking the window close button hides the app to the tray. When
+            // tasks are active, the frontend is asked to confirm (save progress
+            // dialog); otherwise the window hides directly — decided here in the
+            // backend so the behavior never depends on frontend event delivery.
             #[cfg(windows)]
             if let Some(win) = app.get_webview_window("main") {
-                let tray_win = win.clone();
+                let handle = app.handle().clone();
                 win.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
-                        let _ = tray_win.hide();
+                        // Only capture the Send-able AppHandle in the callback.
+                        let has_active = handle
+                            .try_state::<crate::commands::download::DownloaderState>()
+                            .map(|s| s.queue.has_active())
+                            .unwrap_or(false);
+                        if has_active {
+                            let _ = handle.emit(
+                                "quit-requested",
+                                serde_json::json!({ "source": "close" }),
+                            );
+                        } else {
+                            // Hide via the app handle (WebviewWindow is !Send,
+                            // so it cannot be moved into this callback).
+                            if let Some(main) = handle.get_webview_window("main") {
+                                let _ = main.hide();
+                            }
+                        }
                     }
                 });
             }
@@ -206,11 +243,4 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running XDownload");
-}
-
-/// Return a global proxy state for the Tauri command layer.
-pub fn proxy_global_state() -> std::sync::MutexGuard<'static, ()> {
-    // A lightweight accessor — the actual state lives in services::proxy::ProxyConfig
-    static DUMMY: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    DUMMY.lock().unwrap()
 }

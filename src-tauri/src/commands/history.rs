@@ -3,6 +3,22 @@
 use crate::services::download_history::DownloadHistory;
 use std::path::Path;
 
+/// Resolve a possibly-relative history path against the current directory so
+/// old records (saved with a relative `downloads\…`) still point at the real
+/// absolute file.
+pub fn abs_history_path(p: &str) -> String {
+    let path = Path::new(p);
+    if path.is_absolute() {
+        p.to_string()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_default()
+            .join(path)
+            .to_string_lossy()
+            .to_string()
+    }
+}
+
 /// List all download history records (most recent first), with a flag telling
 /// whether the saved file still exists on disk.
 #[tauri::command]
@@ -10,8 +26,9 @@ pub fn list_download_history() -> Vec<serde_json::Value> {
     DownloadHistory::list()
         .into_iter()
         .map(|rec| {
-            let file_exists = rec
-                .file_path
+            // 兼容旧记录：相对路径转绝对路径返回（供 opener 播放/打开）。
+            let file_path = rec.file_path.as_deref().map(abs_history_path);
+            let file_exists = file_path
                 .as_ref()
                 .map(|p| Path::new(p).exists())
                 .unwrap_or(false);
@@ -24,9 +41,13 @@ pub fn list_download_history() -> Vec<serde_json::Value> {
                 "duration": rec.duration,
                 "view_count": rec.view_count,
                 "like_count": rec.like_count,
-                "file_path": rec.file_path,
+                "file_path": file_path,
+                "file_size": rec.file_size,
                 "downloaded_at": rec.downloaded_at,
                 "file_exists": file_exists,
+                "status": rec.status,
+                "error": rec.error,
+                "attempts": rec.attempts,
             })
         })
         .collect()

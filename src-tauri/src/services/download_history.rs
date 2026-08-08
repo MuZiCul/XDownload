@@ -11,7 +11,21 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// A single successful download record.
+/// Outcome of a download record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DownloadStatus {
+    Success,
+    Failed,
+}
+
+impl Default for DownloadStatus {
+    fn default() -> Self {
+        Self::Success
+    }
+}
+
+/// A single download history record (successful or failed).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadRecord {
     pub id: String,
@@ -33,8 +47,20 @@ pub struct DownloadRecord {
     pub like_count: i64,
     /// Absolute path of the final saved file (may no longer exist).
     pub file_path: Option<String>,
+    /// File size in bytes (filled after a successful download).
+    #[serde(default)]
+    pub file_size: Option<i64>,
     /// Unix timestamp (seconds) of when the download completed.
     pub downloaded_at: i64,
+    /// Success or failure (defaults to Success for legacy records).
+    #[serde(default)]
+    pub status: DownloadStatus,
+    /// Failure reason (set when status = Failed).
+    #[serde(default)]
+    pub error: Option<String>,
+    /// Number of download attempts (including retries).
+    #[serde(default)]
+    pub attempts: u8,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -52,7 +78,12 @@ impl DownloadHistory {
 
     fn load_data() -> DownloadHistoryData {
         match std::fs::read_to_string(Self::history_file()) {
-            Ok(json) => serde_json::from_str(&json).unwrap_or_default(),
+            Ok(json) => {
+                // Tolerate a UTF-8 BOM (some editors / scripts write one), which
+                // would otherwise make serde_json fail and silently clear history.
+                let json = json.trim_start_matches('\u{FEFF}');
+                serde_json::from_str(json).unwrap_or_default()
+            }
             Err(_) => DownloadHistoryData::default(),
         }
     }
@@ -129,7 +160,59 @@ impl DownloadHistory {
                 view_count,
                 like_count,
                 file_path,
+                file_size: None,
                 downloaded_at: chrono::Utc::now().timestamp(),
+                status: DownloadStatus::Success,
+                error: None,
+                attempts: 1,
+            },
+        );
+        Self::save_data(&data)
+    }
+
+    /// Update the file size (bytes) of an existing record after a successful
+    /// download, so the history can display it.
+    pub fn record_file_size(id: &str, size: i64) -> Result<()> {
+        let mut data = Self::load_data();
+        if let Some(rec) = data.records.get_mut(id) {
+            rec.file_size = Some(size);
+            Self::save_data(&data)?;
+        }
+        Ok(())
+    }
+
+    /// Record a failed download (after retries are exhausted).
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_failed(
+        id: &str,
+        title: Option<String>,
+        thumbnail: Option<String>,
+        url: Option<String>,
+        uploader: Option<String>,
+        duration: i64,
+        view_count: i64,
+        like_count: i64,
+        error: String,
+        attempts: u8,
+    ) -> Result<()> {
+        let mut data = Self::load_data();
+        data.records.insert(
+            id.to_string(),
+            DownloadRecord {
+                id: id.to_string(),
+                title,
+                thumbnail,
+                url,
+                uploader,
+                duration,
+                view_count,
+                like_count,
+                file_path: None,
+                file_size: None,
+                downloaded_at: chrono::Utc::now().timestamp(),
+                status: DownloadStatus::Failed,
+                error: Some(error),
+                attempts,
             },
         );
         Self::save_data(&data)

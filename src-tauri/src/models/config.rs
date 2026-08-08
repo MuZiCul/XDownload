@@ -123,4 +123,11 @@ pub struct AppSettings {
     pub cookies_file: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lang: Option<String>,
+    /// Multi-task settings.
+    #[serde(default)]
+    pub concurrency: Option<u8>,
+    #[serde(default)]
+    pub retry_count: Option<u8>,
+    #[serde(default)]
+    pub queue_persist: Option<bool>,
 }

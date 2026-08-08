@@ -8,7 +8,15 @@
 /src-tauri/downloads/
 /src-tauri/config/
 /bin/
+/downloads/
+/download_cache/
 /progress/
 /config/
 /logs/
 /ui/src/components/settings/proxy-test/target/
+
+# Files
+
+RELEASE*.md
+zoo.md
+buddy*.md

@@ -10,8 +10,8 @@ type Props = {
 
 const tabs: { id: TabId; labelKey: string; Icon: typeof Download }[] = [
   { id: "download", labelKey: "tab.download", Icon: Download },
-  { id: "settings", labelKey: "tab.settings", Icon: Settings },
   { id: "history", labelKey: "tab.history", Icon: History },
+  { id: "settings", labelKey: "tab.settings", Icon: Settings },
   { id: "about", labelKey: "tab.about", Icon: Info },
   { id: "disclaimer", labelKey: "tab.disclaimer", Icon: ScrollText },
 ];

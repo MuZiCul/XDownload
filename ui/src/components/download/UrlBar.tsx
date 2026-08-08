@@ -1,16 +1,16 @@
 import { Download, ClipboardPaste } from "lucide-react";
-import { useState } from "react";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { toast } from "sonner";
 import { useI18n } from "../../lib/i18n";
 
 type Props = {
+  url: string;
+  onUrlChange: (v: string) => void;
   onFetch: (url: string) => void;
   isLoading: boolean;
 };
 
-export default function UrlBar({ onFetch, isLoading }: Props) {
-  const [url, setUrl] = useState("");
+export default function UrlBar({ url, onUrlChange, onFetch, isLoading }: Props) {
   const { t } = useI18n();
 
   const handleFetch = () => {
@@ -20,8 +20,6 @@ export default function UrlBar({ onFetch, isLoading }: Props) {
 
   const handlePaste = async () => {
     try {
-      // Prefer the Tauri clipboard plugin (reliable under WebView2); fall back
-      // to the browser API if the plugin is unavailable.
       let text = "";
       try {
         text = await readText();
@@ -29,8 +27,7 @@ export default function UrlBar({ onFetch, isLoading }: Props) {
         text = await navigator.clipboard.readText();
       }
       if (text) {
-        // 只粘贴链接到输入框，不自动获取信息（由用户点击"获取信息"）
-        setUrl(text.trim());
+        onUrlChange(text.trim());
       } else {
         toast.info(t("url.clipboard.empty"));
       }
@@ -48,7 +45,7 @@ export default function UrlBar({ onFetch, isLoading }: Props) {
       <input
         type="text"
         value={url}
-        onChange={(e) => setUrl(e.target.value)}
+        onChange={(e) => onUrlChange(e.target.value)}
         onKeyDown={handleKeyDown}
         placeholder={t("url.placeholder")}
         className="flex-1 border-none bg-transparent focus:outline-none text-sm px-0"

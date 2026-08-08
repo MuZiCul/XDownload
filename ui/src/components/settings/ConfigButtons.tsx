@@ -10,7 +10,6 @@ import {
   applyDefaultConfig,
   openConfigDir,
   openLogsDir,
-  quitApp,
 } from "../../lib/bindings";
 import type { AppSettings } from "../../lib/types";
 import { toast } from "sonner";
@@ -124,12 +123,11 @@ export default function ConfigButtons({ settings, onApply }: Props) {
     }
   };
 
-  const handleQuit = async () => {
-    try {
-      await quitApp();
-    } catch (err: any) {
-      toast.error(t("common.quitFail", { err }));
-    }
+  const handleQuit = () => {
+    // 交由 App 统一处理退出确认（有任务时弹窗，无任务直接退出）。
+    window.dispatchEvent(
+      new CustomEvent("quit-requested", { detail: { source: "settings" } })
+    );
   };
 
   // ── Render ────────────────────────────────────────────────────

@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { getProxyStatus } from "../../lib/bindings";
 import type { ProxyStatus } from "../../lib/types";
 import { useToolStatus } from "../../hooks/useToolStatus";
-import GlobalDownloadBar from "./GlobalDownloadBar";
 
 export default function StatusBar() {
   const { ytStatus, ffStatus, hasYtUpdate, hasFfUpdate } = useToolStatus();
@@ -35,7 +34,6 @@ export default function StatusBar() {
         redWhenOff
         detail={ffStatus.version ?? (ffStatus.available ? "?" : "N/A")}
       />
-      <GlobalDownloadBar />
       <div className="flex-1" />
       <StatusBadge
         label="proxy"
