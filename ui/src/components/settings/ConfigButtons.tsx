@@ -9,11 +9,11 @@ import {
   applyAndPersistSettings,
   applyDefaultConfig,
   openConfigDir,
-  quitApp,
+  openLogsDir,
 } from "../../lib/bindings";
 import type { AppSettings } from "../../lib/types";
 import { toast } from "sonner";
-import { Save, Upload, Folder, FolderOpen, FolderCog, Power, X } from "lucide-react";
+import { Save, Upload, Folder, FolderOpen, FolderCog, Power, ScrollText, X } from "lucide-react";
 import { useI18n } from "../../lib/i18n";
 
 type Props = {
@@ -114,12 +114,20 @@ export default function ConfigButtons({ settings, onApply }: Props) {
     }
   };
 
-  const handleQuit = async () => {
+  const handleOpenLogsDir = async () => {
     try {
-      await quitApp();
+      await openLogsDir();
+      toast.success(t("config.logsOpened"));
     } catch (err: any) {
-      toast.error(t("common.quitFail", { err }));
+      toast.error(t("common.openFail", { err }));
     }
+  };
+
+  const handleQuit = () => {
+    // 交由 App 统一处理退出确认（有任务时弹窗，无任务直接退出）。
+    window.dispatchEvent(
+      new CustomEvent("quit-requested", { detail: { source: "settings" } })
+    );
   };
 
   // ── Render ────────────────────────────────────────────────────
@@ -148,6 +156,14 @@ export default function ConfigButtons({ settings, onApply }: Props) {
         >
           <FolderCog size={13} />
           {t("config.dir")}
+        </button>
+        <button
+          className="btn flex items-center gap-1"
+          onClick={handleOpenLogsDir}
+          title={t("config.logsTitle")}
+        >
+          <ScrollText size={13} />
+          {t("config.logs")}
         </button>
         <button
           className="btn flex items-center gap-1 text-red-600 hover:text-red-700"

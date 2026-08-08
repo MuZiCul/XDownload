@@ -5,7 +5,7 @@
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    App, AppHandle, Manager,
+    App, AppHandle, Emitter, Manager,
 };
 
 /// Create the tray icon, its context menu and event handlers.
@@ -26,11 +26,13 @@ pub fn init(app: &App) -> tauri::Result<()> {
                 let _ = crate::commands::bootstrap::open_download_dir(app.clone());
             }
             "quit" => {
-                tracing::info!("tray: quitting via tray menu");
-                // Same cleanup as the quit_app command — kill yt-dlp/ffmpeg
-                // child processes so no download is left running.
-                crate::utils::process::kill_all_children();
-                app.exit(0);
+                // Let the frontend decide (exit-confirmation when tasks are
+                // active). It will call quit_app(true/false) accordingly.
+                tracing::info!("tray: quit requested via tray menu");
+                let _ = app.emit(
+                    "quit-requested",
+                    serde_json::json!({ "source": "tray" }),
+                );
             }
             _ => {}
         })

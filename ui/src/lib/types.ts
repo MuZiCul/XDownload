@@ -93,6 +93,12 @@ export interface AppSettings {
   cookies_from_browser?: string;
   cookies_file?: string;
   lang?: string;
+  /** 并发下载数（1-3，默认 1）。 */
+  concurrency?: number;
+  /** 失败重试次数（0-5，默认 0 = 不重试）。 */
+  retry_count?: number;
+  /** 队列持久化开关（默认关）。 */
+  queue_persist?: boolean;
 }
 
 // --- Proxy ---
@@ -144,9 +150,17 @@ export interface DownloadHistoryItem {
   view_count: number;
   like_count: number;
   file_path: string | null;
+  /** File size in bytes (filled after a successful download). */
+  file_size: number | null;
   downloaded_at: number;
   /** Whether the saved file still exists on disk. */
   file_exists: boolean;
+  /** Success | Failed (defaults to Success for legacy records). */
+  status: "success" | "failed";
+  /** Failure reason (when status = failed). */
+  error: string | null;
+  /** Number of download attempts including retries. */
+  attempts: number;
 }
 
 export interface BootstrapProgress {

@@ -7,6 +7,7 @@ import DirSetting from "./DirSetting";
 import ProxySetting from "./ProxySetting";
 import CookiesSetting from "./CookiesSetting";
 import ToolsSetting from "./ToolsSetting";
+import MultiTaskSetting from "./MultiTaskSetting";
 import LanguageSetting from "./LanguageSetting";
 import ConfigButtons from "./ConfigButtons";
 import { useI18n } from "../../lib/i18n";
@@ -43,6 +44,8 @@ export default function SettingsPage() {
         </div>
       ) : (
         <div className="space-y-3">
+          <ConfigButtons settings={settings} onApply={handleApply} />
+
           <DirSetting
             key={`dir-${applyKey}`}
             dir={settings.download_dir ?? "downloads"}
@@ -64,13 +67,22 @@ export default function SettingsPage() {
           />
           <ToolsSetting />
 
+          <MultiTaskSetting
+            key={`mt-${applyKey}`}
+            concurrency={settings.concurrency ?? 1}
+            retryCount={settings.retry_count ?? 0}
+            queuePersist={settings.queue_persist ?? false}
+            onChange={(patch) =>
+              setSettings((s) => ({ ...s, ...patch }))
+            }
+          />
+
           <LanguageSetting
             key={`lang-${applyKey}`}
             lang={settings.lang ?? "zh"}
             onChange={(l) => setSettings((s) => ({ ...s, lang: l }))}
           />
 
-          <ConfigButtons settings={settings} onApply={handleApply} />
         </div>
       )}
     </div>

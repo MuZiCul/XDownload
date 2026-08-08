@@ -46,7 +46,7 @@ impl Bootstrap {
             .no_proxy()
             .connect_timeout(Duration::from_secs(8))
             .timeout(Duration::from_secs(180))
-            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) XDownload/2.6.0")
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) XDownload/2.7.0")
             .build()
             .context("failed to build direct HTTP client")
     }
@@ -60,7 +60,7 @@ impl Bootstrap {
         reqwest::Client::builder()
             .proxy(proxy)
             .timeout(Duration::from_secs(180))
-            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) XDownload/2.6.0")
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) XDownload/2.7.0")
             .build()
             .map(Some)
             .context("failed to build proxy HTTP client")

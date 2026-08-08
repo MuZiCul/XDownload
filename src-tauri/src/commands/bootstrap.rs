@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 /// Check if Google is reachable (used before tool downloads)
 #[tauri::command]
@@ -56,6 +56,19 @@ pub fn open_config_dir(app: tauri::AppHandle) -> Result<(), String> {
     app.opener()
         .open_path(dir.to_string_lossy().to_string(), None::<&str>)
         .map_err(|e| format!("failed to open config dir: {}", e))
+}
+
+/// Open the logs directory (root/logs) in the system file manager
+#[tauri::command]
+pub fn open_logs_dir(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let dir = crate::utils::app_home::AppHome::logs_dir();
+    // Make sure the folder exists so the file manager has something to open.
+    let _ = crate::utils::app_home::AppHome::ensure_logs_dir();
+    app.opener()
+        .open_path(dir.to_string_lossy().to_string(), None::<&str>)
+        .map_err(|e| format!("failed to open logs dir: {}", e))
 }
 
 /// Open the download directory in the system file manager.
@@ -142,11 +155,27 @@ pub fn open_download_path(app: tauri::AppHandle, video_id: String) -> Result<(),
     }
 }
 
-/// Clean up running child processes (including active downloads) and quit the app
+/// Clean up running child processes (including active downloads) and quit the
+/// app. `save_progress`: when true, the multi-task queue is force-persisted to
+/// `config/queue.json` first so unfinished tasks can resume on next launch.
 #[tauri::command]
-pub fn quit_app(app: tauri::AppHandle) {
-    tracing::info!("quit_app: cleaning up child processes and exiting");
+pub fn quit_app(app: tauri::AppHandle, save_progress: bool) {
+    tracing::info!(
+        "quit_app: cleaning up child processes and exiting (save_progress={})",
+        save_progress
+    );
+    if save_progress {
+        if let Some(state) = app.try_state::<crate::commands::download::DownloaderState>() {
+            state.queue.save_now();
+        }
+    }
     crate::utils::process::kill_all_children();
+    // Destroy the main window first so the WebView2 environment is torn down
+    // cleanly — avoids the benign "Failed to unregister class ... 1412" error
+    // that otherwise appears when calling exit() while the webview is alive.
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.destroy();
+    }
     app.exit(0);
 }
 
@@ -184,16 +213,10 @@ pub async fn check_ytdlp() -> serde_json::Value {
 }
 
 /// Whether the bundled ffmpeg exists on disk under `bin/` (not from PATH).
-/// Used by the frontend to warn before a download that highest-quality
-/// video+audio merging may be unavailable.
+/// Downloads are rejected up-front unless this is true.
 #[tauri::command]
 pub fn is_ffmpeg_bundled() -> bool {
-    let bin_dir = crate::utils::app_home::AppHome::bin_dir();
-    #[cfg(windows)]
-    let bundled = bin_dir.join("ffmpeg.exe");
-    #[cfg(not(windows))]
-    let bundled = bin_dir.join("ffmpeg");
-    bundled.exists()
+    crate::utils::process::bundled_ffmpeg_path().exists()
 }
 
 /// Check if ffmpeg is available and get its version

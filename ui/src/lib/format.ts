@@ -26,3 +26,16 @@ export function formatDateTime(ts: number): string {
     d.getHours()
   )}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
+
+/** 文件大小格式化：B / KB / MB / GB。 */
+export function formatFileSize(bytes: number | null | undefined): string {
+  if (!bytes || bytes <= 0) return "";
+  const units = ["B", "KB", "MB", "GB"];
+  let v = bytes;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i += 1;
+  }
+  return `${v >= 100 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
+}

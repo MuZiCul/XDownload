@@ -4,23 +4,23 @@ import {
   fetchVideoInfo,
   loadSettings,
   checkYtdlp,
-  checkFfmpeg,
   isFfmpegBundled,
   checkVideoDownloaded,
   openDownloadPath,
+  startQueue,
 } from "../../lib/bindings";
 import type { VideoInfo, DownloadConfig, DownloadHistoryItem } from "../../lib/types";
 import { toast } from "sonner";
 import UrlBar from "./UrlBar";
 import VideoInfoCard from "./VideoInfoCard";
 import FormatTable from "./FormatTable";
-import {
-  useDownloadStore,
-  startDownloadGlobal,
-  cancelDownloadGlobal,
-} from "../../lib/downloadStore";
+import { useDownloadStore, enqueueDownloadGlobal } from "../../lib/downloadStore";
 import { friendlyErrorMessage } from "../../lib/errorMessages";
 import { useI18n } from "../../lib/i18n";
+import { RefreshCw, ListVideo } from "lucide-react";
+
+/** 下载前确认弹窗类型。 */
+type ConfirmKind = "repeat" | "inQueue";
 
 function defaultConfig(): DownloadConfig {
   return {
@@ -49,19 +49,14 @@ export default function DownloadPage() {
   const { t } = useI18n();
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
   const [config, setConfig] = useState<DownloadConfig>(defaultConfig());
-  const [confirming, setConfirming] = useState(false);
+  const [confirmKind, setConfirmKind] = useState<ConfirmKind | null>(null);
   // The freshest config built right before download (used when the user
-  // confirms a repeat download, so it also uses the latest settings).
+  // confirms a download, so it also uses the latest settings).
   const [pendingCfg, setPendingCfg] = useState<DownloadConfig | null>(null);
   // Global download state — survives tab switches / page unmounts.
-  const { downloading, completed } = useDownloadStore();
-
-  // Latest `downloading` value for event handlers registered once (which only
-  // see the initial render's state).
-  const downloadingRef = useRef(downloading);
-  useEffect(() => {
-    downloadingRef.current = downloading;
-  }, [downloading]);
+  const { queueTasks } = useDownloadStore();
+  // URL 输入（受控）。
+  const [url, setUrl] = useState("");
 
   // Re-download from the history page: `App` switches to this tab and fires
   // this event with a DownloadHistoryItem. We parse the URL with yt-dlp for
@@ -72,10 +67,6 @@ export default function DownloadPage() {
       const item = (e as CustomEvent<DownloadHistoryItem>).detail;
       if (!item?.id || !item.url) {
         toast.warning(t("history.noUrl"));
-        return;
-      }
-      if (downloadingRef.current) {
-        toast.warning(t("history.busy"));
         return;
       }
       toast.loading(t("prog.fetching"), { id: "fetch-video" });
@@ -125,7 +116,7 @@ export default function DownloadPage() {
           max_height: 0,
           download_archive: null,
         };
-        startDownloadGlobal(cfg, { title: data.title ?? item.title });
+        await enqueueDownloadGlobal(cfg, { title: data.title ?? item.title });
       } catch (err: any) {
         toast.error(t("url.fetchFail", { err: friendlyErrorMessage(err) }), {
           id: "fetch-video",
@@ -136,23 +127,33 @@ export default function DownloadPage() {
     return () => window.removeEventListener("history-redownload", handler);
   }, [t]);
 
-  // When a download completes, mark the video as downloaded so the info card
-  // refreshes (badge + "重新下载") in real time.
-  const prevCompleted = useRef(false);
+  // When active queue tasks all finish, re-check the current video's download
+  // status so the info card refreshes (badge + "重新下载") in real time.
+  const hadActiveTasks = useRef(false);
   useEffect(() => {
-    if (completed && !prevCompleted.current) {
-      setVideoInfo((prev) =>
-        prev
-          ? {
-              ...prev,
-              downloaded: true,
-              downloaded_at: Math.floor(Date.now() / 1000),
-            }
-          : prev
-      );
+    const hasActive = queueTasks.some(
+      (t) => t.status === "queued" || t.status === "downloading"
+    );
+    if (hadActiveTasks.current && !hasActive && videoInfo?.id) {
+      checkVideoDownloaded(videoInfo.id)
+        .then((s) => {
+          if (s.downloaded) {
+            setVideoInfo((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    downloaded: true,
+                    downloaded_at:
+                      s.downloaded_at ?? Math.floor(Date.now() / 1000),
+                  }
+                : prev
+            );
+          }
+        })
+        .catch(() => {});
     }
-    prevCompleted.current = completed;
-  }, [completed]);
+    hadActiveTasks.current = hasActive;
+  }, [queueTasks, videoInfo?.id]);
 
   // Load saved settings into download config on mount and when config is applied
   const reloadConfigFromSettings = () => {
@@ -216,19 +217,16 @@ export default function DownloadPage() {
     if (!ytStatus.available) {
       throw new Error(t("tools.missing.ytdlp"));
     }
-    const ffStatus = await checkFfmpeg();
-    if (!ffStatus.available) {
-      throw new Error(t("tools.missing.ffmpeg"));
-    }
-    // ffmpeg 可用但不在内置 bin 目录（依赖系统 PATH）：告知用户最高画质
-    // （音视频合并）可能无法下载，但不阻断下载。
+    // 内置 ffmpeg 为下载硬性前置条件（音视频合并依赖它，PATH 中的 ffmpeg
+    // 不被接受），缺失时直接阻断下载。
+    let bundled = false;
     try {
-      const bundled = await isFfmpegBundled();
-      if (!bundled) {
-        toast.warning(t("tools.ffmpegNotBundled"));
-      }
+      bundled = await isFfmpegBundled();
     } catch {
-      // 提示失败不影响下载
+      // ignore
+    }
+    if (!bundled) {
+      throw new Error(t("tools.ffmpegNotBundled"));
     }
   };
 
@@ -254,16 +252,45 @@ export default function DownloadPage() {
   // Note: tool checks (yt-dlp --version / ffmpeg -version) are deferred to the
   // confirm / actual-download step so the repeat-download dialog responds
   // instantly instead of waiting for child-process startup.
+  // 执行入队（工具检查 → enqueue → 启动调度）。
+  const doEnqueue = async (cfg: DownloadConfig) => {
+    try {
+      await checkTools();
+    } catch (err: any) {
+      toast.error(err.message);
+      return;
+    }
+    try {
+      // 单任务入队不立即启动，交由队列统一调度（startQueue 按并发 pump）：
+      // 并发有空位则开始下载，忙则排队等待；卡片信息由下载面板元数据填充。
+      await enqueueDownloadGlobal(cfg, {
+        title: videoInfo?.title ?? null,
+        autoStart: false,
+      });
+      startQueue().catch(() => {});
+      toast.success(t("queue.added"));
+    } catch (err: any) {
+      toast.warning(friendlyErrorMessage(err));
+    }
+  };
+
   const handleDownloadClick = async () => {
-    if (downloading) return;
     const latest = await buildLatestConfig();
     setPendingCfg(latest);
 
+    // 1. 已在下载队列中（排队/下载中/暂停）→ 弹窗抉择。
+    if (queueTasks.some((task) => task.url === latest.url)) {
+      setConfirmKind("inQueue");
+      return;
+    }
+
+    // 2. 重下机制只检测文件是否存在（不看历史记录）：文件存在 → 重复确认；
+    //    文件不存在 → 直接下载。
     if (videoInfo?.id) {
       try {
         const status = await checkVideoDownloaded(videoInfo.id);
         if (status.downloaded) {
-          setConfirming(true);
+          setConfirmKind("repeat");
           return;
         }
       } catch {
@@ -271,28 +298,20 @@ export default function DownloadPage() {
       }
     }
 
-    try {
-      await checkTools();
-    } catch (err: any) {
-      toast.error(err.message);
-      return;
-    }
-    startDownloadGlobal(latest, { title: videoInfo?.title ?? null });
+    // 3. 无冲突 → 直接入队。
+    await doEnqueue(latest);
   };
 
   const handleConfirmDownload = async () => {
-    setConfirming(false);
-    try {
-      await checkTools();
-    } catch (err: any) {
-      toast.error(err.message);
-      setPendingCfg(null);
-      return;
-    }
-    startDownloadGlobal(pendingCfg ?? config, {
-      title: videoInfo?.title ?? null,
-    });
+    setConfirmKind(null);
+    await doEnqueue(pendingCfg ?? config);
     setPendingCfg(null);
+  };
+
+  const handleGoTasks = () => {
+    setConfirmKind(null);
+    setPendingCfg(null);
+    window.dispatchEvent(new CustomEvent("switch-tab", { detail: "history" }));
   };
 
   const handleOpenPath = () => {
@@ -302,24 +321,85 @@ export default function DownloadPage() {
     );
   };
 
+  // 当前视频已在队列中（排队/下载中/暂停）→ 按钮禁用并显示「下载中...」。
+  const inQueue =
+    !!videoInfo &&
+    queueTasks.some((task) => !!task.url && task.url === videoInfo.url);
+
   return (
     <div className="p-3 max-w-[900px] mx-auto">
-      <UrlBar onFetch={handleFetch} isLoading={fetchMutation.isPending} />
+      <UrlBar
+        url={url}
+        onUrlChange={setUrl}
+        onFetch={handleFetch}
+        isLoading={fetchMutation.isPending}
+      />
 
       <VideoInfoCard
         info={videoInfo}
-        downloading={downloading}
-        confirming={confirming}
         onDownload={handleDownloadClick}
-        onConfirmDownload={handleConfirmDownload}
-        onCancelConfirm={() => setConfirming(false)}
-        onCancelDownload={cancelDownloadGlobal}
         onOpenPath={handleOpenPath}
+        inQueue={inQueue}
       />
 
       <div className="mt-3">
         <FormatTable formats={videoInfo?.formats ?? []} />
       </div>
+
+      {/* 下载前确认弹窗：队列中 / 重复下载 */}
+      {confirmKind && (
+        <div
+          className="dialog-overlay"
+          onClick={() => {
+            setConfirmKind(null);
+            setPendingCfg(null);
+          }}
+        >
+          <div
+            className="dialog-content"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-sm font-semibold text-zinc-900 mb-2">
+              {confirmKind === "inQueue"
+                ? t("video.inQueueTitle")
+                : t("video.repeatTitle")}
+            </h3>
+            <p className="text-xs text-zinc-500 mb-4 leading-relaxed">
+              {confirmKind === "inQueue"
+                ? t("video.inQueueBody")
+                : t("video.repeatBody", { time: "" })}
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                className="btn"
+                onClick={() => {
+                  setConfirmKind(null);
+                  setPendingCfg(null);
+                }}
+              >
+                {t("common.cancel")}
+              </button>
+              {confirmKind === "inQueue" ? (
+                <button
+                  className="btn btn-primary flex items-center gap-1"
+                  onClick={handleGoTasks}
+                >
+                  <ListVideo size={13} />
+                  {t("video.goTasks")}
+                </button>
+              ) : (
+                <button
+                  className="btn btn-primary flex items-center gap-1"
+                  onClick={handleConfirmDownload}
+                >
+                  <RefreshCw size={13} />
+                  {t("video.redownload")}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

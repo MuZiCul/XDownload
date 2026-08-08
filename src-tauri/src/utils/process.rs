@@ -124,15 +124,23 @@ pub fn find_ytdlp() -> PathBuf {
     PathBuf::from("yt-dlp")
 }
 
-/// Find ffmpeg executable path
-pub fn find_ffmpeg() -> PathBuf {
+/// Path of the ffmpeg binary bundled inside the app's `bin/` directory
+/// (not from PATH). This is the only ffmpeg the downloader is allowed to use.
+pub fn bundled_ffmpeg_path() -> PathBuf {
     let bin_dir = super::app_home::AppHome::bin_dir();
-
     #[cfg(windows)]
-    let local_exe = bin_dir.join("ffmpeg.exe");
+    {
+        bin_dir.join("ffmpeg.exe")
+    }
     #[cfg(not(windows))]
-    let local_exe = bin_dir.join("ffmpeg");
+    {
+        bin_dir.join("ffmpeg")
+    }
+}
 
+/// Find ffmpeg executable path (bundled `bin/` first, then PATH).
+pub fn find_ffmpeg() -> PathBuf {
+    let local_exe = bundled_ffmpeg_path();
     if local_exe.exists() {
         return local_exe;
     }

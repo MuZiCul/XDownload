@@ -12,6 +12,12 @@ import { t as i18nT } from "./i18n";
 type Rule = { pattern: RegExp; key: string };
 
 const RULES: Rule[] = [
+  // User-initiated cancel (cancel button) — friendly message instead of the
+  // raw stderr from the killed process.
+  {
+    pattern: /用户主动取消|user.?cancelled|主动取消/i,
+    key: "error.cancelled",
+  },
   // Account suspended (author banned by X).
   { pattern: /suspended/i, key: "error.suspended" },
   // Private / protected account — must be logged in and following.

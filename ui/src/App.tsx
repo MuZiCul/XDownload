@@ -3,13 +3,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster, toast } from "sonner";
 import TabBar from "./components/layout/TabBar";
 import StatusBar from "./components/layout/StatusBar";
-import GlobalDownloadBar from "./components/layout/GlobalDownloadBar";
 import DownloadPage from "./components/download/DownloadPage";
 import SettingsPage from "./components/settings/SettingsPage";
 import HistoryPage from "./components/history/HistoryPage";
 import AboutPage from "./components/about/AboutPage";
 import DisclaimerPage from "./components/about/DisclaimerPage";
-import { CONTENT } from "./components/about/DisclaimerPage";
+import { CONTENT } from "./lib/disclaimerContent";
 import { initDownloadStore } from "./lib/downloadStore";
 import type { DownloadHistoryItem } from "./lib/types";
 import { initI18n, useI18n } from "./lib/i18n";
@@ -21,9 +20,11 @@ import {
   downloadUpdate,
   getDisclaimerAccepted,
   getUninstallInfo,
+  hasActiveTasks,
   installUpdate,
   loadSettings,
   openUninstallPanel,
+  quitApp,
   uninstallApp,
 } from "./lib/bindings";
 import type {
@@ -32,7 +33,8 @@ import type {
   FfmpegUpdateResult,
 } from "./lib/bindings";
 import { listen } from "@tauri-apps/api/event";
-import { ArrowUpRight, Download, Loader2, Trash2, X } from "lucide-react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { ArrowUpRight, Download, Loader2, Save, Power, Trash2, X } from "lucide-react";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -140,6 +142,74 @@ function App() {
   useEffect(() => {
     initDownloadStore();
   }, []);
+
+  // 支持从下载页弹窗「前往任务」等跨页跳转。
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const tab = (e as CustomEvent).detail;
+      if (tab === "download" || tab === "settings" || tab === "history") {
+        setActiveTab(tab);
+      }
+    };
+    window.addEventListener("switch-tab", handler);
+    return () => window.removeEventListener("switch-tab", handler);
+  }, []);
+
+  // ---- 退出确认流程 ----
+  // 后端在以下场景 emit quit-requested：窗口 X（source=close）、托盘退出
+  // （source=tray）；设置页退出按钮 dispatch 同事件（source=settings）。
+  // 有活跃任务 → 弹确认框（保存进度并退出 / 直接退出 / 取消）；
+  // 无任务 → X 场景隐藏到托盘，其余直接退出。
+  const [quitDialog, setQuitDialog] = useState<{
+    source: "close" | "tray" | "settings";
+  } | null>(null);
+
+  useEffect(() => {
+    const onBackend = (e: { payload?: { source?: string } }) => {
+      const source = e.payload?.source === "tray" ? "tray" : e.payload?.source === "settings" ? "settings" : "close";
+      handleQuitRequest(source);
+    };
+    const onCustom = (e: Event) => {
+      const source = (e as CustomEvent)?.detail?.source;
+      handleQuitRequest(source === "tray" ? "tray" : source === "settings" ? "settings" : "close");
+    };
+    const unlisten = listen<any>("quit-requested", onBackend);
+    window.addEventListener("quit-requested", onCustom);
+    return () => {
+      unlisten.then((fn) => fn());
+      window.removeEventListener("quit-requested", onCustom);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleQuitRequest = (source: "close" | "tray" | "settings") => {
+    hasActiveTasks()
+      .then((active) => {
+        if (active) {
+          setQuitDialog({ source });
+        } else {
+          if (source === "close") {
+            // 无任务点 X → 隐藏到托盘（保持后台运行）。
+            getCurrentWindow().hide().catch(() => {});
+          } else {
+            quitApp(false);
+          }
+        }
+      })
+      .catch(() => {
+        // 查询失败按无任务处理：X 隐藏，其余退出。
+        if (source === "close") {
+          getCurrentWindow().hide().catch(() => {});
+        } else {
+          quitApp(false);
+        }
+      });
+  };
+
+  const doQuit = (saveProgress: boolean) => {
+    setQuitDialog(null);
+    quitApp(saveProgress);
+  };
 
   // Load the persisted UI language.
   useEffect(() => {
@@ -530,6 +600,48 @@ function App() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* 退出确认弹窗（有活跃任务时） */}
+      {quitDialog && (
+        <div className="dialog-overlay">
+          <div className="dialog-content" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-sm font-semibold text-zinc-900 mb-2">
+              {t("quit.title")}
+            </h3>
+            <p className="text-xs text-zinc-500 mb-4 leading-relaxed">
+              {t("quit.body")}
+            </p>
+            <div className="flex flex-col gap-1.5">
+              <button
+                className="btn btn-primary w-full text-sm flex items-center justify-center gap-2 py-2.5"
+                onClick={() => doQuit(true)}
+              >
+                <Save size={15} />
+                {t("quit.saveAndExit")}
+              </button>
+              <button
+                className="btn w-full text-sm flex items-center justify-center gap-2 py-2.5"
+                onClick={() => doQuit(false)}
+              >
+                <Power size={15} />
+                {t("quit.exitWithoutSave")}
+              </button>
+              <button
+                className="btn w-full text-sm py-2.5"
+                onClick={() => {
+                  setQuitDialog(null);
+                  // X 场景取消 → 隐藏到托盘；托盘/设置取消 → 无动作。
+                  if (quitDialog.source === "close") {
+                    getCurrentWindow().hide().catch(() => {});
+                  }
+                }}
+              >
+                {t("common.cancel")}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </QueryClientProvider>

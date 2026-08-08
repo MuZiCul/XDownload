@@ -37,7 +37,13 @@ body {
          font-medium hover:bg-zinc-50 hover:border-zinc-400 active:scale-[0.98]
          transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/40;
 }
-.btn:disabled { @apply opacity-40 pointer-events-none scale-100; }
+.btn:disabled {
+  @apply opacity-40 scale-100 cursor-not-allowed;
+}
+.btn:disabled:hover,
+.btn:disabled:active {
+  @apply bg-white border-zinc-300 cursor-not-allowed;
+}
 .btn-primary { @apply bg-blue-600 text-white border-blue-600 hover:bg-blue-700 hover:border-blue-700; }
 .btn-danger { @apply bg-red-600 text-white border-red-600 hover:bg-red-700; }
 
@@ -52,6 +58,26 @@ input:focus,
 select:focus {
   @apply border-blue-500;
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.08);
+}
+/* Disabled inputs / selects — same visual weight as .btn:disabled */
+input:disabled,
+select:disabled {
+  @apply opacity-40 cursor-not-allowed;
+}
+
+/* Sonner toasts — every toast gets a border for consistency. Neutral
+   (default / info / loading) toasts get a light slate background so they
+   stand out from the #fafafa app background; success / error / warning keep
+   their richColors backgrounds with a subtle dark outline. */
+[data-sonner-toast] {
+  border: 1px solid rgba(0, 0, 0, 0.15);
+}
+[data-sonner-toast][data-type="default"],
+[data-sonner-toast][data-type="info"],
+[data-sonner-toast][data-type="loading"] {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #1e293b;
 }
 
 /* Status colors */

@@ -27,12 +27,96 @@ export async function checkVideoDownloaded(videoId: string): Promise<DownloadSta
   return invoke("check_video_downloaded", { videoId });
 }
 
-export async function startDownload(config: DownloadConfig): Promise<boolean> {
-  return invoke("start_download", { config });
+// --- Download queue ---
+
+/** 入队一个批量下载任务，返回 task_id（URL 已去重）。
+ *  autoStart=false 时任务仅等待 startQueue 才开始。 */
+export async function enqueueDownload(
+  config: DownloadConfig,
+  title?: string | null,
+  autoStart?: boolean,
+  info?: unknown
+): Promise<string> {
+  return invoke("enqueue_download", {
+    config,
+    title,
+    autoStart: autoStart ?? true,
+    info,
+  });
 }
 
-export async function cancelDownload(): Promise<void> {
-  return invoke("cancel_download");
+/** 开始运行多任务队列（批量模式「开始任务」）。 */
+export async function startQueue(): Promise<void> {
+  return invoke("start_queue");
+}
+
+/** 暂停多任务队列：不再启动新任务，运行中的任务继续完成。 */
+export async function pauseQueue(): Promise<void> {
+  return invoke("pause_queue");
+}
+
+/** 恢复暂停的多任务队列。 */
+export async function resumeQueue(): Promise<void> {
+  return invoke("resume_queue");
+}
+
+/** 暂停单个任务（排队任务移出；下载中任务终止并保留缓存续传）。 */
+export async function pauseQueueTask(taskId: string): Promise<void> {
+  return invoke("pause_queue_task", { taskId });
+}
+
+/** 继续一个已暂停的任务（从保留的缓存续传）。 */
+export async function resumeQueueTask(taskId: string): Promise<void> {
+  return invoke("resume_queue_task", { taskId });
+}
+
+/** 暂停全部活跃任务（每个任务 emit download-paused）。 */
+export async function pauseAllTasks(): Promise<void> {
+  return invoke("pause_all_tasks");
+}
+
+/** 恢复全部已暂停任务。 */
+export async function resumeAllTasks(): Promise<void> {
+  return invoke("resume_all_tasks");
+}
+
+/** 取消一个排队中 / 运行中的多任务下载。 */
+export async function cancelQueueTask(taskId: string): Promise<void> {
+  return invoke("cancel_queue_task", { taskId });
+}
+
+/** 清空仍在排队的多任务（运行中的任务会继续完成）。 */
+export async function clearDownloadQueue(): Promise<void> {
+  return invoke("clear_download_queue");
+}
+
+/** 取消全部活跃任务（排队/暂停/运行中）；下载完成的历史记录不受影响。 */
+export async function cancelAllTasks(): Promise<void> {
+  return invoke("cancel_all_tasks");
+}
+
+/** 获取多任务队列快照（排队 + 运行中）。 */
+export async function queueStatus(): Promise<QueueItem[]> {
+  return invoke("queue_status");
+}
+
+/** 更新任务的卡片元数据（封面/作者/时长等），持久化到后端，重启后保留。 */
+export async function updateTaskInfo(
+  taskId: string,
+  info?: unknown
+): Promise<void> {
+  return invoke("update_task_info", { taskId, info: info ?? null });
+}
+
+export interface QueueItem {
+  task_id: string;
+  /** 入队序号（稳定顺序，前端据此排序展示）。 */
+  seq?: number;
+  url: string;
+  title: string | null;
+  status: "queued" | "downloading" | "paused";
+  /** 后端持久化的卡片信息（保存进度重启后恢复）。 */
+  info?: unknown;
 }
 
 export async function listDownloadHistory(): Promise<DownloadHistoryItem[]> {
@@ -45,10 +129,6 @@ export async function deleteDownloadHistory(id: string): Promise<void> {
 
 export async function clearDownloadHistory(): Promise<void> {
   return invoke("clear_download_history");
-}
-
-export async function isDownloading(): Promise<boolean> {
-  return invoke("is_downloading");
 }
 
 // --- Settings ---
@@ -198,6 +278,10 @@ export async function openConfigDir(): Promise<void> {
   return invoke("open_config_dir");
 }
 
+export async function openLogsDir(): Promise<void> {
+  return invoke("open_logs_dir");
+}
+
 export async function openDownloadDir(): Promise<void> {
   return invoke("open_download_dir");
 }
@@ -206,8 +290,14 @@ export async function openDownloadPath(videoId: string): Promise<void> {
   return invoke("open_download_path", { videoId });
 }
 
-export async function quitApp(): Promise<void> {
-  return invoke("quit_app");
+/** 退出应用。saveProgress=true 时先强制保存队列进度到 queue.json。 */
+export async function quitApp(saveProgress?: boolean): Promise<void> {
+  return invoke("quit_app", { saveProgress: saveProgress ?? false });
+}
+
+/** 是否有活跃任务（排队/下载中/暂停）——用于退出确认。 */
+export async function hasActiveTasks(): Promise<boolean> {
+  return invoke("has_active_tasks");
 }
 
 // --- Uninstall ---

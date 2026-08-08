@@ -6,33 +6,24 @@ use crate::models::video_info::VideoInfo;
 use crate::services::proxy::ProxyConfig;
 use crate::utils::process;
 use anyhow::{Context, Result};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 
-/// RAII guard that releases the download-in-progress flag when dropped, so the
-/// mutual-exclusion lock is freed on success, error, and cancellation alike.
-struct DownloadLock<'a>(&'a AtomicBool);
-
-impl Drop for DownloadLock<'_> {
-    fn drop(&mut self) {
-        self.0.store(false, Ordering::SeqCst);
-    }
-}
-
 /// Core downloader wrapping yt-dlp CLI.
+///
+/// All downloads go through the multi-task queue (`DownloadQueue`), which
+/// controls concurrency; this struct only tracks per-task cancel flags / PIDs.
 pub struct YtDlpDownloader {
     ytdlp_path: String,
     cookies_from_browser: Mutex<Option<String>>,
     cookies_file: Mutex<Option<String>>,
-    cancel_flag: Arc<AtomicBool>,
-    /// Whether a download task is currently running. Acts as a mutex so two
-    /// yt-dlp processes can never run concurrently (the frontend may lose its
-    /// local `downloading` state when switching tabs).
-    is_downloading: Arc<AtomicBool>,
-    /// PID of the currently running download child process (yt-dlp).
-    /// Used to actually terminate the process tree on cancellation.
-    current_pid: Arc<Mutex<Option<u32>>>,
+    /// Per-task cancel flags (task_id → flag).
+    task_cancel_flags: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+    /// Per-task child process PIDs (task_id → pid), so a single task can be
+    /// cancelled without affecting others.
+    task_pids: Arc<Mutex<HashMap<String, u32>>>,
 }
 
 impl YtDlpDownloader {
@@ -46,15 +37,9 @@ impl YtDlpDownloader {
             ytdlp_path,
             cookies_from_browser: Mutex::new(None),
             cookies_file: Mutex::new(None),
-            cancel_flag: Arc::new(AtomicBool::new(false)),
-            is_downloading: Arc::new(AtomicBool::new(false)),
-            current_pid: Arc::new(Mutex::new(None)),
+            task_cancel_flags: Arc::new(Mutex::new(HashMap::new())),
+            task_pids: Arc::new(Mutex::new(HashMap::new())),
         }
-    }
-
-    /// Whether a download task is currently running.
-    pub fn is_downloading(&self) -> bool {
-        self.is_downloading.load(Ordering::SeqCst)
     }
 
     pub fn set_cookies_from_browser(&self, browser: &str) {
@@ -79,23 +64,19 @@ impl YtDlpDownloader {
         self.cookies_file.lock().unwrap().clone()
     }
 
-    pub fn cancel(&self) {
-        self.cancel_flag.store(true, Ordering::SeqCst);
-        // Terminate the running yt-dlp process (and its ffmpeg children) so
-        // cancellation actually stops the download instead of just pausing the UI.
-        if let Some(pid) = *self.current_pid.lock().unwrap() {
-            tracing::info!("cancel: killing download process tree pid={}", pid);
+    /// Cancel a specific multi-task download (by task id). Only that task's
+    /// process is terminated — other concurrent tasks keep running.
+    pub fn cancel_task(&self, task_id: &str) {
+        if let Some(flag) = self.task_cancel_flags.lock().unwrap().get(task_id) {
+            flag.store(true, Ordering::SeqCst);
+        }
+        if let Some(pid) = self.task_pids.lock().unwrap().get(task_id).copied() {
+            tracing::info!("cancel_task: killing process tree pid={}", pid);
             process::kill_process_tree(pid);
         }
     }
 
-    fn reset_cancel(&self) {
-        self.cancel_flag.store(false, Ordering::SeqCst);
-    }
-
     pub async fn fetch_video_info(&self, url: &str) -> Result<VideoInfo> {
-        self.reset_cancel();
-
         let mut cmd = self.build_base_command();
 
         // Add cookies from downloader state
@@ -170,30 +151,84 @@ impl YtDlpDownloader {
         }
     }
 
-    /// Download a video. Returns the final file path (from
+    /// Download a video as a queue task. Returns the final file path (from
     /// `--print-to-file after_move:filepath`) on success, `None` if the
     /// process failed without producing stderr output.
+    ///
+    /// Each task stages files in its own `download_cache/{task_id}/` directory
+    /// and is cancelled independently via `cancel_task`.
+    ///
+    /// `preserve_cache` (task resume): keep the cache directory (and the
+    /// `.part` file) so yt-dlp resumes from where it stopped instead of
+    /// starting over.
     pub async fn download(
         &self,
+        task_id: &str,
+        preserve_cache: bool,
         config: &DownloadConfig,
         progress_cb: impl Fn(DownloadProgress) + Send + 'static,
     ) -> Result<Option<String>> {
-        // Mutual exclusion: reject concurrent downloads. The flag is released
-        // automatically by `DownloadLock` when this method returns.
-        if self.is_downloading.swap(true, Ordering::SeqCst) {
-            anyhow::bail!("已有下载任务正在进行，请等待当前任务完成");
-        }
-        let _lock = DownloadLock(&self.is_downloading);
+        // Register a per-task cancel flag so this task can be stopped without
+        // affecting concurrent tasks.
+        let flag = Arc::new(AtomicBool::new(false));
+        self.task_cancel_flags
+            .lock()
+            .unwrap()
+            .insert(task_id.to_string(), flag.clone());
 
-        self.reset_cancel();
+        let cache_dir = crate::utils::app_home::AppHome::download_cache_dir().join(task_id);
+        let tmp_path =
+            std::env::temp_dir().join(format!("xdownload_last_path_{}.txt", task_id));
+        let _ = std::fs::remove_file(&tmp_path);
+        let pid_sink: Arc<dyn Fn(u32) + Send + Sync + 'static> = {
+            let task_pids = self.task_pids.clone();
+            let id_owned = task_id.to_string();
+            Arc::new(move |pid| {
+                task_pids.lock().unwrap().insert(id_owned.clone(), pid);
+            })
+        };
 
-        // Stage the download inside a dedicated cache folder first. Finished
+        let result = self
+            .run_download(
+                config,
+                &cache_dir,
+                &tmp_path,
+                preserve_cache,
+                flag.clone(),
+                pid_sink,
+                progress_cb,
+            )
+            .await;
+
+        self.task_cancel_flags.lock().unwrap().remove(task_id);
+        self.task_pids.lock().unwrap().remove(task_id);
+        result
+    }
+
+    /// Shared download pipeline used by both the single-download path and the
+    /// multi-task path. Builds the yt-dlp command, streams progress/errors,
+    /// then moves finished files into the real download directory.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_download(
+        &self,
+        config: &DownloadConfig,
+        cache_dir: &std::path::Path,
+        tmp_path: &std::path::Path,
+        preserve_cache: bool,
+        cancel: Arc<AtomicBool>,
+        pid_sink: Arc<dyn Fn(u32) + Send + Sync + 'static>,
+        progress_cb: impl Fn(DownloadProgress) + Send + 'static,
+    ) -> Result<Option<String>> {
+        // Stage the download inside the (per-task) cache folder first. Finished
         // files are moved into the real download directory only after yt-dlp
         // completes, so an interrupted download never leaves partial files in
         // the user-visible folder — and the cache is wiped on failure/cancel.
-        let cache_dir = crate::utils::app_home::AppHome::download_cache_dir();
-        std::fs::create_dir_all(&cache_dir).ok();
-        Self::cleanup_download_cache();
+        std::fs::create_dir_all(cache_dir).ok();
+        // When resuming a paused task, keep the existing .part so yt-dlp can
+        // continue from where it stopped.
+        if !preserve_cache {
+            Self::cleanup_cache_dir(cache_dir);
+        }
 
         let mut cmd = self.build_base_command();
         cmd.push("-f".to_string());
@@ -301,8 +336,7 @@ impl YtDlpDownloader {
 
         // Record the final file path (after all post-processing) to a temp
         // file so we can remember where the video was saved.
-        let tmp_path = std::env::temp_dir().join("xdownload_last_path.txt");
-        let _ = std::fs::remove_file(&tmp_path);
+        let _ = std::fs::remove_file(tmp_path);
         cmd.push("--print-to-file".to_string());
         cmd.push("after_move:filepath".to_string());
         cmd.push(tmp_path.to_string_lossy().to_string());
@@ -313,7 +347,6 @@ impl YtDlpDownloader {
         // be confirmed from the log file (used to debug resolution mismatches).
         tracing::info!("yt-dlp download command: {}", cmd.join(" "));
 
-        let cancel = self.cancel_flag.clone();
         let args_refs: Vec<&str> = cmd.iter().map(|s| s.as_str()).collect();
 
         // Parse progress from BOTH pipes: depending on the downloader and
@@ -326,13 +359,14 @@ impl YtDlpDownloader {
         let progress_count = Arc::new(AtomicUsize::new(0));
         let progress_count_stdout = progress_count.clone();
         let progress_count_stderr = progress_count.clone();
+        let cancel_stdout = cancel.clone();
         let cancel_stderr = cancel.clone();
-        let current_pid = self.current_pid.clone();
+        let pid_sink_exec = pid_sink.clone();
         let result = process::execute_with_callbacks_pid(
             &args_refs,
             // stdout → informational lines + possible progress lines
             Some(Box::new(move |line: String| {
-                if cancel.load(Ordering::SeqCst) {
+                if cancel_stdout.load(Ordering::SeqCst) {
                     return;
                 }
                 if let Some(progress) = parse_progress_line(&line) {
@@ -372,9 +406,7 @@ impl YtDlpDownloader {
             None,
             true, // capture_stdout — informational lines + possible progress
             move |pid| {
-                if let Ok(mut guard) = current_pid.lock() {
-                    *guard = Some(pid);
-                }
+                pid_sink_exec(pid);
             },
         )
         .await?;
@@ -384,15 +416,18 @@ impl YtDlpDownloader {
             progress_count.load(Ordering::SeqCst)
         );
 
-        // Download finished (or was cancelled) — clear the tracked PID.
-        if let Ok(mut guard) = self.current_pid.lock() {
-            *guard = None;
-        }
-
         if !result.is_success() {
             // Failure or cancellation — discard the staged cache so partial
-            // files never leak into the download folder.
-            Self::cleanup_download_cache();
+            // files never leak into the download folder. (A resumed task keeps
+            // its .part so it can be paused/resumed again.)
+            if !preserve_cache {
+                Self::cleanup_cache_dir(cache_dir);
+            }
+            // A user-initiated cancel should report a friendly message instead
+            // of the raw stderr from the killed process (often empty/garbled).
+            if cancel.load(Ordering::SeqCst) {
+                return Err(anyhow::anyhow!("用户主动取消"));
+            }
             let stderr = result.stderr_text();
             if !stderr.is_empty() {
                 anyhow::bail!("下载失败: {}", stderr);
@@ -403,7 +438,7 @@ impl YtDlpDownloader {
         // Read the actual saved paths written by --print-to-file. When multiple
         // media entries are downloaded (multi-media tweets) the file contains
         // one path per line, in download order.
-        let saved_paths: Vec<String> = std::fs::read_to_string(&tmp_path)
+        let saved_paths: Vec<String> = std::fs::read_to_string(tmp_path)
             .ok()
             .map(|s| {
                 s.lines()
@@ -426,13 +461,13 @@ impl YtDlpDownloader {
                 saved_path = Some(dst);
             }
         }
-        if let Ok(entries) = std::fs::read_dir(&cache_dir) {
+        if let Ok(entries) = std::fs::read_dir(cache_dir) {
             for entry in entries.flatten() {
                 let _ = Self::move_to_download_dir(&entry.path(), &config.output_dir);
             }
         }
         // Nothing finished should remain; wipe whatever is left (.part, info).
-        Self::cleanup_download_cache();
+        Self::cleanup_cache_dir(cache_dir);
 
         Ok(saved_path)
     }
@@ -446,7 +481,14 @@ impl YtDlpDownloader {
         if src.extension().and_then(|e| e.to_str()) == Some("part") {
             return None;
         }
-        let target = std::path::Path::new(output_dir).join(src.file_name().unwrap_or_default());
+        // 相对 output_dir 转绝对路径，历史记录保存绝对路径（供 opener scope 校验）。
+        let out = std::path::Path::new(output_dir);
+        let out = if out.is_absolute() {
+            out.to_path_buf()
+        } else {
+            std::env::current_dir().unwrap_or_default().join(out)
+        };
+        let target = out.join(src.file_name().unwrap_or_default());
         let dst = std::path::PathBuf::from(
             crate::services::download_history::DownloadHistory::sanitize_filename(
                 &target.to_string_lossy(),
@@ -464,11 +506,16 @@ impl YtDlpDownloader {
 
     /// Remove everything currently staged in the download cache — partial
     /// downloads, info files, or finished outputs that never got moved.
-    /// Called at startup (to wipe leftovers from a previous session) and
-    /// after each download attempt.
+    /// Called at startup (to wipe leftovers from a previous session).
     pub fn cleanup_download_cache() {
-        let dir = crate::utils::app_home::AppHome::download_cache_dir();
-        if let Ok(entries) = std::fs::read_dir(&dir) {
+        Self::cleanup_cache_dir(&crate::utils::app_home::AppHome::download_cache_dir());
+    }
+
+    /// Remove all contents of a cache directory (files and subdirectories),
+    /// keeping the directory itself. Used per-task so concurrent downloads
+    /// never touch each other's staged files.
+    fn cleanup_cache_dir(dir: &std::path::Path) {
+        if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let p = entry.path();
                 if p.is_dir() {
@@ -493,14 +540,12 @@ impl YtDlpDownloader {
         cmd.push("utf-8".to_string());
 
         // Tell yt-dlp where the bundled ffmpeg lives so `bestvideo+bestaudio`
-        // and `-x` merging actually work. Without this yt-dlp cannot find the
-        // bundled binary and the merge fails (small / partial files).
-        let ffmpeg = process::find_ffmpeg();
-        if ffmpeg.exists() {
-            if let Some(dir) = ffmpeg.parent() {
-                cmd.push("--ffmpeg-location".to_string());
-                cmd.push(dir.to_string_lossy().to_string());
-            }
+        // and `-x` merging actually work. Only the bundled binary is used —
+        // download.rs already rejects the download when it is missing.
+        let ffmpeg = process::bundled_ffmpeg_path();
+        if let Some(dir) = ffmpeg.parent() {
+            cmd.push("--ffmpeg-location".to_string());
+            cmd.push(dir.to_string_lossy().to_string());
         }
 
         if let Some(proxy_url) = ProxyConfig::to_proxy_url() {
