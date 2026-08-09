@@ -1,6 +1,6 @@
 [package]
 name = "xdownload"
-version = "2.7.1"
+version = "2.7.2"
 edition = "2021"
 description = "X/Twitter video downloader based on yt-dlp, rewritten in Rust"
 authors = ["MuZiCul"]
@@ -22,6 +22,9 @@ tauri-build = { version = "2", features = [], default-features = false }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
+tauri-plugin-deep-link = "2"
+# deep-link feature: 让 single-instance 把深链 URL 转发给已运行的主实例
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-clipboard-manager = "2"

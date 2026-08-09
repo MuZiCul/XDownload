@@ -1,3 +1,7 @@
+// 大量功能函数经由 Tauri IPC 命令被前端调用，Rust 编译器无法感知这些
+// 使用点，会误报 dead_code。统一抑制该警告（保留后续功能代码）。
+#![allow(dead_code)]
+
 mod commands;
 mod downloader;
 mod models;
@@ -8,11 +12,13 @@ mod utils;
 use commands::download::DownloaderState;
 use downloader::queue::DownloadQueue;
 use downloader::ytdlp::YtDlpDownloader;
+use models::config::DownloadConfig;
 use std::fs::{File, OpenOptions};
 use std::io::Write as IoWrite;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
+use tauri_plugin_deep_link::DeepLinkExt;
 use tracing_subscriber::fmt::time::FormatTime;
 use tracing_subscriber::fmt::format::Writer;
 
@@ -127,6 +133,18 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
+        // 必须放在 deep-link 之前：Windows 深链通过「协议拉起新实例」实现，
+        // 需 single-instance 把深链 URL 参数转发给已运行的主实例。
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            let _ = app.get_webview_window("main").map(|w| {
+                if w.is_minimized().unwrap_or(false) {
+                    let _ = w.unminimize();
+                }
+                let _ = w.show();
+                let _ = w.set_focus();
+            });
+        }))
+        .plugin(tauri_plugin_deep_link::init())
         .invoke_handler(tauri::generate_handler![
             commands::download::fetch_video_info,
             commands::download::check_video_downloaded,
@@ -208,6 +226,74 @@ pub fn run() {
             // is enabled (re-enqueues and starts draining).
             queue.restore_if_enabled();
 
+            // 浏览器扩展深链：xdownload://add?url=<encoded status url>
+            // 已运行时由 single-instance 转发 URL 回调；未运行时协议拉起应用。
+            {
+                // 注册 xdownload:// 协议（写 HKCU\Software\Classes\xdownload，
+                // 指向当前 exe）。插件不会自动注册，必须显式调用。
+                if let Err(e) = app.deep_link().register_all() {
+                    tracing::warn!("deep-link: register_all failed: {}", e);
+                }
+
+                let handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    let handle = handle.clone();
+                    for url in event.urls() {
+                        let raw = url.as_str();
+                        let Some(target) = parse_deep_link_url(raw) else {
+                            tracing::warn!("deep-link: invalid url {}", raw);
+                            continue;
+                        };
+                        if !commands::download::is_supported_url(&target) {
+                            tracing::warn!("deep-link: rejected non-X url {}", target);
+                            continue;
+                        }
+                        tracing::info!("deep-link: received {}", target);
+                        let handle = handle.clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Some(state) =
+                                handle.try_state::<commands::download::DownloaderState>()
+                            {
+                                let output_dir = services::config::ConfigManager::load_download_dir()
+                                    .unwrap_or_else(|| "downloads".to_string());
+                                let config = DownloadConfig {
+                                    url: target.clone(),
+                                    video_id: None,
+                                    title: None,
+                                    thumbnail: None,
+                                    uploader: None,
+                                    duration: 0,
+                                    view_count: 0,
+                                    like_count: 0,
+                                    format_id: "bestvideo+bestaudio/best".to_string(),
+                                    output_dir,
+                                    output_template: "%(title)s.%(ext)s".to_string(),
+                                    extract_audio: false,
+                                    embed_subtitles: false,
+                                    embed_thumbnail: false,
+                                    write_thumbnail: false,
+                                    proxy: None,
+                                    socket_timeout: 30,
+                                    cookies_file: None,
+                                    cookies_from_browser: None,
+                                    max_height: 0,
+                                    download_archive: None,
+                                    playlist_items: None,
+                                };
+                                match state.queue.enqueue(config, None, true, None) {
+                                    Ok(id) => tracing::info!(
+                                        "deep-link: enqueued task {} for {}",
+                                        id,
+                                        target
+                                    ),
+                                    Err(e) => tracing::warn!("deep-link: enqueue failed: {}", e),
+                                }
+                            }
+                        });
+                    }
+                });
+            }
+
             // Clicking the window close button hides the app to the tray. When
             // tasks are active, the frontend is asked to confirm (save progress
             // dialog); otherwise the window hides directly — decided here in the
@@ -243,4 +329,52 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running XDownload");
+}
+
+/// Parse a deep-link URL of the form `xdownload://add?url=<percent-encoded>`.
+/// Returns the decoded target URL, or `None` for any other host/action.
+fn parse_deep_link_url(raw: &str) -> Option<String> {
+    let rest = raw.strip_prefix("xdownload://")?;
+    let (host, query) = rest.split_once('?')?;
+    if host != "add" {
+        return None;
+    }
+    let mut target = None;
+    for pair in query.split('&') {
+        let mut it = pair.splitn(2, '=');
+        let k = it.next()?;
+        let v = it.next()?;
+        if k == "url" {
+            target = Some(percent_decode_str(v));
+        }
+    }
+    target
+}
+
+/// Minimal percent-decode (%XX → byte). The browser extension encodes the
+/// status URL with `encodeURIComponent`, so `%` sequences are expected.
+fn percent_decode_str(s: &str) -> String {
+    fn hex_val(c: u8) -> Option<u8> {
+        match c {
+            b'0'..=b'9' => Some(c - b'0'),
+            b'a'..=b'f' => Some(c - b'a' + 10),
+            b'A'..=b'F' => Some(c - b'A' + 10),
+            _ => None,
+        }
+    }
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let (Some(h), Some(l)) = (hex_val(b[i + 1]), hex_val(b[i + 2])) {
+                out.push(h * 16 + l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }

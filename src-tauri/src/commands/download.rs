@@ -16,7 +16,7 @@ pub struct DownloaderState {
 /// Accepts `x.com`, `twitter.com`, `www.x.com`, `mobile.twitter.com`, etc.
 /// Rejects anything else (e.g. `evilx.com`) instead of the previous naive
 /// `contains("x.com")` check that also wrongly blocked `twitter.com`.
-fn is_supported_url(url: &str) -> bool {
+pub(crate) fn is_supported_url(url: &str) -> bool {
     let trimmed = url.trim();
     // Strip the scheme.
     let rest = trimmed
