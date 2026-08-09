@@ -18,6 +18,8 @@
 /.claude/
 /.codebuddy/
 /.vscode/
+/.idea/
+
 /zoo/
 
 /ui/src/components/settings/proxy-test/target/
@@ -26,4 +28,5 @@
 
 RELEASE*.md
 zoo.md
+
 buddy*.md
