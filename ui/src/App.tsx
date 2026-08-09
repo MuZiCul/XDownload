@@ -231,6 +231,21 @@ function App() {
     ]).catch(() => {});
   }, []);
 
+  // Open the app update modal on demand (e.g. About page "check for updates"
+  // toast → 前往下载), reusing the same update modal shown at startup.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as UpdateCheckResult | undefined;
+      if (!detail) return;
+      setAppUpdate(detail);
+      setUpdatePhase("idle");
+      setUpdatePercent(0);
+      setUpdatePath(null);
+    };
+    window.addEventListener("open-update-modal", handler);
+    return () => window.removeEventListener("open-update-modal", handler);
+  }, []);
+
   const showModal =
     disclaimerAccepted !== false &&
     (appUpdate !== null || ytdlpUpdate !== null || ffmpegUpdate !== null);
