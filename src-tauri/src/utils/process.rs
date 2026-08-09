@@ -252,9 +252,9 @@ async fn execute_inner(
     cmd.env("PYTHONIOENCODING", "utf-8");
 
     // Don't show console window on Windows
+    // (tokio::process::Command has its own `creation_flags` on Windows)
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
 

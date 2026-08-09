@@ -46,7 +46,7 @@ impl Bootstrap {
             .no_proxy()
             .connect_timeout(Duration::from_secs(8))
             .timeout(Duration::from_secs(180))
-            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) XDownload/2.7.1")
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) XDownload/2.7.2")
             .build()
             .context("failed to build direct HTTP client")
     }
@@ -60,7 +60,7 @@ impl Bootstrap {
         reqwest::Client::builder()
             .proxy(proxy)
             .timeout(Duration::from_secs(180))
-            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) XDownload/2.7.1")
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) XDownload/2.7.2")
             .build()
             .map(Some)
             .context("failed to build proxy HTTP client")
@@ -285,7 +285,6 @@ fn extract_ffmpeg(zip_path: &Path, dest_dir: &Path) -> Result<PathBuf> {
         dest: &Path,
         progress_cb: &impl Fn(u32),
     ) -> Result<()> {
-        use std::io::Write;
         use tokio::io::AsyncWriteExt;
 
         let response = client

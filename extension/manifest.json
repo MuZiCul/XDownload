@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "XDownload 下载助手",
+  "version": "1.0.0",
+  "description": "在 X/Twitter 视频上添加下载按钮，一键将视频加入 XDownload 桌面应用的任务队列。",
+  "permissions": [],
+  "host_permissions": ["*://x.com/*", "*://twitter.com/*"],
+  "content_scripts": [
+    {
+      "matches": ["*://x.com/*", "*://twitter.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "XDownload 下载助手"
+  },
+  "icons": {
+    "128": "icons/icon-128.png"
+  }
+}
