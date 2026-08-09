@@ -1,34 +1,21 @@
 use std::path::{Path, PathBuf};
 
-/// Resolves the application root directory across different run modes:
-/// - IDE / cargo run: project root (where bin/ config/ downloads/ live)
-/// - jpackage / bundled: the install directory
+/// Resolves the application root directory:
+/// - dev (cargo run / tauri dev): project root (where bin/ config/ downloads/ live)
+/// - installed (packaged): the install directory (exe 所在目录)
 pub struct AppHome;
 
 impl AppHome {
-    /// Application root directory — always the project root (parent of src-tauri/),
-    /// NOT src-tauri/ itself. This keeps bin/ outside Tauri's watch scope
-    /// so tool downloads never trigger hot-reload during dev.
+    /// Application root directory — the install directory for packaged builds,
+    /// or the project root (parent of src-tauri/) when running from the repo
+    /// (dev mode, keeping bin/ outside Tauri's watch scope).
     pub fn root() -> PathBuf {
-        // Check for XDOWNLOAD_ROOT environment variable (set by launcher scripts)
-        if let Ok(root) = std::env::var("XDOWNLOAD_ROOT") {
-            let p = PathBuf::from(root);
-            if p.exists() {
-                return p;
-            }
-        }
-
-        // Try to detect from executable location
+        // From the exe location, walk up to find the project root. Only a
+        // dev build (exe under src-tauri/target/) can hit this; an installed
+        // build never contains src-tauri/tauri.conf.json, so the exe's own
+        // directory (the install dir) is returned instead.
         if let Ok(exe_path) = std::env::current_exe() {
             let exe_dir = exe_path.parent().unwrap_or(Path::new("."));
-
-            // jpackage: exe is at root, jars in app/
-            if exe_dir.join("app").exists() || exe_dir.join("runtime").exists() {
-                return exe_dir.to_path_buf();
-            }
-
-            // Walk up from exe dir to find project root
-            // Project root = contains src-tauri/tauri.conf.json
             let mut current = Some(exe_dir);
             while let Some(dir) = current {
                 if dir.join("src-tauri").join("tauri.conf.json").exists() {
@@ -36,19 +23,12 @@ impl AppHome {
                 }
                 current = dir.parent();
             }
+            // Packaged build: exe lives in the install directory.
+            return exe_dir.to_path_buf();
         }
 
-        // Fallback: walk up from CWD to find project root
-        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let mut current = Some(cwd.as_path());
-        while let Some(dir) = current {
-            if dir.join("src-tauri").join("tauri.conf.json").exists() {
-                return dir.to_path_buf();
-            }
-            current = dir.parent();
-        }
-
-        cwd
+        // Very unlikely fallback (current_exe failed).
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     }
 
     /// bin/ directory

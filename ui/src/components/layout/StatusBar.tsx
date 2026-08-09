@@ -1,9 +1,14 @@
 import { useEffect, useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import { getProxyStatus } from "../../lib/bindings";
 import type { ProxyStatus } from "../../lib/types";
 import { useToolStatus } from "../../hooks/useToolStatus";
+import { usePrivacyMode, setPrivacyMode } from "../../lib/privacyMode";
+import { useI18n } from "../../lib/i18n";
 
 export default function StatusBar() {
+  const { t } = useI18n();
+  const privacy = usePrivacyMode();
   const { ytStatus, ffStatus, hasYtUpdate, hasFfUpdate } = useToolStatus();
   const [pxStatus, setPxStatus] = useState<ProxyStatus | null>(null);
 
@@ -40,6 +45,16 @@ export default function StatusBar() {
         ok={!!pxStatus?.enabled}
         detail={pxStatus?.enabled ? pxStatus.proxy_string : "off"}
       />
+      <button
+        onClick={() => setPrivacyMode(!privacy)}
+        title={privacy ? t("privacy.disable") : t("privacy.enable")}
+        className={`flex items-center gap-1 cursor-pointer select-none hover:text-zinc-700 ${
+          privacy ? "text-amber-600" : "text-zinc-500"
+        }`}
+      >
+        {privacy ? <EyeOff size={11} /> : <Eye size={11} />}
+        {privacy ? t("privacy.disable") : t("privacy.enable")}
+      </button>
     </footer>
   );
 }

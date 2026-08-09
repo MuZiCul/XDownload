@@ -7,11 +7,13 @@ type Props = {
   stretch?: boolean;
   /** stretch 模式下覆盖容器尺寸（默认 w-40 h-[90px]）。 */
   boxClass?: string;
+  /** 隐私模式：封面用毛玻璃覆盖。 */
+  blurred?: boolean;
 };
 
 /** Cover thumbnail that falls back to the app icon when the URL is missing or
  *  fails to load. */
-export default function CoverThumb({ src, stretch, boxClass }: Props) {
+export default function CoverThumb({ src, stretch, boxClass, blurred }: Props) {
   const [failed, setFailed] = useState(false);
   // 图片实际宽高比是否横图（宽 > 高）。null = 未知（未加载完成）。
   const [isLandscape, setIsLandscape] = useState<boolean | null>(null);
@@ -64,6 +66,9 @@ export default function CoverThumb({ src, stretch, boxClass }: Props) {
           onError={() => setFailed(true)}
           className="w-full h-full object-cover"
         />
+      )}
+      {blurred && (
+        <div className="absolute inset-0 z-10 backdrop-blur-md bg-white/20" />
       )}
     </div>
   );

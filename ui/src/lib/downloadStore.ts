@@ -21,6 +21,7 @@ import {
   queueStatus,
   updateTaskInfo,
   fetchVideoInfo,
+  openFilePath,
 } from "./bindings";
 import type { DownloadConfig } from "./types";
 import { friendlyErrorMessage } from "./errorMessages";
@@ -294,6 +295,23 @@ export function initDownloadStore() {
     });
   });
 
+  // 深链（浏览器扩展）入队成功：提示用户并跳转到任务页。
+  listen<any>("deep-link-queued", () => {
+    toast.success(
+      createElement(
+        "div",
+        { className: "flex items-center gap-1.5 min-w-0 w-full" },
+        createElement(
+          "span",
+          { className: "truncate min-w-0 text-zinc-700" },
+          i18nT("gbar.deepLinkQueued")
+        )
+      ),
+      { id: "deep-link-global" }
+    );
+    window.dispatchEvent(new CustomEvent("switch-tab", { detail: "history" }));
+  });
+
   listen<any>("download-started", (event) => {
     const id = String(event.payload?.task_id ?? "");
     if (!id) return;
@@ -321,14 +339,25 @@ export function initDownloadStore() {
     if (p.status === "completed") {
       const doneTitle =
         done?.info?.title || done?.title || done?.url || i18nT("gbar.completeBody");
+      const filePath = typeof p.file_path === "string" ? p.file_path : "";
       toast.success(
         createElement(
           "div",
           { className: "flex items-center gap-1.5 min-w-0 w-full" },
           createElement("span", { className: "shrink-0" }, i18nT("gbar.complete")),
           createElement(
-            "span",
-            { className: "truncate min-w-0 text-zinc-700" },
+            "button",
+            {
+              className:
+                "truncate min-w-0 text-left text-zinc-700 cursor-pointer underline-offset-2 hover:underline hover:text-blue-600",
+              title: i18nT("gbar.completeOpen"),
+              onClick: () => {
+                if (!filePath) return;
+                openFilePath(filePath).catch((e: any) =>
+                  toast.error(i18nT("video.openPathFail", { err: e }))
+                );
+              },
+            },
             doneTitle
           )
         ),

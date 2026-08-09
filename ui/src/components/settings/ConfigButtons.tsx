@@ -13,8 +13,9 @@ import {
 } from "../../lib/bindings";
 import type { AppSettings } from "../../lib/types";
 import { toast } from "sonner";
-import { Save, Upload, Folder, FolderOpen, FolderCog, Power, ScrollText, X } from "lucide-react";
+import { Save, Upload, Folder, FolderOpen, FolderCog, Power, ScrollText, Eye, EyeOff, X } from "lucide-react";
 import { useI18n } from "../../lib/i18n";
+import { usePrivacyMode, setPrivacyMode } from "../../lib/privacyMode";
 
 type Props = {
   settings: AppSettings;
@@ -23,6 +24,7 @@ type Props = {
 
 export default function ConfigButtons({ settings, onApply }: Props) {
   const { t } = useI18n();
+  const privacyMode = usePrivacyMode();
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [showApplyDialog, setShowApplyDialog] = useState(false);
   const [configPath, setConfigPath] = useState("");
@@ -164,6 +166,18 @@ export default function ConfigButtons({ settings, onApply }: Props) {
         >
           <ScrollText size={13} />
           {t("config.logs")}
+        </button>
+        <button
+          className={
+            privacyMode
+              ? "btn flex items-center gap-1 text-amber-600 hover:text-amber-700"
+              : "btn flex items-center gap-1"
+          }
+          onClick={() => setPrivacyMode(!privacyMode)}
+          title={privacyMode ? t("privacy.disable") : t("privacy.enable")}
+        >
+          {privacyMode ? <EyeOff size={13} /> : <Eye size={13} />}
+          {privacyMode ? t("privacy.disable") : t("privacy.enable")}
         </button>
         <button
           className="btn flex items-center gap-1 text-red-600 hover:text-red-700"

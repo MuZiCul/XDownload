@@ -130,4 +130,7 @@ pub struct AppSettings {
     pub retry_count: Option<u8>,
     #[serde(default)]
     pub queue_persist: Option<bool>,
+    /// 隐私模式（标题遮挡 + 封面毛玻璃）。None 视为关闭（旧配置兼容）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub privacy_mode: Option<bool>,
 }

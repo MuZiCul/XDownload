@@ -290,6 +290,21 @@ export async function openDownloadPath(videoId: string): Promise<void> {
   return invoke("open_download_path", { videoId });
 }
 
+/** 在文件管理器中定位某个文件（下载完成 toast 点击标题用）。 */
+export async function openFilePath(filePath: string): Promise<void> {
+  return invoke("open_file_path", { filePath });
+}
+
+/** 读取持久化的隐私模式状态。 */
+export async function getPrivacyMode(): Promise<boolean> {
+  return invoke("get_privacy_mode");
+}
+
+/** 持久化隐私模式状态。 */
+export async function setPrivacyModePersist(enabled: boolean): Promise<void> {
+  return invoke("set_privacy_mode", { enabled });
+}
+
 /** 退出应用。saveProgress=true 时先强制保存队列进度到 queue.json。 */
 export async function quitApp(saveProgress?: boolean): Promise<void> {
   return invoke("quit_app", { saveProgress: saveProgress ?? false });

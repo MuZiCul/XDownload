@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import type { VideoInfo } from "../../lib/types";
 import { useI18n } from "../../lib/i18n";
 import { formatDuration, formatNumber, formatDateTime } from "../../lib/format";
+import { usePrivacyMode } from "../../lib/privacyMode";
 import CoverThumb from "../common/CoverThumb";
 
 type Props = {
@@ -21,6 +22,7 @@ export default function VideoInfoCard({
   inQueue,
 }: Props) {
   const { t } = useI18n();
+  const privacy = usePrivacyMode();
   const openLink = info?.webpage_url || info?.url || null;
   const handleOpenLink = () => {
     if (!openLink) return;
@@ -46,6 +48,7 @@ export default function VideoInfoCard({
           src={info?.thumbnail ?? null}
           stretch
           boxClass="w-[206px] h-[115.75px]"
+          blurred={privacy}
         />
         <div className="flex-1 min-w-0">
           <h3
@@ -57,7 +60,7 @@ export default function VideoInfoCard({
                 : "text-zinc-900"
             }`}
           >
-            {info?.title ?? "—"}
+            {privacy ? "***" : info?.title ?? "—"}
           </h3>
           <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs">
             <InfoRow label={t("video.author")} value={info?.uploader ?? "—"} />
