@@ -155,6 +155,56 @@ pub fn open_download_path(app: tauri::AppHandle, video_id: String) -> Result<(),
     }
 }
 
+/// Open the file manager with a specific file selected (reveal).
+/// Used by the download-complete toast: clicking the title opens the location
+/// of the finished file. The path comes directly from the `download-finished`
+/// event payload (`file_path`), so no history lookup is needed.
+#[tauri::command]
+pub fn open_file_path(app: tauri::AppHandle, file_path: String) -> Result<(), String> {
+    let path = std::path::PathBuf::from(file_path);
+    if !path.exists() {
+        tracing::warn!(
+            "open_file_path: '{}' does not exist, opening download dir",
+            path.display()
+        );
+        return open_download_dir(app);
+    }
+
+    #[cfg(windows)]
+    {
+        use tauri_plugin_opener::OpenerExt;
+        match app.opener().reveal_item_in_dir(&path) {
+            Ok(_) => {
+                tracing::info!(
+                    "open_file_path: revealing '{}' in explorer",
+                    path.display()
+                );
+                Ok(())
+            }
+            Err(e) => {
+                // Reveal failed — fall back to opening the parent directory so
+                // the user can still reach the file.
+                tracing::warn!(
+                    "open_file_path: reveal failed ({}), opening parent dir",
+                    e
+                );
+                let dir = path.parent().unwrap_or(&path);
+                app.opener()
+                    .open_path(dir.to_string_lossy().to_string(), None::<&str>)
+                    .map_err(|e| format!("failed to open file location: {}", e))
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        use tauri_plugin_opener::OpenerExt;
+        let dir = path.parent().unwrap_or(&path);
+        app.opener()
+            .open_path(dir.to_string_lossy().to_string(), None::<&str>)
+            .map_err(|e| format!("failed to open file location: {}", e))
+    }
+}
+
 /// Clean up running child processes (including active downloads) and quit the
 /// app. `save_progress`: when true, the multi-task queue is force-persisted to
 /// `config/queue.json` first so unfinished tasks can resume on next launch.

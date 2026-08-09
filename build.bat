@@ -3,7 +3,7 @@ chcp 65001 >nul
 set ROOT=%~dp0
 
 echo ========================================
-echo   XDownload v2.7.2 - Build ^& Package
+echo   XDownload v2.8.0 - Build ^& Package
 echo ========================================
 echo.
 

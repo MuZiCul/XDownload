@@ -482,11 +482,13 @@ impl YtDlpDownloader {
             return None;
         }
         // 相对 output_dir 转绝对路径，历史记录保存绝对路径（供 opener scope 校验）。
+        // 相对路径基于应用根目录解析，而不是进程 cwd：协议拉起应用时 cwd 可能
+        // 是 system32，按 cwd 拼会把文件下载到错误位置。
         let out = std::path::Path::new(output_dir);
         let out = if out.is_absolute() {
             out.to_path_buf()
         } else {
-            std::env::current_dir().unwrap_or_default().join(out)
+            crate::utils::app_home::AppHome::root().join(out)
         };
         let target = out.join(src.file_name().unwrap_or_default());
         let dst = std::path::PathBuf::from(

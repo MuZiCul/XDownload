@@ -34,6 +34,7 @@ import type {
 } from "./lib/bindings";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getPrivacyMode, setPrivacyMode, initPrivacyMode } from "./lib/privacyMode";
 import { ArrowUpRight, Download, Loader2, Save, Power, Trash2, X } from "lucide-react";
 
 const queryClient = new QueryClient({
@@ -141,6 +142,17 @@ function App() {
   // Initialize the global download store (event listeners + state recovery).
   useEffect(() => {
     initDownloadStore();
+    initPrivacyMode();
+  }, []);
+
+  // 系统托盘菜单的隐私开关：后端 emit toggle-privacy-mode → 前端切换。
+  useEffect(() => {
+    const unlisten = listen<any>("toggle-privacy-mode", () => {
+      setPrivacyMode(!getPrivacyMode());
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
   }, []);
 
   // 支持从下载页弹窗「前往任务」等跨页跳转。

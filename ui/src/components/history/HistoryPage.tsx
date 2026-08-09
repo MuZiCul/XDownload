@@ -52,6 +52,7 @@ import DuplicateDownloadModal, {
 } from "../common/DuplicateDownloadModal";
 import { toast } from "sonner";
 import { useI18n } from "../../lib/i18n";
+import { usePrivacyMode } from "../../lib/privacyMode";
 import {
   formatDuration,
   formatNumber,
@@ -66,6 +67,7 @@ type Props = {
 /** 任务面板：正在下载（实时队列）+ 下载完成（历史记录）。 */
 export default function HistoryPage({ onRedownload }: Props) {
   const { t } = useI18n();
+  const privacy = usePrivacyMode();
   const { queueTasks } = useDownloadStore();
   const [items, setItems] = useState<DownloadHistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -420,7 +422,7 @@ export default function HistoryPage({ onRedownload }: Props) {
           <div className="divide-y divide-zinc-100">
             {sortedItems.map((item) => (
               <div key={item.id} className="flex gap-3 py-3">
-                <CoverThumb src={item.thumbnail} stretch />
+                <CoverThumb src={item.thumbnail} stretch blurred={privacy} />
 
                 <div className="flex-1 min-w-0">
                   <p
@@ -433,7 +435,7 @@ export default function HistoryPage({ onRedownload }: Props) {
                         : "text-zinc-900"
                     }`}
                   >
-                    {item.title || item.id}
+                    {privacy ? "***" : item.title || item.id}
                   </p>
 
                   <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs mb-2">
@@ -564,8 +566,9 @@ function TaskCard({
   ) => void;
 }) {
   const { t } = useI18n();
+  const privacy = usePrivacyMode();
   const info = task.info;
-  const title = info?.title || task.title || task.url;
+  const title = privacy ? "***" : info?.title || task.title || task.url;
   const openLink = task.url || null;
 
   const statusBadge = () => {
@@ -616,7 +619,7 @@ function TaskCard({
 
   return (
     <div className="flex gap-3 py-3">
-      <CoverThumb src={info?.thumbnail ?? null} stretch />
+      <CoverThumb src={info?.thumbnail ?? null} stretch blurred={privacy} />
 
       <div className="flex-1 min-w-0">
         <p

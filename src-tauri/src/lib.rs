@@ -198,6 +198,9 @@ pub fn run() {
             commands::bootstrap::open_logs_dir,
             commands::bootstrap::open_download_dir,
             commands::bootstrap::open_download_path,
+            commands::bootstrap::open_file_path,
+            commands::settings::get_privacy_mode,
+            commands::settings::set_privacy_mode,
             commands::bootstrap::quit_app,
             commands::bootstrap::get_uninstall_info,
             commands::bootstrap::uninstall_app,
@@ -227,7 +230,9 @@ pub fn run() {
             queue.restore_if_enabled();
 
             // 浏览器扩展深链：xdownload://add?url=<encoded status url>
-            // 已运行时由 single-instance 转发 URL 回调；未运行时协议拉起应用。
+            // 已运行时由 single-instance 转发 URL 回调；未运行时协议拉起应用，
+            // URL 作为命令行参数传入，需用 get_current() 读取（on_open_url 的
+            // 事件在插件 setup 阶段 emit，早于本回调注册，启动 URL 会丢失）。
             {
                 // 注册 xdownload:// 协议（写 HKCU\Software\Classes\xdownload，
                 // 指向当前 exe）。插件不会自动注册，必须显式调用。
@@ -235,63 +240,20 @@ pub fn run() {
                     tracing::warn!("deep-link: register_all failed: {}", e);
                 }
 
+                // 运行中收到的深链 URL（single-instance 转发 / 窗口消息）。
                 let handle = app.handle().clone();
                 app.deep_link().on_open_url(move |event| {
-                    let handle = handle.clone();
                     for url in event.urls() {
-                        let raw = url.as_str();
-                        let Some(target) = parse_deep_link_url(raw) else {
-                            tracing::warn!("deep-link: invalid url {}", raw);
-                            continue;
-                        };
-                        if !commands::download::is_supported_url(&target) {
-                            tracing::warn!("deep-link: rejected non-X url {}", target);
-                            continue;
-                        }
-                        tracing::info!("deep-link: received {}", target);
-                        let handle = handle.clone();
-                        tauri::async_runtime::spawn(async move {
-                            if let Some(state) =
-                                handle.try_state::<commands::download::DownloaderState>()
-                            {
-                                let output_dir = services::config::ConfigManager::load_download_dir()
-                                    .unwrap_or_else(|| "downloads".to_string());
-                                let config = DownloadConfig {
-                                    url: target.clone(),
-                                    video_id: None,
-                                    title: None,
-                                    thumbnail: None,
-                                    uploader: None,
-                                    duration: 0,
-                                    view_count: 0,
-                                    like_count: 0,
-                                    format_id: "bestvideo+bestaudio/best".to_string(),
-                                    output_dir,
-                                    output_template: "%(title)s.%(ext)s".to_string(),
-                                    extract_audio: false,
-                                    embed_subtitles: false,
-                                    embed_thumbnail: false,
-                                    write_thumbnail: false,
-                                    proxy: None,
-                                    socket_timeout: 30,
-                                    cookies_file: None,
-                                    cookies_from_browser: None,
-                                    max_height: 0,
-                                    download_archive: None,
-                                    playlist_items: None,
-                                };
-                                match state.queue.enqueue(config, None, true, None) {
-                                    Ok(id) => tracing::info!(
-                                        "deep-link: enqueued task {} for {}",
-                                        id,
-                                        target
-                                    ),
-                                    Err(e) => tracing::warn!("deep-link: enqueue failed: {}", e),
-                                }
-                            }
-                        });
+                        handle_deep_link(&handle, url.as_str());
                     }
                 });
+
+                // 启动时（协议拉起）的深链 URL。
+                if let Ok(Some(urls)) = app.deep_link().get_current() {
+                    for url in urls {
+                        handle_deep_link(app.handle(), url.as_str());
+                    }
+                }
             }
 
             // Clicking the window close button hides the app to the tray. When
@@ -331,11 +293,96 @@ pub fn run() {
         .expect("error while running XDownload");
 }
 
+/// Validate a deep-link URL, then enqueue the target as a download task.
+fn handle_deep_link(app: &tauri::AppHandle, raw: &str) {
+    let Some(target) = parse_deep_link_url(raw) else {
+        tracing::warn!("deep-link: invalid url {}", raw);
+        return;
+    };
+    if !commands::download::is_supported_url(&target) {
+        tracing::warn!("deep-link: rejected non-X url {}", target);
+        return;
+    }
+    tracing::info!("deep-link: received {}", target);
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Some(state) = handle.try_state::<commands::download::DownloaderState>() {
+            // 绝对路径兜底：协议拉起时进程 cwd 可能是 system32，相对路径
+            // "downloads" 会解析到错误位置，必须用安装目录下的 downloads。
+            let output_dir = services::config::ConfigManager::load_download_dir()
+                .unwrap_or_else(|| {
+                    utils::app_home::AppHome::downloads_dir()
+                        .to_string_lossy()
+                        .to_string()
+                });
+            // 从 status URL 提取 id 填入 video_id：历史记录以 video_id 为键，
+            // 缺失会导致下载完成后不写下载历史。
+            let video_id = commands::download::extract_status_id(&target);
+
+            // 深链来源单独处理：先 fetch 视频信息再入队（与普通 UI 流程一致），
+            // 入队时就把 info 带上，保证任务卡片与下载历史的信息完整。
+            // fetch 失败仍入队（不带 info，下载照常，yt-dlp 下载时会自行解析）。
+            let fetch_result = state.downloader.fetch_video_info(&target).await;
+            let (title, info) = match fetch_result {
+                Ok(info) => {
+                    tracing::info!("deep-link: info fetched for {}", target);
+                    (info.title.clone(), serde_json::to_value(&info).ok())
+                }
+                Err(e) => {
+                    tracing::warn!("deep-link: fetch info failed: {}", e);
+                    (None, None)
+                }
+            };
+
+            let config = DownloadConfig {
+                url: target.clone(),
+                video_id,
+                title: title.clone(),
+                thumbnail: None,
+                uploader: None,
+                duration: 0,
+                view_count: 0,
+                like_count: 0,
+                format_id: "bestvideo+bestaudio/best".to_string(),
+                output_dir,
+                output_template: "%(title)s.%(ext)s".to_string(),
+                extract_audio: false,
+                embed_subtitles: false,
+                embed_thumbnail: false,
+                write_thumbnail: false,
+                proxy: None,
+                socket_timeout: 30,
+                cookies_file: None,
+                cookies_from_browser: None,
+                max_height: 0,
+                download_archive: None,
+                playlist_items: None,
+            };
+            match state.queue.enqueue(config, title, true, info) {
+                Ok(id) => {
+                    tracing::info!("deep-link: enqueued task {} for {}", id, target);
+                    // 专用事件：告知前端「已从浏览器获得下载任务」（普通入队的
+                    // download-queued 不区分来源，这里单独发一个事件，前端据此
+                    // 弹出 toast 并跳转到任务页）。
+                    let _ = handle.emit(
+                        "deep-link-queued",
+                        serde_json::json!({ "task_id": id }),
+                    );
+                }
+                Err(e) => tracing::warn!("deep-link: enqueue failed: {}", e),
+            }
+        }
+    });
+}
+
 /// Parse a deep-link URL of the form `xdownload://add?url=<percent-encoded>`.
 /// Returns the decoded target URL, or `None` for any other host/action.
+/// Note: some browsers/OS normalize the empty path to a slash (`xdownload://add/`),
+/// so the host is trimmed of a trailing slash before matching.
 fn parse_deep_link_url(raw: &str) -> Option<String> {
     let rest = raw.strip_prefix("xdownload://")?;
     let (host, query) = rest.split_once('?')?;
+    let host = host.trim_end_matches('/');
     if host != "add" {
         return None;
     }

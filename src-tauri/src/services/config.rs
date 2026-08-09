@@ -185,6 +185,18 @@ impl ConfigManager {
         Self::load().lang
     }
 
+    // ==================== Privacy Mode ====================
+
+    pub fn save_privacy_mode(enabled: bool) -> Result<()> {
+        Self::merge_and_save(|cfg| {
+            cfg.privacy_mode = Some(enabled);
+        })
+    }
+
+    pub fn load_privacy_mode() -> bool {
+        Self::load().privacy_mode.unwrap_or(false)
+    }
+
     // ==================== Disclaimer ====================
     //
     // The acceptance state is stored in the Windows Registry (HKCU) with an

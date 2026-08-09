@@ -85,7 +85,7 @@ fn attach_download_status(info: &mut VideoInfo) {
 
 /// Extract the status (tweet) id from an x.com/twitter.com URL like
 /// "https://x.com/user/status/1234567890123456789/video/1".
-fn extract_status_id(url: &str) -> Option<String> {
+pub(crate) fn extract_status_id(url: &str) -> Option<String> {
     let re = regex::Regex::new(r"/status/(\d+)").ok()?;
     re.captures(url).and_then(|c| c.get(1)).map(|m| m.as_str().to_string())
 }
