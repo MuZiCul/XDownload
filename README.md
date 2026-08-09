@@ -39,6 +39,8 @@ Powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp) + ffmpeg, wrapped in a cle
 - **Cookies** — import from your browser to access restricted content
 - **Built-in tools** — download yt-dlp + ffmpeg right from the settings page
 - **Update alerts** — startup checks for new versions of XDownload / yt-dlp / ffmpeg
+- **Browser extension** — an MV3 companion extension adds a download button right on X posts; one click deep-links the video into the desktop app
+- **Privacy mode** — mask video titles with `***` and blur covers with a frosted-glass overlay; toggle from settings, the status bar, or the tray, and it persists across restarts
 - **i18n** — English & 简体中文, switch instantly without restart
 
 ## Install
