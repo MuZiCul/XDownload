@@ -13,6 +13,13 @@
 /progress/
 /config/
 /logs/
+/buddy/
+/RELEASE/
+/.claude/
+/.codebuddy/
+/.vscode/
+/zoo/
+
 /ui/src/components/settings/proxy-test/target/
 
 # Files

@@ -519,13 +519,20 @@ pub fn install_update(app: AppHandle, path: String) -> Result<(), String> {
     {
         use std::os::windows::process::CommandExt;
         // CREATE_NO_WINDOW — avoid a console flash
-        cmd.creation_flags(0x08000000);
+        // CREATE_BREAKAWAY_FROM_JOB — the installer must NOT die with the app:
+        // Tauri/WebView2 may host child processes in a Job Object, and exiting
+        // the app would terminate the installer mid-install.
+        cmd.creation_flags(0x08000000 | 0x01000000);
     }
 
     cmd.spawn()
         .map_err(|e| format!("启动安装程序失败: {}", e))?;
 
     tracing::info!("install_update: launched installer {}", installer.display());
+
+    // Give the installer a moment to start up before the app exits, so the
+    // silent install does not fail because the app is still holding its files.
+    std::thread::sleep(std::time::Duration::from_millis(1500));
 
     // Clean up child processes (yt-dlp / ffmpeg) so the installer can replace
     // files, then exit — the installer process continues independently.
