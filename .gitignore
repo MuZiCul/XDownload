@@ -18,6 +18,8 @@
 /.claude/
 /.codebuddy/
 /.vscode/
+/.idea/
+
 /zoo/
 
 /ui/src/components/settings/proxy-test/target/
