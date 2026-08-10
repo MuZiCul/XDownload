@@ -270,9 +270,13 @@ export const zh: Record<string, string> = {
   "multitask.concurrency": "并发下载数",
   "multitask.retry": "失败重试次数",
   "multitask.persist": "队列持久化",
+  "multitask.rateLimit": "下载限速",
+  "multitask.unlimited": "不限速",
+  "multitask.custom": "自定义",
+  "multitask.invalidRate": "限速格式无效，请输入如 1M / 2.5M / 500K",
   "multitask.saved": "多任务设置已保存",
   "multitask.hint":
-    "并发下载数：同时下载的任务数（1-3）；失败重试次数：0 表示不重试；队列持久化：开启后重启应用会恢复未完成任务",
+    "并发下载数：同时下载的任务数（1-3）；失败重试次数：0 表示不重试；队列持久化：开启后重启应用会恢复未完成任务；下载限速：每个任务的限速值（1M~100M），格式如 1M / 500K",
 
   // ===== Language setting =====
   "lang.title": "语言 / Language",

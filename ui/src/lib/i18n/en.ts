@@ -277,9 +277,13 @@ export const en: Record<string, string> = {
   "multitask.concurrency": "Concurrent downloads",
   "multitask.retry": "Retry count",
   "multitask.persist": "Persist queue",
+  "multitask.rateLimit": "Rate limit",
+  "multitask.unlimited": "Unlimited",
+  "multitask.custom": "Custom",
+  "multitask.invalidRate": "Invalid rate limit. Use e.g. 1M / 2.5M / 500K",
   "multitask.saved": "Multi-task settings saved",
   "multitask.hint":
-    "Concurrent downloads: tasks running at once (1-3). Retry count: 0 = no retry. Persist queue: restores unfinished tasks on next launch.",
+    "Concurrent downloads: tasks running at once (1-3). Retry count: 0 = no retry. Persist queue: restores unfinished tasks on next launch. Rate limit: per-task download speed (1M~100M), e.g. 1M / 500K.",
 
   // ===== Language setting =====
   "lang.title": "Language",
