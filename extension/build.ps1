@@ -1,5 +1,7 @@
-# XDownload 浏览器扩展打包脚本
-# 用法: powershell -ExecutionPolicy Bypass -File build.ps1
+# XDownload browser extension pack script
+# Usage: powershell -ExecutionPolicy Bypass -File build.ps1
+# NOTE: keep this file ASCII-only (English) so it parses correctly under
+# both Windows PowerShell 5.1 and PowerShell 7 (pwsh) in CI.
 $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -15,4 +17,4 @@ Compress-Archive -Path `
   (Join-Path $root "icons") `
   -DestinationPath $zip
 
-Write-Host "打包完成: $zip"
+Write-Host "Extension zip ready: $zip"
