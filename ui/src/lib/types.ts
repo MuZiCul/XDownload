@@ -70,6 +70,8 @@ export interface DownloadConfig {
   cookies_from_browser: string | null;
   max_height: number;
   download_archive: string | null;
+  /** yt-dlp --limit-rate (e.g. "1M"). Empty/null = unlimited. */
+  download_rate_limit?: string | null;
 }
 
 // --- Progress ---
@@ -99,6 +101,8 @@ export interface AppSettings {
   retry_count?: number;
   /** 队列持久化开关（默认关）。 */
   queue_persist?: boolean;
+  /** 下载限速（yt-dlp --limit-rate），如 "1M"、"25M"。空 = 不限速。 */
+  download_rate_limit?: string;
 }
 
 // --- Proxy ---

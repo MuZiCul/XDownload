@@ -5,39 +5,81 @@ import { toast } from "sonner";
 import { Save } from "lucide-react";
 import { useI18n } from "../../lib/i18n";
 
+/** 预设限速档位（yt-dlp --limit-rate），从低到高 1M~100M 五档均分。
+ *  "unlimited" 表示不限速。 */
+export const RATE_LIMIT_PRESETS = [
+  { label: "unlimited", value: "" },
+  { label: "1M", value: "1M" },
+  { label: "25M", value: "25M" },
+  { label: "50M", value: "50M" },
+  { label: "75M", value: "75M" },
+  { label: "100M", value: "100M" },
+];
+
+/** 合法限速格式：数字（可带小数）+ 可选 K/M/G 单位（大小写均可），如 "1M"、"2.5M"、"500K"。 */
+export const RATE_LIMIT_RE = /^\d+(\.\d+)?[KMGkmg]?$/;
+
+/** 只保留限速输入允许的字符：数字、小数点、单位字母（K/M/G，大小写）。 */
+export function sanitizeRateLimitInput(s: string): string {
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/[^0-9.KMGkmg]/g, "");
+}
+
 type Props = {
   concurrency: number;
   retryCount: number;
   queuePersist: boolean;
+  /** yt-dlp --limit-rate 值（如 "1M"）；空串 = 不限速。 */
+  rateLimit: string;
   onChange: (
-    patch: Partial<Pick<AppSettings, "concurrency" | "retry_count" | "queue_persist">>
+    patch: Partial<
+      Pick<AppSettings, "concurrency" | "retry_count" | "queue_persist" | "download_rate_limit">
+    >
   ) => void;
 };
 
-/** 多任务设置卡片：并发数 / 失败重试 / 队列持久化（三项同一卡片，单独保存）。 */
+/** 多任务设置卡片：并发数 / 失败重试 / 队列持久化 / 下载限速（同一卡片，单独保存）。 */
 export default function MultiTaskSetting({
   concurrency,
   retryCount,
   queuePersist,
+  rateLimit,
   onChange,
 }: Props) {
   const { t } = useI18n();
   const [saving, setSaving] = useState(false);
-  const [committed, setCommitted] = useState({ concurrency, retryCount, queuePersist });
+  const [committed, setCommitted] = useState({
+    concurrency,
+    retryCount,
+    queuePersist,
+    rateLimit,
+  });
   const changed =
     concurrency !== committed.concurrency ||
     retryCount !== committed.retryCount ||
-    queuePersist !== committed.queuePersist;
+    queuePersist !== committed.queuePersist ||
+    rateLimit !== committed.rateLimit;
+
+  // 当前是否命中预设档位（含"不限速"）；否则视为自定义值。
+  const isPreset = RATE_LIMIT_PRESETS.some((p) => p.value === rateLimit);
+  const presetValue = isPreset ? rateLimit : "custom";
 
   const handleSave = async () => {
+    // 保存前校验自定义限速值（预设档位永远合法）；非法则提示并回滚，不落盘。
+    if (presetValue === "custom" && rateLimit !== "" && !RATE_LIMIT_RE.test(rateLimit)) {
+      toast.error(t("multitask.invalidRate"));
+      onChange({ download_rate_limit: committed.rateLimit });
+      return;
+    }
     setSaving(true);
     try {
       const cfg: AppSettings = await loadSettings();
       cfg.concurrency = concurrency;
       cfg.retry_count = retryCount;
       cfg.queue_persist = queuePersist;
+      cfg.download_rate_limit = rateLimit || "";
       await saveSettings(cfg);
-      setCommitted({ concurrency, retryCount, queuePersist });
+      setCommitted({ concurrency, retryCount, queuePersist, rateLimit });
       toast.success(t("multitask.saved"));
     } catch (err: any) {
       toast.error(t("common.saveFail", { err }));
@@ -87,6 +129,42 @@ export default function MultiTaskSetting({
             className="accent-blue-600"
           />
         </label>
+        <label className="flex items-center gap-2 text-xs text-zinc-600">
+          {t("multitask.rateLimit")}
+          <select
+            value={presetValue}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === "custom") {
+                // 进入自定义：保留当前值，让输入框接管
+                onChange({ download_rate_limit: rateLimit || "1M" });
+              } else {
+                onChange({ download_rate_limit: v });
+              }
+            }}
+            className="text-xs"
+          >
+            {RATE_LIMIT_PRESETS.map((p) => (
+              <option key={p.value || "unlimited"} value={p.value}>
+                {p.value === ""
+                  ? t("multitask.unlimited")
+                  : p.label}
+              </option>
+            ))}
+            <option value="custom">{t("multitask.custom")}</option>
+          </select>
+        </label>
+        {presetValue === "custom" && (
+          <input
+            type="text"
+            value={rateLimit}
+            onChange={(e) =>
+              onChange({ download_rate_limit: sanitizeRateLimitInput(e.target.value) })
+            }
+            placeholder="1M"
+            className="text-xs border rounded px-2 py-1 w-20"
+          />
+        )}
         <button
           className="btn flex items-center gap-1"
           onClick={handleSave}

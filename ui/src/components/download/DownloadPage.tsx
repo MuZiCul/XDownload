@@ -38,6 +38,7 @@ function defaultConfig(): DownloadConfig {
     write_thumbnail: false,
     proxy: null,
     socket_timeout: 30,
+    download_rate_limit: null,
     cookies_file: null,
     cookies_from_browser: null,
     max_height: 0,
@@ -111,6 +112,7 @@ export default function DownloadPage() {
           write_thumbnail: false,
           proxy: null,
           socket_timeout: 30,
+          download_rate_limit: s?.download_rate_limit ?? null,
           cookies_file: null,
           cookies_from_browser: s?.cookies_from_browser ?? null,
           max_height: 0,
@@ -239,6 +241,7 @@ export default function DownloadPage() {
       return {
         ...config,
         output_dir: s.download_dir ?? "downloads",
+        download_rate_limit: s.download_rate_limit ?? null,
         cookies_from_browser: s.cookies_from_browser ?? null,
       };
     } catch {

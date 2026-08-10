@@ -364,6 +364,9 @@ fn handle_deep_link(app: &tauri::AppHandle, raw: &str) {
                 max_height: 0,
                 download_archive: None,
                 playlist_items: None,
+                download_rate_limit: services::config::ConfigManager::load()
+                    .download_rate_limit
+                    .clone(),
             };
             match state.queue.enqueue(config, title, true, info) {
                 Ok(id) => {

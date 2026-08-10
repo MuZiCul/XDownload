@@ -72,6 +72,7 @@ export default function SettingsPage() {
             concurrency={settings.concurrency ?? 1}
             retryCount={settings.retry_count ?? 0}
             queuePersist={settings.queue_persist ?? false}
+            rateLimit={settings.download_rate_limit ?? ""}
             onChange={(patch) =>
               setSettings((s) => ({ ...s, ...patch }))
             }

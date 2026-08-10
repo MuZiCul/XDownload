@@ -11,6 +11,34 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 
+/// Validate a yt-dlp `--limit-rate` value: a number (with optional decimal)
+/// followed by an optional unit suffix (K/M/G, case-insensitive), e.g. "500K",
+/// "1M", "2.5M". Rejects garbage so a malformed setting is silently ignored
+/// instead of breaking the yt-dlp command.
+fn is_valid_rate_limit(s: &str) -> bool {
+    let t = s.trim();
+    let (num, suffix) = match t.as_bytes().last() {
+        Some(b'k') | Some(b'K') | Some(b'm') | Some(b'M') | Some(b'g') | Some(b'G') => {
+            (&t[..t.len() - 1], &t[t.len() - 1..])
+        }
+        _ => (t, ""),
+    };
+    if num.is_empty() {
+        return false;
+    }
+    // number may be integer or decimal ("1", "2.5")
+    let mut dot_seen = false;
+    let ok = num.bytes().all(|b| match b {
+        b'0'..=b'9' => true,
+        b'.' if !dot_seen => {
+            dot_seen = true;
+            true
+        }
+        _ => false,
+    });
+    ok && (suffix.is_empty() || matches!(suffix.to_uppercase().as_str(), "K" | "M" | "G"))
+}
+
 /// Core downloader wrapping yt-dlp CLI.
 ///
 /// All downloads go through the multi-task queue (`DownloadQueue`), which
@@ -263,6 +291,21 @@ impl YtDlpDownloader {
         ));
         cmd.push("--socket-timeout".to_string());
         cmd.push(config.socket_timeout.to_string());
+        // Per-task download rate limit (--limit-rate). Empty / None = unlimited.
+        if let Some(ref rate) = config.download_rate_limit {
+            if rate.is_empty() {
+                // 空串 = 不限速，正常跳过。
+            } else if is_valid_rate_limit(rate) {
+                cmd.push("--limit-rate".to_string());
+                cmd.push(rate.clone());
+            } else {
+                // 非法值（理论上前端已拦截）防御性忽略并记日志，避免破坏 yt-dlp 命令。
+                tracing::warn!(
+                    "invalid download_rate_limit {:?} ignored (expected e.g. 1M / 2.5M / 500K)",
+                    rate
+                );
+            }
+        }
         // Deliberately NOT passing --no-playlist here: a tweet with several
         // media entries is exposed by yt-dlp as multiple playlist items, and
         // --no-playlist would silently download only the first one. An
@@ -729,5 +772,23 @@ mod tests {
         let mut b = cfg("https://x.com/user/status/1");
         b.playlist_items = Some("1,2".to_string());
         assert_ne!(YtDlpDownloader::cache_key(&a), YtDlpDownloader::cache_key(&b));
+    }
+
+    #[test]
+    fn test_is_valid_rate_limit() {
+        assert!(is_valid_rate_limit("1M"));
+        assert!(is_valid_rate_limit("500K"));
+        assert!(is_valid_rate_limit("2.5M"));
+        assert!(is_valid_rate_limit("100M"));
+        assert!(is_valid_rate_limit("10"));
+        assert!(is_valid_rate_limit(" 1M "));
+        assert!(is_valid_rate_limit("1m"));
+        assert!(is_valid_rate_limit("1G"));
+        assert!(!is_valid_rate_limit(""));
+        assert!(!is_valid_rate_limit("M"));
+        assert!(!is_valid_rate_limit("1MM"));
+        assert!(!is_valid_rate_limit("abc"));
+        assert!(!is_valid_rate_limit("1.2.3M"));
+        assert!(!is_valid_rate_limit("1 M"));
     }
 }

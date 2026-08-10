@@ -233,6 +233,7 @@ export default function HistoryPage({ onRedownload }: Props) {
     write_thumbnail: false,
     proxy: null,
     socket_timeout: 30,
+    download_rate_limit: s?.download_rate_limit ?? null,
     cookies_file: null,
     cookies_from_browser: s?.cookies_from_browser ?? null,
     max_height: 0,
