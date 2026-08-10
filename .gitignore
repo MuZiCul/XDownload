@@ -14,7 +14,6 @@
 /config/
 /logs/
 /buddy/
-/RELEASE/
 /.claude/
 /.codebuddy/
 /.vscode/
@@ -27,7 +26,6 @@
 
 # Files
 
-RELEASE*.md
 zoo.md
 
 buddy*.md
