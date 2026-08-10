@@ -14,6 +14,7 @@ import type { DownloadHistoryItem } from "./lib/types";
 import { initI18n, useI18n } from "./lib/i18n";
 import {
   acceptDisclaimer,
+  buildProxyUrl,
   checkYtdlpUpdate,
   checkFfmpegUpdate,
   getDisclaimerAccepted,
@@ -229,6 +230,26 @@ function App() {
     initI18n();
   }, []);
 
+  /** Check for updates with the same network fallback used elsewhere:
+   *  direct request first; if it fails and a proxy is configured, retry
+   *  through the proxy. Returns the Update (or null when up to date).
+   *  Must be declared BEFORE the startup-check effect below (TDZ). */
+  const checkForUpdate = useCallback(async () => {
+    try {
+      return await check();
+    } catch {
+      // Direct failed — fall back to the configured proxy if any.
+      try {
+        const settings = await loadSettings();
+        const proxy = buildProxyUrl(settings);
+        if (!proxy) throw new Error("no proxy");
+        return await check({ proxy });
+      } catch {
+        throw new Error("update network failed");
+      }
+    }
+  }, []);
+
   // Auto-check for updates on startup (app + yt-dlp + ffmpeg)
   useEffect(() => {
     Promise.all([
@@ -281,25 +302,6 @@ function App() {
   type UpdatePhase = "idle" | "downloading" | "installing";
   const [updatePhase, setUpdatePhase] = useState<UpdatePhase>("idle");
   const [updatePercent, setUpdatePercent] = useState(0);
-
-  /** Check for updates with the same network fallback used elsewhere:
-   *  direct request first; if it fails and a proxy is configured, retry
-   *  through the proxy. Returns the Update (or null when up to date). */
-  const checkForUpdate = useCallback(async () => {
-    try {
-      return await check();
-    } catch {
-      // Direct failed — fall back to the configured proxy if any.
-      try {
-        const settings = await loadSettings();
-        const proxy = buildProxyUrl(settings);
-        if (!proxy) throw new Error("no proxy");
-        return await check({ proxy });
-      } catch {
-        throw new Error("update network failed");
-      }
-    }
-  }, []);
 
   const handleDownloadUpdate = async () => {
     if (updatePhase === "downloading" || updatePhase === "installing") return;
