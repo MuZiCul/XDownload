@@ -1,5 +1,4 @@
 use serde::Deserialize;
-use tauri::{AppHandle, Emitter};
 
 /// Response from GitHub Releases API
 #[derive(Deserialize)]
@@ -69,16 +68,6 @@ async fn fetch_latest_release_api(
     resp.json::<GithubRelease>().await.ok()
 }
 
-/// Pick the installer download URL from release assets (NSIS .exe preferred,
-/// then .msi). Returns None when the release has no installer asset.
-fn pick_installer_asset(assets: &[GithubAsset]) -> Option<String> {
-    assets
-        .iter()
-        .find(|a| a.name.to_ascii_lowercase().ends_with(".exe"))
-        .or_else(|| assets.iter().find(|a| a.name.to_ascii_lowercase().ends_with(".msi")))
-        .map(|a| a.browser_download_url.clone())
-}
-
 /// Fetch the latest release tag by following the `/releases/latest` redirect
 /// on the GitHub **website** (not the API, which is rate-limited to ~60
 /// unauthenticated requests/hour and can return HTTP 403). Returns the tag
@@ -106,98 +95,6 @@ async fn fetch_latest_tag_via_web(
     }
     tracing::info!("check via web: {} latest tag = {}", repo, tag);
     Ok((tag, final_url))
-}
-
-/// Check for updates by comparing local version against the latest
-/// GitHub release. Returns JSON with `has_update`, versions, and release URL.
-///
-/// References the standard pattern:
-///   GET https://api.github.com/repos/{owner}/{repo}/releases/latest
-///   → parse tag_name → semver-compare with CARGO_PKG_VERSION
-#[tauri::command]
-pub async fn check_update() -> serde_json::Value {
-    let current = env!("CARGO_PKG_VERSION");
-
-    // Strategy: direct API → proxied API → direct web → proxied web.
-    // Direct first: uses the user's own IP, avoiding shared proxy egress IPs
-    // that trigger GitHub's unauthenticated rate limit (HTTP 403).
-    let direct = match direct_update_client() {
-        Ok(c) => c,
-        Err(e) => {
-            return serde_json::json!({
-                "has_update": false,
-                "latest_version": null,
-                "current_version": current,
-                "url": Option::<String>::None,
-                "error": format!("初始化请求失败: {}", e),
-            })
-        }
-    };
-    let proxied = update_client().ok();
-
-    // 1. Direct API (best: exposes installer assets, own IP quota).
-    if let Some(release) = fetch_latest_release_api(&direct, "MuZiCul", "XDownload").await {
-        let latest = release.tag_name.strip_prefix('v').unwrap_or(&release.tag_name);
-        let has_update = cmp_semver(latest, current) > 0;
-        return serde_json::json!({
-            "has_update": has_update,
-            "latest_version": latest,
-            "current_version": current,
-            "url": release.html_url,
-            "download_url": pick_installer_asset(&release.assets),
-        });
-    }
-
-    // 2. Proxied API.
-    if let Some(proxy) = &proxied {
-        if let Some(release) = fetch_latest_release_api(proxy, "MuZiCul", "XDownload").await {
-            let latest = release.tag_name.strip_prefix('v').unwrap_or(&release.tag_name);
-            let has_update = cmp_semver(latest, current) > 0;
-            return serde_json::json!({
-                "has_update": has_update,
-                "latest_version": latest,
-                "current_version": current,
-                "url": release.html_url,
-                "download_url": pick_installer_asset(&release.assets),
-            });
-        }
-    }
-
-    // 3. Web fallback (no API rate limit) — direct first, then proxied.
-    let mut last_error = String::from("无法检测最新版本");
-    let mut web_ok = false;
-    let mut web_result = (String::new(), String::new());
-    let web_clients = std::iter::once(&direct).chain(proxied.iter());
-    for client in web_clients {
-        match fetch_latest_tag_via_web(client, "MuZiCul", "XDownload").await {
-            Ok((tag, url)) => {
-                web_ok = true;
-                web_result = (tag, url);
-                break;
-            }
-            Err(e) => last_error = e,
-        }
-    }
-
-    if web_ok {
-        let (latest, release_url) = web_result;
-        let has_update = cmp_semver(&latest, current) > 0;
-        serde_json::json!({
-            "has_update": has_update,
-            "latest_version": latest,
-            "current_version": current,
-            "url": release_url,
-            "download_url": Option::<String>::None,
-        })
-    } else {
-        serde_json::json!({
-            "has_update": false,
-            "latest_version": null,
-            "current_version": current,
-            "url": Option::<String>::None,
-            "error": last_error,
-        })
-    }
 }
 
 /// Check if a newer version of yt-dlp is available.
@@ -468,77 +365,6 @@ fn parse_ffmpeg_version(line: &str) -> Option<String> {
         return None;
     }
     Some(version.to_string())
-}
-
-/// Download the new-version installer into a temp location.
-/// Uses the direct-first / proxy-fallback strategy (see bootstrap.rs).
-/// Emits "update-download-progress" with `{ percent }`. Returns the local path.
-#[tauri::command]
-pub async fn download_update(app: AppHandle, url: String) -> Result<String, String> {
-    let dest = std::env::temp_dir().join("xdownload-update-setup.exe");
-    let _ = std::fs::remove_file(&dest);
-
-    crate::services::bootstrap::Bootstrap::download_with_fallback(
-        &url,
-        &dest,
-        &move |pct| {
-            let _ = app.emit(
-                "update-download-progress",
-                serde_json::json!({ "percent": pct }),
-            );
-        },
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-
-    Ok(dest.to_string_lossy().to_string())
-}
-
-/// Launch the downloaded installer (silent) and exit the current app so the
-/// installer can replace the running files. Supports NSIS (.exe) and MSI.
-#[tauri::command]
-pub fn install_update(app: AppHandle, path: String) -> Result<(), String> {
-    let installer = std::path::Path::new(&path);
-    if !installer.exists() {
-        return Err("更新安装包不存在".to_string());
-    }
-
-    let lower = path.to_ascii_lowercase();
-    let mut cmd = if lower.ends_with(".msi") {
-        let mut c = std::process::Command::new("msiexec");
-        c.args(["/i", &path, "/qn"]);
-        c
-    } else {
-        // NSIS installer silent mode
-        let mut c = std::process::Command::new(installer);
-        c.arg("/S");
-        c
-    };
-
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        // CREATE_NO_WINDOW — avoid a console flash
-        // CREATE_BREAKAWAY_FROM_JOB — the installer must NOT die with the app:
-        // Tauri/WebView2 may host child processes in a Job Object, and exiting
-        // the app would terminate the installer mid-install.
-        cmd.creation_flags(0x08000000 | 0x01000000);
-    }
-
-    cmd.spawn()
-        .map_err(|e| format!("启动安装程序失败: {}", e))?;
-
-    tracing::info!("install_update: launched installer {}", installer.display());
-
-    // Give the installer a moment to start up before the app exits, so the
-    // silent install does not fail because the app is still holding its files.
-    std::thread::sleep(std::time::Duration::from_millis(1500));
-
-    // Clean up child processes (yt-dlp / ffmpeg) so the installer can replace
-    // files, then exit — the installer process continues independently.
-    crate::utils::process::kill_all_children();
-    app.exit(0);
-    Ok(())
 }
 
 /// Semver-style comparison: returns positive if a > b, negative if a < b, 0 if equal.

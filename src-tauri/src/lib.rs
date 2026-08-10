@@ -133,6 +133,8 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         // 必须放在 deep-link 之前：Windows 深链通过「协议拉起新实例」实现，
         // 需 single-instance 把深链 URL 参数转发给已运行的主实例。
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -206,11 +208,8 @@ pub fn run() {
             commands::bootstrap::get_uninstall_info,
             commands::bootstrap::uninstall_app,
             commands::bootstrap::open_uninstall_panel,
-            commands::update::check_update,
             commands::update::check_ytdlp_update,
             commands::update::check_ffmpeg_update,
-            commands::update::download_update,
-            commands::update::install_update,
             commands::history::list_download_history,
             commands::history::delete_download_history,
             commands::history::clear_download_history,

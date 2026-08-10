@@ -340,30 +340,6 @@ export async function openUninstallPanel(): Promise<void> {
   return invoke("open_uninstall_panel");
 }
 
-export interface UpdateCheckResult {
-  has_update: boolean;
-  latest_version: string | null;
-  current_version: string;
-  url: string | null;
-  /** Direct download URL of the installer asset (null when unavailable). */
-  download_url?: string | null;
-  error?: string;
-}
-
-export async function checkUpdate(): Promise<UpdateCheckResult> {
-  return invoke("check_update");
-}
-
-/** Download the new-version installer (direct first, then proxy). Returns the local path. */
-export async function downloadUpdate(url: string): Promise<string> {
-  return invoke("download_update", { url });
-}
-
-/** Launch the downloaded installer silently and exit the app. */
-export async function installUpdate(path: string): Promise<void> {
-  return invoke("install_update", { path });
-}
-
 export interface YtdlpUpdateResult {
   has_update: boolean;
   not_installed?: boolean;

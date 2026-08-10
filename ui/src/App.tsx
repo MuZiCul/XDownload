@@ -14,24 +14,22 @@ import type { DownloadHistoryItem } from "./lib/types";
 import { initI18n, useI18n } from "./lib/i18n";
 import {
   acceptDisclaimer,
-  checkUpdate,
   checkYtdlpUpdate,
   checkFfmpegUpdate,
-  downloadUpdate,
   getDisclaimerAccepted,
   getUninstallInfo,
   hasActiveTasks,
-  installUpdate,
   loadSettings,
   openUninstallPanel,
   quitApp,
   uninstallApp,
 } from "./lib/bindings";
 import type {
-  UpdateCheckResult,
   YtdlpUpdateResult,
   FfmpegUpdateResult,
 } from "./lib/bindings";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getPrivacyMode, setPrivacyMode, initPrivacyMode } from "./lib/privacyMode";
@@ -114,7 +112,10 @@ const FFMPEG_COLOR = {
 function App() {
   const { lang, t } = useI18n();
   const [activeTab, setActiveTab] = useState<Tab>("download");
-  const [appUpdate, setAppUpdate] = useState<UpdateCheckResult | null>(null);
+  const [appUpdate, setAppUpdate] = useState<{
+    version: string;
+    currentVersion: string;
+  } | null>(null);
   const [ytdlpUpdate, setYtdlpUpdate] = useState<YtdlpUpdateResult | null>(null);
   const [ffmpegUpdate, setFfmpegUpdate] = useState<FfmpegUpdateResult | null>(null);
 
@@ -231,8 +232,13 @@ function App() {
   // Auto-check for updates on startup (app + yt-dlp + ffmpeg)
   useEffect(() => {
     Promise.all([
-      checkUpdate().then((r) => {
-        if (r.has_update && !r.error) setAppUpdate(r);
+      check().then((update) => {
+        if (update) {
+          setAppUpdate({
+            version: update.version,
+            currentVersion: update.currentVersion,
+          });
+        }
       }),
       checkYtdlpUpdate().then((r) => {
         if (r.has_update || r.not_installed) setYtdlpUpdate(r);
@@ -247,12 +253,13 @@ function App() {
   // toast → 前往下载), reusing the same update modal shown at startup.
   useEffect(() => {
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail as UpdateCheckResult | undefined;
+      const detail = (e as CustomEvent).detail as
+        | { version: string; currentVersion: string }
+        | undefined;
       if (!detail) return;
       setAppUpdate(detail);
       setUpdatePhase("idle");
       setUpdatePercent(0);
-      setUpdatePath(null);
     };
     window.addEventListener("open-update-modal", handler);
     return () => window.removeEventListener("open-update-modal", handler);
@@ -268,45 +275,49 @@ function App() {
     setFfmpegUpdate(null);
     setUpdatePhase("idle");
     setUpdatePercent(0);
-    setUpdatePath(null);
   };
 
-  // --- In-app updater flow: download installer → install ---
-  type UpdatePhase = "idle" | "downloading" | "downloaded" | "installing";
+  // --- In-app updater flow (official tauri-plugin-updater): download → install → relaunch ---
+  type UpdatePhase = "idle" | "downloading" | "installing";
   const [updatePhase, setUpdatePhase] = useState<UpdatePhase>("idle");
   const [updatePercent, setUpdatePercent] = useState(0);
-  const [updatePath, setUpdatePath] = useState<string | null>(null);
 
   const handleDownloadUpdate = async () => {
-    if (!appUpdate?.download_url || updatePhase === "downloading") return;
+    if (updatePhase === "downloading" || updatePhase === "installing") return;
     setUpdatePhase("downloading");
     setUpdatePercent(0);
-    const unlisten = await listen<any>("update-download-progress", (e) => {
-      const pct = Number(e.payload?.percent ?? 0);
-      setUpdatePercent(Math.min(Math.max(pct, 0), 100));
-    });
     try {
-      const path = await downloadUpdate(appUpdate.download_url);
-      setUpdatePath(path);
-      setUpdatePhase("downloaded");
+      const update = await check();
+      if (!update) {
+        // 手动打开弹窗时若已是最新（自动检查有延迟），直接关闭。
+        setAppUpdate(null);
+        setUpdatePhase("idle");
+        return;
+      }
+      setAppUpdate({
+        version: update.version,
+        currentVersion: update.currentVersion,
+      });
+      let downloaded = 0;
+      let total: number | undefined;
+      await update.downloadAndInstall((event) => {
+        if (event.event === "Started") {
+          total = event.data.contentLength;
+        } else if (event.event === "Progress") {
+          downloaded += event.data.chunkLength;
+          if (total && total > 0) {
+            const pct = Math.round((downloaded / total) * 100);
+            setUpdatePercent(Math.min(Math.max(pct, 0), 100));
+          }
+        }
+      });
+      // downloadAndInstall 已安装完毕；relaunch 重启以加载新版本。
+      setUpdatePhase("installing");
+      await relaunch();
     } catch (err: any) {
       toast.error(t("app.downloadFail", { err }));
       setUpdatePhase("idle");
       setUpdatePercent(0);
-    } finally {
-      unlisten();
-    }
-  };
-
-  const handleInstallUpdate = async () => {
-    if (!updatePath || updatePhase !== "downloaded") return;
-    setUpdatePhase("installing");
-    try {
-      await installUpdate(updatePath);
-      // The app exits after launching the installer.
-    } catch (err: any) {
-      toast.error(t("app.installFail", { err }));
-      setUpdatePhase("downloaded");
     }
   };
 
@@ -425,14 +436,14 @@ function App() {
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <p className="text-lg font-bold text-blue-600">
-                      v{appUpdate.latest_version}
+                      v{appUpdate.version}
                     </p>
                     <p className="text-[11px] text-gray-400">
-                      {t("app.currentVersion", { ver: appUpdate.current_version })}
+                      {t("app.currentVersion", { ver: appUpdate.currentVersion })}
                     </p>
                   </div>
-                  {appUpdate.download_url ? (
-                    updatePhase === "idle" && (
+                  {updatePhase === "idle" && (
+                    <div className="flex flex-col items-end gap-1.5">
                       <button
                         className={`px-4 py-2 text-xs rounded-lg ${APP_COLOR.btn} text-white font-medium ${APP_COLOR.btnHover} transition-colors inline-flex items-center gap-1`}
                         onClick={handleDownloadUpdate}
@@ -440,26 +451,21 @@ function App() {
                         <Download size={12} />
                         {t("app.downloadUpdate")}
                       </button>
-                    )
-                  ) : (
-                    <a
-                      href={
-                        appUpdate.url ??
-                        "https://github.com/MuZiCul/XDownload/releases"
-                      }
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={`px-4 py-2 text-xs rounded-lg ${APP_COLOR.btn} text-white font-medium ${APP_COLOR.btnHover} transition-colors inline-flex items-center gap-1`}
-                      onClick={() => setAppUpdate(null)}
-                    >
-                      {t("app.download")}
-                      <ArrowUpRight size={12} />
-                    </a>
+                      <a
+                        href="https://github.com/MuZiCul/XDownload/releases"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[11px] text-blue-500 hover:underline inline-flex items-center gap-0.5"
+                      >
+                        {t("app.download")}
+                        <ArrowUpRight size={11} />
+                      </a>
+                    </div>
                   )}
                 </div>
 
                 {/* In-app download progress */}
-                {appUpdate.download_url && updatePhase === "downloading" && (
+                {updatePhase === "downloading" && (
                   <div className="mt-2 flex items-center gap-2">
                     <div className="flex-1 h-1.5 bg-white/70 rounded-full overflow-hidden">
                       <div
@@ -476,21 +482,8 @@ function App() {
                   </div>
                 )}
 
-                {/* Install button */}
-                {appUpdate.download_url && updatePhase === "downloaded" && (
-                  <div className="mt-2 flex items-center justify-end">
-                    <button
-                      className="px-4 py-2 text-xs rounded-lg bg-emerald-500 text-white font-medium hover:bg-emerald-600 transition-colors inline-flex items-center gap-1"
-                      onClick={handleInstallUpdate}
-                    >
-                      <Download size={12} />
-                      {t("app.installUpdate")}
-                    </button>
-                  </div>
-                )}
-
-                {/* Installing */}
-                {appUpdate.download_url && updatePhase === "installing" && (
+                {/* Installing (app relaunches automatically) */}
+                {updatePhase === "installing" && (
                   <div className="mt-2 flex items-center justify-end text-[11px] text-gray-500 gap-1.5">
                     <Loader2 size={12} className="animate-spin" />
                     {t("app.installing")}
