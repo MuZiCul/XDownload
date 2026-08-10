@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Github, RefreshCw } from "lucide-react";
-import { checkUpdate, getVersion } from "../../lib/bindings";
+import { getVersion } from "../../lib/bindings";
+import { check } from "@tauri-apps/plugin-updater";
 import { toast } from "sonner";
 import { useI18n } from "../../lib/i18n";
 
@@ -19,21 +20,24 @@ export default function AboutPage() {
     setChecking(true);
 
     try {
-      const result = await checkUpdate();
+      const update = await check();
 
-      if (result.error) {
-        toast.error(result.error);
-      } else if (result.has_update) {
-        toast(t("about.newVersion", { ver: result.latest_version }), {
+      if (update) {
+        toast(t("about.newVersion", { ver: update.version }), {
           description: t("about.currentVersion", {
-            ver: result.current_version,
+            ver: update.currentVersion,
           }),
           action: {
             label: t("about.goDownload"),
             onClick: () => {
               // 打开与启动检查一致的拟态玻璃更新窗（可下载更新/前往 GitHub）。
               window.dispatchEvent(
-                new CustomEvent("open-update-modal", { detail: result })
+                new CustomEvent("open-update-modal", {
+                  detail: {
+                    version: update.version,
+                    currentVersion: update.currentVersion,
+                  },
+                })
               );
             },
           },

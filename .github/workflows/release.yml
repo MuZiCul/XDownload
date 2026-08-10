@@ -84,9 +84,42 @@ jobs:
       # ---------- 构建（beforeBuildCommand 自动跑前端） ----------
       # 用项目自带的 @tauri-apps/cli（pnpm install 已装，版本 ^2.11.4 精确匹配），
       # 从项目根调用 node 脚本，与本地 debug_build.bat 一致。
+      # TAURI_SIGNING_PRIVATE_KEY：构建时对安装包签名（minisign），生成 .sig 供
+      # 官方 updater 校验（tauri.conf.json 的 plugins.updater.pubkey 对应）。
       - name: Build desktop app (frontend + Rust + installers)
         shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: node ui/node_modules/@tauri-apps/cli/tauri.js build
+
+      # ---------- 生成 updater 清单 latest.json ----------
+      # 官方 updater 通过 endpoints 拉取 latest.json（含签名与下载 URL）判断更新。
+      # Windows 安装包仅用 NSIS (.exe) 作为更新载体；URL 指向本 Release 资产，
+      # 因此客户端统一访问 …/releases/latest/download/latest.json 即可。
+      - name: Generate updater latest.json
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $nsisDir = "target/release/bundle/nsis"
+          $exe = Get-ChildItem "$nsisDir/*.exe" | Select-Object -First 1
+          $sig = Get-ChildItem "$nsisDir/*.exe.sig" | Select-Object -First 1
+          if (-not $exe -or -not $sig) { Write-Error "Missing NSIS exe or .sig"; exit 1 }
+          $sigContent = (Get-Content $sig.FullName -Raw).Trim()
+          $url = "https://github.com/MuZiCul/XDownload/releases/download/v$version/$($exe.Name)"
+          $pubDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          $json = [ordered]@{
+            version   = $version
+            pub_date  = $pubDate
+            platforms = [ordered]@{
+              "windows-x86_64" = [ordered]@{
+                signature = $sigContent
+                url       = $url
+              }
+            }
+          }
+          $json | ConvertTo-Json -Depth 5 | Set-Content "latest.json" -Encoding utf8
+          Write-Output "latest.json generated for v$version"
 
       # ---------- 扩展 zip（固定随发版） ----------
       - name: Build extension zip
@@ -102,5 +135,8 @@ jobs:
           body_path: ${{ steps.body.outputs.body_path }}
           files: |
             target/release/bundle/nsis/*.exe
+            target/release/bundle/nsis/*.exe.sig
             target/release/bundle/msi/*.msi
+            target/release/bundle/msi/*.msi.sig
             extension/dist/*.zip
+            latest.json

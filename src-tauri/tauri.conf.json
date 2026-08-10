@@ -13,6 +13,12 @@
       "desktop": {
         "schemes": ["xdownload"]
       }
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhEMjVFMTk5RjE1MDJEQTcKUldTbkxWRHhtZUVsalhETm92U2kyelZZN1ZkYVphTWo4aHdDNzZneXZ2OGdEZnNZTGUwcXZ0SHkK",
+      "endpoints": [
+        "https://github.com/MuZiCul/XDownload/releases/latest/download/latest.json"
+      ]
     }
   },
   "app": {
@@ -43,6 +49,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
