@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster, toast } from "sonner";
 import TabBar from "./components/layout/TabBar";
@@ -232,7 +232,7 @@ function App() {
   // Auto-check for updates on startup (app + yt-dlp + ffmpeg)
   useEffect(() => {
     Promise.all([
-      check().then((update) => {
+      checkForUpdate().then((update) => {
         if (update) {
           setAppUpdate({
             version: update.version,
@@ -247,7 +247,7 @@ function App() {
         if (r.has_update || r.not_installed) setFfmpegUpdate(r);
       }),
     ]).catch(() => {});
-  }, []);
+  }, [checkForUpdate]);
 
   // Open the app update modal on demand (e.g. About page "check for updates"
   // toast → 前往下载), reusing the same update modal shown at startup.
@@ -282,12 +282,31 @@ function App() {
   const [updatePhase, setUpdatePhase] = useState<UpdatePhase>("idle");
   const [updatePercent, setUpdatePercent] = useState(0);
 
+  /** Check for updates with the same network fallback used elsewhere:
+   *  direct request first; if it fails and a proxy is configured, retry
+   *  through the proxy. Returns the Update (or null when up to date). */
+  const checkForUpdate = useCallback(async () => {
+    try {
+      return await check();
+    } catch {
+      // Direct failed — fall back to the configured proxy if any.
+      try {
+        const settings = await loadSettings();
+        const proxy = buildProxyUrl(settings);
+        if (!proxy) throw new Error("no proxy");
+        return await check({ proxy });
+      } catch {
+        throw new Error("update network failed");
+      }
+    }
+  }, []);
+
   const handleDownloadUpdate = async () => {
     if (updatePhase === "downloading" || updatePhase === "installing") return;
     setUpdatePhase("downloading");
     setUpdatePercent(0);
     try {
-      const update = await check();
+      const update = await checkForUpdate();
       if (!update) {
         // 手动打开弹窗时若已是最新（自动检查有延迟），直接关闭。
         setAppUpdate(null);

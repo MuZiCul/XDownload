@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Github, RefreshCw } from "lucide-react";
-import { getVersion } from "../../lib/bindings";
+import { buildProxyUrl, getVersion, loadSettings } from "../../lib/bindings";
 import { check } from "@tauri-apps/plugin-updater";
 import { toast } from "sonner";
 import { useI18n } from "../../lib/i18n";
@@ -20,7 +20,14 @@ export default function AboutPage() {
     setChecking(true);
 
     try {
-      const update = await check();
+      // 与启动检查一致：直连优先，失败回退到已配置的代理。
+      let update;
+      try {
+        update = await check();
+      } catch {
+        const proxy = buildProxyUrl(await loadSettings());
+        update = await check({ proxy });
+      }
 
       if (update) {
         toast(t("about.newVersion", { ver: update.version }), {

@@ -1,10 +1,11 @@
 //! Multi-task download queue.
 //!
 //! Independent from the single-download path (download page): tasks enqueued
-//! here run concurrently up to the configured concurrency, each in its own
-//! `download_cache/{task_id}/` directory. Retries, dedup and cancellation are
-//! handled here; the underlying `YtDlpDownloader::download(Some(id), …)` runs
-//! without the single-download mutex.
+//! here run concurrently up to the configured concurrency. Staging directories
+//! live in `download_cache/{cache_key}/` (keyed by URL + format — see
+//! `YtDlpDownloader::cache_key`), so retried / re-enqueued / resumed tasks
+//! resume from the previous `.part` file. Retries, dedup and cancellation are
+//! handled here.
 
 use crate::downloader::ytdlp::YtDlpDownloader;
 use crate::models::config::DownloadConfig;
@@ -44,8 +45,9 @@ pub struct QueuedTask {
     pub seq: u64,
     pub config: DownloadConfig,
     pub title: Option<String>,
-    /// True when this task is being resumed after a pause — the downloader
-    /// keeps the cache directory so yt-dlp can resume from the .part file.
+    /// True when this task is being resumed after a pause / restart. Used only
+    /// for the pause→resume worker race guard (see `run_worker`); the downloader
+    /// itself always resumes from the `.part` file via the stable cache key.
     #[serde(default)]
     pub resume: bool,
     /// Frontend card metadata (thumbnail / uploader / duration / …), persisted
@@ -207,7 +209,6 @@ impl DownloadQueue {
     /// per-task pause is moved to the paused list (cache kept for resume).
     async fn run_worker(self, task: QueuedTask) {
         let id = task.id.clone();
-        let preserve_cache = task.resume;
         let mut retries = ConfigManager::load().retry_count.unwrap_or(0);
         let mut attempts: u8 = 0;
         let mut last_error: Option<String> = None;
@@ -230,7 +231,7 @@ impl DownloadQueue {
 
             match self
                 .downloader
-                .download(&id, preserve_cache, &config, progress_cb)
+                .download(&id, &config, progress_cb)
                 .await
             {
                 Ok(paths) if !paths.is_empty() => {
