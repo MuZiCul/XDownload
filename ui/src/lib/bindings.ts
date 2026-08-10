@@ -11,6 +11,19 @@ import type {
   DownloadHistoryItem,
 } from "./types";
 
+// --- Misc helpers ---
+
+/** Build a proxy URL string from settings (`scheme://host:port`), or
+ *  `undefined` when the proxy is not configured. Used by the app updater
+ *  `check({ proxy })` (official tauri-plugin-updater). */
+export function buildProxyUrl(s: AppSettings): string | undefined {
+  const host = s.proxy_host?.trim();
+  if (!host) return undefined;
+  const port = s.proxy_port || 0;
+  const scheme = s.proxy_scheme?.trim() || "http";
+  return `${scheme}://${host}:${port}`;
+}
+
 // --- Download ---
 
 export async function fetchVideoInfo(url: string): Promise<VideoInfo> {

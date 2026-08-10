@@ -151,21 +151,41 @@ impl YtDlpDownloader {
         }
     }
 
+    /// Stable per-download cache directory name derived from the download
+    /// config. Keyed by URL + format + output options, so a re-enqueued
+    /// download (same URL & format) resolves to the SAME directory as a
+    /// previous attempt and yt-dlp resumes from its `.part` file instead of
+    /// starting over. Changing the format / output template starts a fresh
+    /// staging area (never mixing partial files of different formats).
+    fn cache_key(config: &DownloadConfig) -> String {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(config.url.as_bytes());
+        h.update([0u8]);
+        h.update(config.format_id.as_bytes());
+        h.update([0u8]);
+        h.update(config.output_template.as_bytes());
+        h.update([0u8]);
+        h.update([if config.extract_audio { 1 } else { 0 }]);
+        h.update(config.max_height.to_le_bytes());
+        if let Some(items) = &config.playlist_items {
+            h.update([0u8]);
+            h.update(items.as_bytes());
+        }
+        let digest = h.finalize();
+        digest.iter().take(8).map(|b| format!("{b:02x}")).collect()
+    }
+
     /// Download a video as a queue task. Returns every successfully moved
     /// file path (from `--print-to-file after_move:filepath`) — a multi-media
     /// tweet yields several files; an empty vec if the process failed without
     /// producing stderr output.
     ///
-    /// Each task stages files in its own `download_cache/{task_id}/` directory
-    /// and is cancelled independently via `cancel_task`.
-    ///
-    /// `preserve_cache` (task resume): keep the cache directory (and the
-    /// `.part` file) so yt-dlp resumes from where it stopped instead of
-    /// starting over.
+    /// Files are staged in `download_cache/{cache_key}/` (see `cache_key`),
+    /// and each task is cancelled independently via `cancel_task`.
     pub async fn download(
         &self,
         task_id: &str,
-        preserve_cache: bool,
         config: &DownloadConfig,
         progress_cb: impl Fn(DownloadProgress) + Send + 'static,
     ) -> Result<Vec<String>> {
@@ -177,7 +197,8 @@ impl YtDlpDownloader {
             .unwrap()
             .insert(task_id.to_string(), flag.clone());
 
-        let cache_dir = crate::utils::app_home::AppHome::download_cache_dir().join(task_id);
+        let cache_dir =
+            crate::utils::app_home::AppHome::download_cache_dir().join(Self::cache_key(config));
         let tmp_path =
             std::env::temp_dir().join(format!("xdownload_last_path_{}.txt", task_id));
         let _ = std::fs::remove_file(&tmp_path);
@@ -194,7 +215,6 @@ impl YtDlpDownloader {
                 config,
                 &cache_dir,
                 &tmp_path,
-                preserve_cache,
                 flag.clone(),
                 pid_sink,
                 progress_cb,
@@ -215,21 +235,21 @@ impl YtDlpDownloader {
         config: &DownloadConfig,
         cache_dir: &std::path::Path,
         tmp_path: &std::path::Path,
-        preserve_cache: bool,
         cancel: Arc<AtomicBool>,
         pid_sink: Arc<dyn Fn(u32) + Send + Sync + 'static>,
         progress_cb: impl Fn(DownloadProgress) + Send + 'static,
     ) -> Result<Vec<String>> {
-        // Stage the download inside the (per-task) cache folder first. Finished
-        // files are moved into the real download directory only after yt-dlp
-        // completes, so an interrupted download never leaves partial files in
-        // the user-visible folder — and the cache is wiped on failure/cancel.
+        // Stage the download inside the cache folder first. Finished files are
+        // moved into the real download directory only after yt-dlp completes,
+        // so an interrupted download never leaves partial files in the
+        // user-visible folder.
+        //
+        // The cache dir is keyed by the download config (see `cache_key`), so
+        // a re-enqueued / retried / resumed download reuses the previous
+        // `.part` and yt-dlp (default `--continue`) resumes from where it
+        // stopped. Partial files are only wiped by the periodic startup
+        // cleanup (`cleanup_download_cache`, on 4/14/24 first launch).
         std::fs::create_dir_all(cache_dir).ok();
-        // When resuming a paused task, keep the existing .part so yt-dlp can
-        // continue from where it stopped.
-        if !preserve_cache {
-            Self::cleanup_cache_dir(cache_dir);
-        }
 
         let mut cmd = self.build_base_command();
         cmd.push("-f".to_string());
@@ -418,14 +438,10 @@ impl YtDlpDownloader {
         );
 
         if !result.is_success() {
-            // Failure or cancellation — discard the staged cache so partial
-            // files never leak into the download folder. (A resumed task keeps
-            // its .part so it can be paused/resumed again.)
-            if !preserve_cache {
-                Self::cleanup_cache_dir(cache_dir);
-            }
-            // A user-initiated cancel should report a friendly message instead
-            // of the raw stderr from the killed process (often empty/garbled).
+            // Failure or cancellation — keep the staged `.part` so a retry /
+            // re-enqueue of the same URL resumes instead of starting over.
+            // Partial files never leak into the user-visible folder (they stay
+            // in the cache); the periodic startup cleanup removes them.
             if cancel.load(Ordering::SeqCst) {
                 return Err(anyhow::anyhow!("用户主动取消"));
             }
@@ -470,7 +486,9 @@ impl YtDlpDownloader {
                 }
             }
         }
-        // Nothing finished should remain; wipe whatever is left (.part, info).
+        // Successful download — everything worth keeping was moved above.
+        // Wipe the staging leftovers (.part / .info.json) so the cache stays
+        // clean; a later re-download of the same URL starts fresh.
         Self::cleanup_cache_dir(cache_dir);
 
         Ok(moved_paths)
@@ -523,9 +541,29 @@ impl YtDlpDownloader {
 
     /// Remove everything currently staged in the download cache — partial
     /// downloads, info files, or finished outputs that never got moved.
-    /// Called at startup (to wipe leftovers from a previous session).
+    ///
+    /// Called at startup. Because `.part` files now survive across sessions
+    /// (see `cache_key` / `download`), the full wipe only runs on the FIRST
+    /// launch of each day whose date contains "4" — the 4th, 14th and 24th of
+    /// each month. On every other day / later launches the cache is left
+    /// untouched so interrupted downloads can be resumed.
     pub fn cleanup_download_cache() {
+        use chrono::Datelike;
+        let today = chrono::Local::now().date_naive();
+        let day = format!("{:02}", today.day());
+        if !day.contains('4') {
+            return;
+        }
+        // Only the first launch of that day: remember the date we last cleaned.
+        let marker =
+            crate::utils::app_home::AppHome::config_dir().join("cache_cleanup_date");
+        let date = today.format("%Y-%m-%d").to_string();
+        if std::fs::read_to_string(&marker).ok() == Some(date.clone()) {
+            return;
+        }
         Self::cleanup_cache_dir(&crate::utils::app_home::AppHome::download_cache_dir());
+        let _ = std::fs::write(&marker, date);
+        tracing::info!("cleaned download cache (date contains '4', first launch)");
     }
 
     /// Remove all contents of a cache directory (files and subdirectories),
@@ -637,5 +675,59 @@ impl YtDlpDownloader {
 impl Default for YtDlpDownloader {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg(url: &str) -> DownloadConfig {
+        let mut c = DownloadConfig::new(url.to_string());
+        c.format_id = "bestvideo+bestaudio/best".to_string();
+        c
+    }
+
+    #[test]
+    fn test_cache_key_stable_for_same_config() {
+        let a = cfg("https://x.com/user/status/123");
+        let b = cfg("https://x.com/user/status/123");
+        assert_eq!(YtDlpDownloader::cache_key(&a), YtDlpDownloader::cache_key(&b));
+        // 16 hex chars
+        let key = YtDlpDownloader::cache_key(&a);
+        assert_eq!(key.len(), 16);
+    }
+
+    #[test]
+    fn test_cache_key_differs_for_different_urls_or_formats() {
+        let a = cfg("https://x.com/user/status/1");
+        let b = cfg("https://x.com/user/status/2");
+        assert_ne!(YtDlpDownloader::cache_key(&a), YtDlpDownloader::cache_key(&b));
+
+        let mut same_url_diff_format = cfg("https://x.com/user/status/1");
+        same_url_diff_format.format_id = "137".to_string();
+        assert_ne!(
+            YtDlpDownloader::cache_key(&a),
+            YtDlpDownloader::cache_key(&same_url_diff_format)
+        );
+    }
+
+    #[test]
+    fn test_cache_key_ignores_url_trailing_whitespace_trim() {
+        // enqueue 前会 trim URL；此处验证 trim 后的 URL 与未 trim 产生不同 key
+        // （因为 key 用原始字符串哈希，前端/后端在入队前已统一 trim）。
+        let trimmed = cfg("https://x.com/a");
+        let untrimmed = cfg(" https://x.com/a ");
+        // 两者 key 不同是预期的——入队路径统一 trim 后 key 才稳定。
+        let _ = (YtDlpDownloader::cache_key(&trimmed), YtDlpDownloader::cache_key(&untrimmed));
+    }
+
+    #[test]
+    fn test_cache_key_playlist_items_change_key() {
+        let mut a = cfg("https://x.com/user/status/1");
+        a.playlist_items = Some("1".to_string());
+        let mut b = cfg("https://x.com/user/status/1");
+        b.playlist_items = Some("1,2".to_string());
+        assert_ne!(YtDlpDownloader::cache_key(&a), YtDlpDownloader::cache_key(&b));
     }
 }

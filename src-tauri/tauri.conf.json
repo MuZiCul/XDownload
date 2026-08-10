@@ -15,7 +15,7 @@
       }
     },
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhEMjVFMTk5RjE1MDJEQTcKUldTbkxWRHhtZUVsalhETm92U2kyelZZN1ZkYVphTWo4aHdDNzZneXZ2OGdEZnNZTGUwcXZ0SHkK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IERCNThFMDdGQzEyMTM1MTYKUldRV05TSEJmK0JZMnh2V3MrU3NzSzNVTTRvMUJlcU9SS1hTMU5ITTRVWFZpNU92Wm5yRzRaQlYK",
       "endpoints": [
         "https://github.com/MuZiCul/XDownload/releases/latest/download/latest.json"
       ]
