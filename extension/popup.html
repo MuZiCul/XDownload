@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>XDownload 下载助手</title>
+  <style>
+    :root {
+      color-scheme: light;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      width: 320px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: #fff;
+      color: #0f1419;
+      padding: 16px;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .header img {
+      width: 40px;
+      height: 40px;
+      border-radius: 8px;
+    }
+    .header h1 {
+      font-size: 16px;
+      font-weight: 700;
+    }
+    .header .ver {
+      font-size: 12px;
+      color: #536471;
+      font-weight: 400;
+    }
+    .step {
+      display: flex;
+      gap: 10px;
+      padding: 10px 0;
+      border-top: 1px solid #eff3f4;
+    }
+    .step .num {
+      flex-shrink: 0;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #1d9bf0;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .step .body {
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    .step .body b {
+      display: block;
+      margin-bottom: 2px;
+    }
+    .note {
+      margin-top: 10px;
+      padding: 10px;
+      background: #f4f4f4;
+      border-radius: 8px;
+      font-size: 12px;
+      line-height: 1.7;
+      color: #536471;
+    }
+    .note b {
+      color: #0f1419;
+    }
+    .btn {
+      display: block;
+      margin-top: 12px;
+      padding: 10px;
+      text-align: center;
+      background: #1d9bf0;
+      color: #fff;
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 600;
+      border-radius: 9999px;
+    }
+    .btn:hover {
+      background: #1a8cd8;
+    }
+    .footer {
+      margin-top: 12px;
+      text-align: center;
+      font-size: 11px;
+      color: #8b98a5;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <img src="icons/icon-128.png" alt="XDownload" />
+    <div>
+      <h1>XDownload 下载助手</h1>
+      <div class="ver">v1.1.0</div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="num">1</div>
+    <div class="body">
+      <b>安装桌面端</b>
+      从 GitHub Releases 下载并安装 XDownload 桌面应用（首次启动会自动下载 yt-dlp / ffmpeg）。
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="num">2</div>
+    <div class="body">
+      <b>保持应用运行</b>
+      启动 XDownload 后停留在任意页面即可，无需额外设置。
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="num">3</div>
+    <div class="body">
+      <b>点击视频上的「下载」按钮</b>
+      视频右上角出现蓝色「下载」按钮，点击后视频自动加入桌面端下载队列。
+    </div>
+  </div>
+
+  <div class="note">
+    <b>点击「下载」后没有反应？</b><br />
+    这通常意味着 XDownload 桌面端<b>未安装</b>或<b>未运行</b>。请先下载安装并启动桌面端，再回到页面重试。若浏览器弹出「未知协议」提示，同样说明桌面端未就绪。
+  </div>
+
+  <a class="btn" href="https://github.com/MuZiCul/XDownload/releases" target="_blank" rel="noopener">
+    下载 XDownload 桌面端
+  </a>
+
+  <div class="footer">仅支持 X (Twitter) 视频链接</div>
+</body>
+</html>

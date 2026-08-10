@@ -18,5 +18,5 @@ if %errorlevel% neq 0 (
 )
 
 echo.
-echo Done! Output: %ROOT%src-tauri\target\debug\xdownload.exe
+echo Done! Output: %ROOT%target\debug\xdownload.exe
 pause

@@ -432,3 +432,53 @@ fn percent_decode_str(s: &str) -> String {
     }
     String::from_utf8_lossy(&out).into_owned()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_deep_link_standard() {
+        let target = parse_deep_link_url(
+            "xdownload://add?url=https%3A%2F%2Fx.com%2Fuser%2Fstatus%2F123%2Fvideo%2F1",
+        );
+        assert_eq!(
+            target.as_deref(),
+            Some("https://x.com/user/status/123/video/1")
+        );
+    }
+
+    #[test]
+    fn test_parse_deep_link_trailing_slash_host() {
+        // 部分浏览器把空路径规范化为 add/。
+        let target = parse_deep_link_url("xdownload://add/?url=https%3A%2F%2Ftwitter.com%2Fa");
+        assert_eq!(target.as_deref(), Some("https://twitter.com/a"));
+    }
+
+    #[test]
+    fn test_parse_deep_link_rejects_bad_host() {
+        assert_eq!(parse_deep_link_url("xdownload://other?url=https://x.com/a"), None);
+        assert_eq!(parse_deep_link_url("xdownload://add"), None);
+        assert_eq!(parse_deep_link_url("https://x.com/a"), None);
+        assert_eq!(parse_deep_link_url(""), None);
+    }
+
+    #[test]
+    fn test_parse_deep_link_missing_url_param() {
+        assert_eq!(parse_deep_link_url("xdownload://add?foo=bar"), None);
+    }
+
+    #[test]
+    fn test_percent_decode_str() {
+        assert_eq!(percent_decode_str("abc"), "abc");
+        assert_eq!(percent_decode_str("a%20b"), "a b");
+        assert_eq!(percent_decode_str("%3A%2F%2F"), "://");
+        // 中文 UTF-8 三字节。
+        assert_eq!(percent_decode_str("%E6%88%91"), "我");
+        // 大小写十六进制。
+        assert_eq!(percent_decode_str("%2f%2F"), "//");
+        // 无效的 % 序列原样保留。
+        assert_eq!(percent_decode_str("%"), "%");
+        assert_eq!(percent_decode_str("%GG"), "%GG");
+    }
+}

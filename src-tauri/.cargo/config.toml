@@ -1,0 +1,6 @@
+# 将 Rust 编译产物 target 目录移到项目根（避免 src-tauri/target 占用磁盘/IDE 扫描）。
+# 相对路径基于 cargo 运行目录（src-tauri），因此 ../target = 项目根/target。
+# AppHome::root() 从 exe 向上找 src-tauri/tauri.conf.json 的检测不受影响：
+# dev 产物在 target/debug/ 向上可命中项目根；打包版仍返回安装目录。
+[build]
+target-dir = "../target"

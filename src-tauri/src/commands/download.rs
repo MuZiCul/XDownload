@@ -289,3 +289,44 @@ pub fn update_task_info(
 ) {
     state.queue.update_info(&task_id, info);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_supported_url_accepts_x_twitter() {
+        assert!(is_supported_url("https://x.com/user/status/123"));
+        assert!(is_supported_url("https://twitter.com/user/status/123"));
+        assert!(is_supported_url("http://x.com/a"));
+        assert!(is_supported_url("https://www.x.com/a"));
+        assert!(is_supported_url("https://mobile.twitter.com/a"));
+        assert!(is_supported_url("https://x.com/status/1?v=2#frag"));
+        // 带尾随空白也能识别。
+        assert!(is_supported_url("  https://x.com/a  "));
+    }
+
+    #[test]
+    fn test_is_supported_url_rejects_others() {
+        assert!(!is_supported_url("https://evilx.com/a"));
+        assert!(!is_supported_url("https://x.com.evil.com/a"));
+        assert!(!is_supported_url("https://notx.com/a"));
+        assert!(!is_supported_url("https://example.com/"));
+        assert!(!is_supported_url(""));
+        assert!(!is_supported_url("not a url"));
+    }
+
+    #[test]
+    fn test_extract_status_id() {
+        assert_eq!(
+            extract_status_id("https://x.com/user/status/1234567890123456789/video/1"),
+            Some("1234567890123456789".to_string())
+        );
+        assert_eq!(
+            extract_status_id("https://twitter.com/a/status/42"),
+            Some("42".to_string())
+        );
+        assert_eq!(extract_status_id("https://x.com/user"), None);
+        assert_eq!(extract_status_id(""), None);
+    }
+}
