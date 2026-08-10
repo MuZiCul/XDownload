@@ -156,6 +156,7 @@ pub fn run() {
             commands::download::cancel_all_tasks,
             commands::download::has_active_tasks,
             commands::download::clear_download_queue,
+            commands::download::reorder_queue_task,
             commands::download::start_queue,
             commands::download::pause_queue,
             commands::download::resume_queue,
@@ -213,6 +214,7 @@ pub fn run() {
             commands::update::check_ffmpeg_update,
             commands::history::list_download_history,
             commands::history::delete_download_history,
+            commands::history::delete_download_history_file,
             commands::history::clear_download_history,
         ])
         .setup(move |app| {

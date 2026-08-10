@@ -258,6 +258,17 @@ pub fn clear_download_queue(state: tauri::State<'_, DownloaderState>) {
     state.queue.clear_queued();
 }
 
+/// Move a queued task to a new position (priority). `new_index` 0 = top.
+/// Only waiting (queued) tasks can be reordered; returns whether it applied.
+#[tauri::command]
+pub fn reorder_queue_task(
+    task_id: String,
+    new_index: usize,
+    state: tauri::State<'_, DownloaderState>,
+) -> bool {
+    state.queue.reorder_queue(&task_id, new_index)
+}
+
 /// Cancel ALL active tasks (queued / paused / running). Finished downloads in
 /// the history are not affected.
 #[tauri::command]

@@ -8,6 +8,7 @@ import ProxySetting from "./ProxySetting";
 import CookiesSetting from "./CookiesSetting";
 import ToolsSetting from "./ToolsSetting";
 import MultiTaskSetting from "./MultiTaskSetting";
+import HlsSetting from "./HlsSetting";
 import LanguageSetting from "./LanguageSetting";
 import ConfigButtons from "./ConfigButtons";
 import { useI18n } from "../../lib/i18n";
@@ -73,6 +74,15 @@ export default function SettingsPage() {
             retryCount={settings.retry_count ?? 0}
             queuePersist={settings.queue_persist ?? false}
             rateLimit={settings.download_rate_limit ?? ""}
+            onChange={(patch) =>
+              setSettings((s) => ({ ...s, ...patch }))
+            }
+          />
+
+          <HlsSetting
+            key={`hls-${applyKey}`}
+            concurrent={settings.hls_concurrent_fragments ?? 4}
+            retries={settings.hls_fragment_retries ?? 10}
             onChange={(patch) =>
               setSettings((s) => ({ ...s, ...patch }))
             }

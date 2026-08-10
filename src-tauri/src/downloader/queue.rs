@@ -13,7 +13,7 @@ use crate::models::progress::DownloadProgress;
 use crate::services::config::ConfigManager;
 use crate::services::download_history::DownloadHistory;
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
@@ -70,6 +70,20 @@ struct QueueState {
     paused_tasks: VecDeque<QueuedTask>,
     /// When paused, no new tasks are started (running tasks finish).
     paused: bool,
+    /// Task id → index it occupied in `paused_tasks` before being resumed.
+    /// Lets a task paused again land back near its original slot instead of
+    /// jumping to the end of the paused list. Memory only (not persisted).
+    paused_slots: HashMap<String, usize>,
+}
+
+/// Add a task to the paused list. When a remembered slot exists (the task was
+/// resumed before), insert it back near that slot; otherwise append to the end.
+fn insert_paused(st: &mut QueueState, task: QueuedTask, slot: Option<usize>) {
+    let len = st.paused_tasks.len();
+    match slot {
+        Some(s) => st.paused_tasks.insert(s.min(len), task),
+        None => st.paused_tasks.push_back(task),
+    }
 }
 
 #[derive(Clone)]
@@ -339,6 +353,29 @@ impl DownloadQueue {
             task.config.like_count
         };
 
+        // 兜底：前端信息与入队 config 都缺失时（深链/扩展入队、fetch 失败），
+        // 用 yt-dlp 下载时输出的真实元数据填充历史记录。
+        let meta = self.downloader.read_task_meta(&task.id);
+        let h_title = h_title.or_else(|| meta.as_ref().and_then(|m| m.title.clone()));
+        let h_thumbnail =
+            h_thumbnail.or_else(|| meta.as_ref().and_then(|m| m.thumbnail.clone()));
+        let h_uploader = h_uploader.or_else(|| meta.as_ref().and_then(|m| m.uploader.clone()));
+        let h_duration = if h_duration > 0 {
+            h_duration
+        } else {
+            meta.as_ref().and_then(|m| m.duration).unwrap_or(0)
+        };
+        let h_views = if h_views > 0 {
+            h_views
+        } else {
+            meta.as_ref().and_then(|m| m.view_count).unwrap_or(0)
+        };
+        let h_likes = if h_likes > 0 {
+            h_likes
+        } else {
+            meta.as_ref().and_then(|m| m.like_count).unwrap_or(0)
+        };
+
         // Record history (only real outcomes; user-cancelled tasks are not
         // written to history).
         if !cancelled {
@@ -403,14 +440,28 @@ impl DownloadQueue {
     }
 
     /// Cancel a task: remove it from the queue if it is still waiting, or
-    /// terminate its process if it is running.
+    /// terminate its process if it is running. The task's staged cache
+    /// (`.part` / `.ytdl` / fragment files) is deleted too — this is an
+    /// explicit deletion, so the resume cache is no longer needed.
     pub fn cancel_task(&self, task_id: &str) {
-        {
+        let config: Option<DownloadConfig> = {
             let mut st = self.state.lock().unwrap();
+            // running 任务不在 queued/paused 里，需要一起找才能拿到 config。
+            let cfg = st
+                .queued
+                .iter()
+                .chain(st.paused_tasks.iter())
+                .chain(st.running.iter())
+                .find(|t| t.id == task_id)
+                .map(|t| t.config.clone());
             st.queued.retain(|t| t.id != task_id);
             st.paused_tasks.retain(|t| t.id != task_id);
-        }
+            cfg
+        };
         self.downloader.cancel_task(task_id);
+        if let Some(cfg) = config {
+            self.downloader.cleanup_task_cache(&cfg);
+        }
         self.persist();
     }
 
@@ -419,20 +470,83 @@ impl DownloadQueue {
         let mut st = self.state.lock().unwrap();
         st.queued.clear();
         st.paused_tasks.clear();
+        st.paused_slots.clear();
         self.persist();
+    }
+
+    /// Move a queued OR paused task to a new position within its own list.
+    ///
+    /// - Running tasks cannot be reordered (they are downloading).
+    /// - Reordering a queued task changes the download order.
+    /// - Reordering a paused task changes the order they are restored in when
+    ///   resumed (paused tasks join the queue back in their list order).
+    /// - `new_index` is clamped to `[0, len)`; `0` = top.
+    /// - `seq` of every task in the affected list is rewritten to its new
+    ///   position so the frontend's ordering matches.
+    pub fn reorder_queue(&self, task_id: &str, new_index: usize) -> bool {
+        let mut st = self.state.lock().unwrap();
+
+        // Which list holds the task? Queued first (the common case).
+        let target_is_queued = st.queued.iter().any(|t| t.id == task_id);
+        if !target_is_queued && !st.paused_tasks.iter().any(|t| t.id == task_id) {
+            return false;
+        }
+
+        if target_is_queued {
+            let pos = st.queued.iter().position(|t| t.id == task_id).unwrap();
+            let task = st.queued.remove(pos).unwrap();
+            let len = st.queued.len();
+            let target = new_index.min(len);
+            st.queued.insert(target, task);
+            for (i, t) in st.queued.iter_mut().enumerate() {
+                t.seq = i as u64;
+            }
+        } else {
+            let pos = st
+                .paused_tasks
+                .iter()
+                .position(|t| t.id == task_id)
+                .unwrap();
+            let task = st.paused_tasks.remove(pos).unwrap();
+            let len = st.paused_tasks.len();
+            let target = new_index.min(len);
+            st.paused_tasks.insert(target, task);
+            for (i, t) in st.paused_tasks.iter_mut().enumerate() {
+                t.seq = i as u64;
+            }
+            // 手动重排后位置已变，旧 slot 记录失效。
+            st.paused_slots.clear();
+        }
+
+        drop(st);
+        self.persist();
+        true
     }
 
     /// Cancel ALL active tasks: drop every queued / paused task and terminate
     /// every running process. Finished downloads (history) are untouched.
     pub fn cancel_all(&self) {
-        let running_ids: Vec<String> = {
+        let (running_ids, configs): (Vec<String>, Vec<DownloadConfig>) = {
             let mut st = self.state.lock().unwrap();
+            let configs = st
+                .queued
+                .iter()
+                .chain(st.paused_tasks.iter())
+                .chain(st.running.iter())
+                .map(|t| t.config.clone())
+                .collect();
+            let running_ids = st.running.iter().map(|t| t.id.clone()).collect();
             st.queued.clear();
             st.paused_tasks.clear();
-            st.running.iter().map(|t| t.id.clone()).collect()
+            st.paused_slots.clear();
+            (running_ids, configs)
         };
         for id in running_ids {
             self.downloader.cancel_task(&id);
+        }
+        // 全部删除：逐个清理任务缓存。
+        for cfg in configs {
+            self.downloader.cleanup_task_cache(&cfg);
         }
         self.persist();
     }
@@ -447,13 +561,16 @@ impl DownloadQueue {
         let mut moved = false;
         {
             let mut st = self.state.lock().unwrap();
+            // 该任务之前暂停过（被单启过）：恢复时记录了它离开暂停区的位置，
+            // 重新暂停时插回原位附近，而不是追加到末尾。
+            let slot = st.paused_slots.remove(task_id);
             if let Some(pos) = st.queued.iter().position(|t| t.id == task_id) {
                 let t = st.queued.remove(pos).unwrap();
-                st.paused_tasks.push_back(t);
+                insert_paused(&mut st, t, slot);
                 moved = true;
             } else if let Some(pos) = st.running.iter().position(|t| t.id == task_id) {
                 let t = st.running.remove(pos); // Vec::remove 直接返回元素
-                st.paused_tasks.push_back(t);
+                insert_paused(&mut st, t, slot);
                 moved = true;
             }
         }
@@ -470,7 +587,11 @@ impl DownloadQueue {
             let mut st = self.state.lock().unwrap();
             if let Some(pos) = st.paused_tasks.iter().position(|t| t.id == task_id) {
                 let mut t = st.paused_tasks.remove(pos).unwrap();
+                // 记住离开位置，再次暂停时可插回原位而不是跑到末尾。
+                st.paused_slots.insert(task_id.to_string(), pos);
                 t.resume = true;
+                // 恢复单个任务即解除全局暂停模式，否则 pump 不会启动它。
+                st.paused = false;
                 st.queued.push_back(t);
             }
         }
@@ -478,24 +599,44 @@ impl DownloadQueue {
         self.pump();
     }
 
-    /// Pause every active task (queued → paused; running → killed and moved to
-    /// paused synchronously). Each task emits `download-paused`.
+    /// Pause every active task **atomically**, preserving the exact order the
+    /// user saw before pausing.
+    ///
+    /// The whole `running + queued → paused` move happens in one lock hold, so
+    /// concurrent worker completion cannot interleave and scramble the order.
+    /// Running tasks are then killed outside the lock. `resume_all` restores
+    /// `paused_tasks` in this same order, so "pause all → resume all" leaves
+    /// the queue (and the download order) unchanged.
     pub fn pause_all(&self) {
-        let ids: Vec<String> = {
-            let st = self.state.lock().unwrap();
-            st.queued
-                .iter()
-                .chain(st.running.iter())
-                .map(|t| t.id.clone())
-                .collect()
+        let running_ids: Vec<String> = {
+            let mut st = self.state.lock().unwrap();
+            st.paused = true;
+            // 全部暂停重建暂停区，旧 slot 记录失效。
+            st.paused_slots.clear();
+            // running 在前、queued 在后 —— 与 status() 返回的展示顺序一致。
+            let running: Vec<QueuedTask> = st.running.drain(..).collect();
+            let queued: Vec<QueuedTask> = st.queued.drain(..).collect();
+            let ids: Vec<String> = running.iter().chain(queued.iter()).map(|t| t.id.clone()).collect();
+            st.paused_tasks.extend(running);
+            st.paused_tasks.extend(queued);
+            ids
         };
-        for id in ids {
-            self.pause_task(&id);
+        // 锁外 kill 所有原 running 进程（cancel_task 内部处理 pid 清理）。
+        for id in &running_ids {
+            self.downloader.cancel_task(id);
         }
+        self.persist();
     }
 
-    /// Resume every paused task (back to the queue, resumed from cache).
+    /// Resume every paused task, restoring exactly the pre-pause order.
+    ///
+    /// `pause_all` moves queued tasks into `paused_tasks` first, then running
+    /// tasks — so `paused_tasks` already holds the original order. Restoring
+    /// them in that same order (back to the queue) keeps the queue identical
+    /// to what the user saw before pausing; the frontend renders the queue in
+    /// backend order, so display and download order both stay stable.
     pub fn resume_all(&self) {
+        // 先收集 id 释放借用，再逐一移出（避免 drain 与 push_back 双重可变借用）。
         let ids: Vec<String> = {
             let st = self.state.lock().unwrap();
             st.paused_tasks.iter().map(|t| t.id.clone()).collect()
@@ -503,10 +644,18 @@ impl DownloadQueue {
         {
             let mut st = self.state.lock().unwrap();
             st.paused = false; // 清全局暂停标志，确保 pump 能启动
+            // 全部恢复后暂停区清空，slot 记录不再有意义。
+            st.paused_slots.clear();
+            for id in ids {
+                if let Some(pos) = st.paused_tasks.iter().position(|t| t.id == id) {
+                    let mut t = st.paused_tasks.remove(pos).unwrap();
+                    t.resume = true;
+                    st.queued.push_back(t);
+                }
+            }
         }
-        for id in ids {
-            self.resume_task(&id);
-        }
+        self.persist();
+        self.pump();
     }
 
     /// Snapshot of queued + running + paused tasks for the frontend.

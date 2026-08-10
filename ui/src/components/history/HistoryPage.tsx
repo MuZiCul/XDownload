@@ -10,6 +10,8 @@ import {
   Loader2,
   ListPlus,
   Square,
+  ChevronUp,
+  ArrowUpToLine,
 } from "lucide-react";
 import { openUrl, openPath } from "@tauri-apps/plugin-opener";
 import CoverThumb from "../common/CoverThumb";
@@ -21,6 +23,7 @@ import ContextMenu, {
 import {
   listDownloadHistory,
   deleteDownloadHistory,
+  deleteDownloadHistoryFile,
   clearDownloadHistory,
   openDownloadPath,
   loadSettings,
@@ -43,6 +46,7 @@ import {
   cancelAllActiveGlobal,
   prepareQueue,
   refetchTaskInfoGlobal,
+  reorderQueueTaskGlobal,
   type DownloadTask,
 } from "../../lib/downloadStore";
 import { friendlyErrorMessage } from "../../lib/errorMessages";
@@ -69,9 +73,19 @@ export default function HistoryPage({ onRedownload }: Props) {
   const { t } = useI18n();
   const privacy = usePrivacyMode();
   const { queueTasks } = useDownloadStore();
+  // 排队 + 暂停任务可被重排（置顶/上移）。sortableIds 保持显示顺序。
+  const sortableIds = queueTasks
+    .filter((t) => t.status === "queued" || t.status === "paused")
+    .map((t) => t.id);
+  const firstSortableId = sortableIds[0];
   const [items, setItems] = useState<DownloadHistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [batchOpen, setBatchOpen] = useState(false);
+  // 历史记录删除确认：null = 未打开，否则为待删记录 id 与文件路径。
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: string;
+    filePath: string | null;
+  } | null>(null);
   // 批量入队时检测到「已下载」的链接，等待用户逐条处理（重新下载/取消）。
   const [duplicates, setDuplicates] = useState<DuplicateItem[]>([]);
   // 下载完成板块排序方式。
@@ -85,6 +99,11 @@ export default function HistoryPage({ onRedownload }: Props) {
     | "failed"
     | "missing"
   >("time");
+  // 内置时钟：仅每 60 秒刷新一次，避免渲染时反复调用 Date.now()，
+  // 用于「最近下载」徽标分级。
+  const [now, setNow] = useState(() => Date.now());
+  // 下载完成搜索：边输入边过滤（与排序联动）。
+  const [searchInput, setSearchInput] = useState("");
   // 标题右键菜单（位置 + 菜单项）。
   const [ctx, setCtx] = useState<{
     x: number;
@@ -126,7 +145,17 @@ export default function HistoryPage({ onRedownload }: Props) {
   };
 
   // 下载完成板块排序。
-  const sortedItems = [...items].sort((a, b) => {
+  // 先按搜索词过滤（标题/作者/链接/ID，不区分大小写），再应用排序，二者联动。
+  const filteredItems = searchInput
+    ? items.filter((item) => {
+        const q = searchInput.toLowerCase();
+        return [item.title, item.uploader, item.url, item.id].some(
+          (v) => v != null && v.toLowerCase().includes(q)
+        );
+      })
+    : items;
+
+  const sortedItems = [...filteredItems].sort((a, b) => {
     switch (sort) {
       case "size":
         return (b.file_size ?? 0) - (a.file_size ?? 0);
@@ -166,6 +195,12 @@ export default function HistoryPage({ onRedownload }: Props) {
     load();
   }, [queueTasks.length]);
 
+  // 内置时钟：每 60 秒刷新一次，驱动「最近下载」徽标分级。
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+
   const handleOpen = (id: string) => {
     openDownloadPath(id).catch((e: any) =>
       toast.error(t("video.openPathFail", { err: e }))
@@ -195,9 +230,31 @@ export default function HistoryPage({ onRedownload }: Props) {
     );
   };
 
-  const handleDelete = async (id: string) => {
+  // 点删除按钮：弹确认窗，询问是否同时删除已下载的文件。
+  const handleDelete = (item: DownloadHistoryItem) => {
+    setDeleteTarget({ id: item.id, filePath: item.file_path ?? null });
+  };
+
+  // 「仅删除记录」：不碰磁盘文件。
+  const handleDeleteRecord = async () => {
+    if (!deleteTarget) return;
+    const { id } = deleteTarget;
+    setDeleteTarget(null);
     try {
       await deleteDownloadHistory(id);
+      setItems((prev) => prev.filter((i) => i.id !== id));
+    } catch (e: any) {
+      toast.error(t("history.deleteFail", { err: e }));
+    }
+  };
+
+  // 「删除记录和文件」：同时删除磁盘上的已下载文件。
+  const handleDeleteRecordAndFile = async () => {
+    if (!deleteTarget) return;
+    const { id } = deleteTarget;
+    setDeleteTarget(null);
+    try {
+      await deleteDownloadHistoryFile(id, true);
       setItems((prev) => prev.filter((i) => i.id !== id));
     } catch (e: any) {
       toast.error(t("history.deleteFail", { err: e }));
@@ -314,22 +371,25 @@ export default function HistoryPage({ onRedownload }: Props) {
         <div className="flex items-center gap-1.5">
           {queueTasks.length > 0 && (
             <>
-              <button
-                className="btn px-2.5 py-1 text-xs font-semibold flex items-center gap-1"
-                onClick={pauseAllGlobal}
-                title={t("tasks.pauseAll")}
-              >
-                <Pause size={12} />
-                {t("tasks.pauseAll")}
-              </button>
-              <button
-                className="btn px-2.5 py-1 text-xs font-semibold flex items-center gap-1"
-                onClick={resumeAllGlobal}
-                title={t("tasks.startAll")}
-              >
-                <Play size={12} />
-                {t("tasks.startAll")}
-              </button>
+              {queueTasks.some((t) => t.status === "downloading") ? (
+                <button
+                  className="btn px-2.5 py-1 text-xs font-semibold flex items-center gap-1"
+                  onClick={pauseAllGlobal}
+                  title={t("tasks.pauseAll")}
+                >
+                  <Pause size={12} />
+                  {t("tasks.pauseAll")}
+                </button>
+              ) : (
+                <button
+                  className="btn px-2.5 py-1 text-xs font-semibold flex items-center gap-1"
+                  onClick={resumeAllGlobal}
+                  title={t("tasks.startAll")}
+                >
+                  <Play size={12} />
+                  {t("tasks.startAll")}
+                </button>
+              )}
               <button
                 className="btn px-2.5 py-1 text-xs font-semibold flex items-center gap-1 text-red-600"
                 onClick={cancelAllActiveGlobal}
@@ -350,17 +410,30 @@ export default function HistoryPage({ onRedownload }: Props) {
         </div>
       </div>
 
-      <div className="section-card">
+      <div className="space-y-2">
         {queueTasks.length === 0 ? (
           <p className="text-xs text-gray-400 text-center py-4">
             {t("tasks.emptyActive")}
           </p>
         ) : (
-          <div className="divide-y divide-zinc-100">
+          <div className="space-y-2">
             {queueTasks.map((task) => (
               <TaskCard
                 key={task.id}
                 task={task}
+                isFirst={firstSortableId === task.id}
+                onMoveUp={() => {
+                  // 按任务自身所在列表（暂停区/排队区各自内部）计算索引，
+                  // 与后端 reorder_queue 的单列表语义一致，避免混合索引错位。
+                  const sameListIds = queueTasks
+                    .filter(
+                      (t) => t.status === task.status && !t.infoFailed
+                    )
+                    .map((t) => t.id);
+                  const idx = sameListIds.indexOf(task.id);
+                  if (idx > 0) reorderQueueTaskGlobal(task.id, idx - 1);
+                }}
+                onMoveTop={() => reorderQueueTaskGlobal(task.id, 0)}
                 onTitleMenu={(e, url, hasLink) =>
                   openTitleMenu(e, url, hasLink)
                 }
@@ -385,6 +458,13 @@ export default function HistoryPage({ onRedownload }: Props) {
         </div>
         {!loading && items.length > 0 && (
           <div className="flex items-center gap-1.5">
+            <input
+              type="text"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder={t("history.searchPlaceholder")}
+              className="w-44 text-xs py-1"
+            />
             <select
               value={sort}
               onChange={(e) => setSort(e.target.value as typeof sort)}
@@ -410,7 +490,7 @@ export default function HistoryPage({ onRedownload }: Props) {
         )}
       </div>
 
-      <div className="section-card">
+      <div className="space-y-2">
         {loading ? (
           <p className="text-xs text-gray-400 text-center py-6">
             {t("common.loading")}
@@ -419,10 +499,19 @@ export default function HistoryPage({ onRedownload }: Props) {
           <p className="text-xs text-gray-400 text-center py-6">
             {t("history.empty")}
           </p>
+        ) : filteredItems.length === 0 ? (
+          <p className="text-xs text-gray-400 text-center py-6">
+            {t("history.noMatch")}
+          </p>
         ) : (
-          <div className="divide-y divide-zinc-100">
+          <>
             {sortedItems.map((item) => (
-              <div key={item.id} className="flex gap-3 py-3">
+              <div
+                key={item.id}
+                className="flex gap-3 py-3 px-3 rounded-xl border border-zinc-200/80 bg-white
+                           shadow-[1px_2px_6px_rgba(0,0,0,0.12)] transition-shadow
+                           hover:shadow-[2px_3px_10px_rgba(59,130,246,0.35)]"
+              >
                 <CoverThumb src={item.thumbnail} stretch blurred={privacy} />
 
                 <div className="flex-1 min-w-0">
@@ -477,6 +566,16 @@ export default function HistoryPage({ onRedownload }: Props) {
                         {item.file_size ? ` · ${formatFileSize(item.file_size)}` : ""}
                       </div>
                     )}
+                    {(() => {
+                      const bucket = getRecentBucket(item.downloaded_at, now);
+                      return bucket ? (
+                        <span
+                          className={`inline-flex items-center text-[10px] font-medium border rounded-md px-1.5 py-0.5 ${bucket.cls}`}
+                        >
+                          {t(bucket.key)}
+                        </span>
+                      ) : null;
+                    })()}
                     {item.status !== "failed" && !item.file_exists && (
                       <span className="inline-flex items-center gap-1 text-[10px] font-medium text-red-600 bg-red-50 border border-red-200 rounded-md px-1.5 py-0.5">
                         {t("history.fileMissing")}
@@ -512,7 +611,7 @@ export default function HistoryPage({ onRedownload }: Props) {
                       </button>
                       <button
                         className="p-1 rounded hover:bg-zinc-100 text-zinc-400 hover:text-red-600 shrink-0"
-                        onClick={() => handleDelete(item.id)}
+                        onClick={() => handleDelete(item)}
                         title={t("history.delete")}
                       >
                         <Trash2 size={13} />
@@ -522,7 +621,7 @@ export default function HistoryPage({ onRedownload }: Props) {
                 </div>
               </div>
             ))}
-          </div>
+          </>
         )}
       </div>
 
@@ -542,6 +641,62 @@ export default function HistoryPage({ onRedownload }: Props) {
         />
       )}
 
+      {/* 删除历史记录确认弹窗：询问是否同时删除已下载的文件。 */}
+      {deleteTarget && (
+        <div
+          className="dialog-overlay"
+          onClick={() => setDeleteTarget(null)}
+        >
+          <div
+            className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[460px] max-w-[92vw] bg-white/80 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/50 p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-sm font-semibold text-zinc-900">
+                {t("history.deleteTitle")}
+              </span>
+              <button
+                className="p-1 rounded hover:bg-zinc-100 text-zinc-400"
+                onClick={() => setDeleteTarget(null)}
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <p className="text-xs text-zinc-500 mb-2 leading-relaxed">
+              {t("history.deleteBody")}
+            </p>
+            {deleteTarget.filePath && (
+              <p
+                className="text-[11px] text-zinc-400 mb-3 px-2 py-1.5 bg-zinc-100/70 rounded truncate"
+                title={deleteTarget.filePath}
+              >
+                {deleteTarget.filePath}
+              </p>
+            )}
+            <div className="flex items-center justify-end gap-2">
+              <button
+                className="btn px-2.5 py-1.5 text-xs font-semibold"
+                onClick={() => setDeleteTarget(null)}
+              >
+                {t("history.deleteCancel")}
+              </button>
+              <button
+                className="btn px-2.5 py-1.5 text-xs font-semibold"
+                onClick={handleDeleteRecord}
+              >
+                {t("history.deleteRecordOnly")}
+              </button>
+              <button
+                className="btn px-2.5 py-1.5 text-xs font-semibold text-red-600"
+                onClick={handleDeleteRecordAndFile}
+              >
+                {t("history.deleteRecordAndFile")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {ctx && (
         <ContextMenu
           x={ctx.x}
@@ -554,12 +709,64 @@ export default function HistoryPage({ onRedownload }: Props) {
   );
 }
 
+/** 「最近下载」分级档位：分钟数上限 → i18n 键 + 徽标颜色类。
+ *  每条只显示匹配的最小档；超过 10 年（3650 天）不显示徽标。
+ *  前五档按重要程度着色（越新越醒目），其余保持默认蓝。 */
+const RECENT_BUCKETS: Array<{ maxMinutes: number; key: string; cls: string }> = [
+  { maxMinutes: 5, key: "history.recent.5m", cls: "text-rose-600 bg-rose-50 border-rose-200" },
+  { maxMinutes: 10, key: "history.recent.10m", cls: "text-orange-600 bg-orange-50 border-orange-200" },
+  { maxMinutes: 15, key: "history.recent.15m", cls: "text-amber-600 bg-amber-50 border-amber-200" },
+  { maxMinutes: 25, key: "history.recent.25m", cls: "text-yellow-600 bg-yellow-50 border-yellow-200" },
+  { maxMinutes: 45, key: "history.recent.45m", cls: "text-green-600 bg-green-50 border-green-200" },
+  { maxMinutes: 60, key: "history.recent.1h", cls: "text-blue-600 bg-blue-50 border-blue-200" },
+  { maxMinutes: 180, key: "history.recent.3h", cls: "text-teal-600 bg-teal-50 border-teal-200" },
+  { maxMinutes: 300, key: "history.recent.5h", cls: "text-blue-600 bg-blue-50 border-blue-200" },
+  { maxMinutes: 720, key: "history.recent.12h", cls: "text-blue-600 bg-blue-50 border-blue-200" },
+  { maxMinutes: 1440, key: "history.recent.24h", cls: "text-blue-600 bg-blue-50 border-blue-200" },
+  { maxMinutes: 2880, key: "history.recent.yesterday", cls: "text-blue-600 bg-blue-50 border-blue-200" },
+  { maxMinutes: 4320, key: "history.recent.dayBefore", cls: "text-blue-600 bg-blue-50 border-blue-200" },
+  { maxMinutes: 10080, key: "history.recent.1w", cls: "text-blue-600 bg-blue-50 border-blue-200" },
+  { maxMinutes: 30240, key: "history.recent.3w", cls: "text-blue-600 bg-blue-50 border-blue-200" },
+  { maxMinutes: 43200, key: "history.recent.1mo", cls: "text-blue-600 bg-blue-50 border-blue-200" },
+  { maxMinutes: 129600, key: "history.recent.3mo", cls: "text-blue-600 bg-blue-50 border-blue-200" },
+  { maxMinutes: 262080, key: "history.recent.6mo", cls: "text-blue-600 bg-blue-50 border-blue-200" },
+  { maxMinutes: 525600, key: "history.recent.1y", cls: "text-blue-600 bg-blue-50 border-blue-200" },
+  { maxMinutes: 1051200, key: "history.recent.2y", cls: "text-blue-600 bg-blue-50 border-blue-200" },
+  { maxMinutes: 1576800, key: "history.recent.3y", cls: "text-blue-600 bg-blue-50 border-blue-200" },
+  { maxMinutes: 2102400, key: "history.recent.4y", cls: "text-blue-600 bg-blue-50 border-blue-200" },
+  { maxMinutes: 2628000, key: "history.recent.5y", cls: "text-blue-600 bg-blue-50 border-blue-200" },
+  { maxMinutes: 3153600, key: "history.recent.6y", cls: "text-blue-600 bg-blue-50 border-blue-200" },
+  { maxMinutes: 3679200, key: "history.recent.7y", cls: "text-blue-600 bg-blue-50 border-blue-200" },
+  { maxMinutes: 4204800, key: "history.recent.8y", cls: "text-blue-600 bg-blue-50 border-blue-200" },
+  { maxMinutes: 4730400, key: "history.recent.9y", cls: "text-blue-600 bg-blue-50 border-blue-200" },
+  { maxMinutes: 5256000, key: "history.recent.10y", cls: "text-blue-600 bg-blue-50 border-blue-200" },
+];
+
+/** 根据下载时间与当前时钟返回最近下载徽标档位（key + 颜色类），超过 10 年返回 null。 */
+function getRecentBucket(
+  downloadedAt: number,
+  nowMs: number
+): { key: string; cls: string } | null {
+  // downloaded_at 是 Unix 秒，Date.now() 是毫秒，需统一单位再计算。
+  const elapsedMin = (nowMs - downloadedAt * 1000) / 60_000;
+  if (elapsedMin < 0 || elapsedMin > 5256000) return null;
+  const bucket = RECENT_BUCKETS.find((b) => elapsedMin <= b.maxMinutes);
+  return bucket ? { key: bucket.key, cls: bucket.cls } : null;
+}
+
 /** 正在下载的任务卡片 —— 布局与下载完成卡片一致，额外显示进度与控制。 */
 function TaskCard({
   task,
+  isFirst,
+  onMoveUp,
+  onMoveTop,
   onTitleMenu,
 }: {
   task: DownloadTask;
+  /** 该任务是否为可排序列表（queued+paused）中的第一个。 */
+  isFirst?: boolean;
+  onMoveUp?: () => void;
+  onMoveTop?: () => void;
   onTitleMenu: (
     e: React.MouseEvent,
     url: string | null,
@@ -619,7 +826,11 @@ function TaskCard({
   };
 
   return (
-    <div className="flex gap-3 py-3">
+    <div
+      className="flex gap-3 py-3 px-3 rounded-xl border border-zinc-200/80 bg-white
+                 shadow-[1px_2px_6px_rgba(0,0,0,0.12)] transition-shadow
+                 hover:shadow-[2px_3px_10px_rgba(59,130,246,0.35)]"
+    >
       <CoverThumb src={info?.thumbnail ?? null} stretch blurred={privacy} />
 
       <div className="flex-1 min-w-0">
@@ -704,6 +915,26 @@ function TaskCard({
             </div>
           )}
           <div className="flex items-center gap-1 ml-auto">
+            {(task.status === "queued" || task.status === "paused") &&
+              !task.infoFailed &&
+              !isFirst && (
+              <>
+                <button
+                  className="p-1 rounded hover:bg-zinc-100 text-zinc-400 hover:text-blue-600"
+                  onClick={onMoveUp}
+                  title={t("tasks.moveUp")}
+                >
+                  <ChevronUp size={13} />
+                </button>
+                <button
+                  className="p-1 rounded hover:bg-zinc-100 text-zinc-400 hover:text-blue-600"
+                  onClick={onMoveTop}
+                  title={t("tasks.moveTop")}
+                >
+                  <ArrowUpToLine size={13} />
+                </button>
+              </>
+            )}
             {task.infoFailed ? (
               <button
                 className="p-1 rounded hover:bg-zinc-100 text-zinc-400 hover:text-emerald-600"
