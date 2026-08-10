@@ -98,7 +98,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: XDownload ${{ steps.version.outputs.version }}
+          name: XDownload v${{ steps.version.outputs.version }}
           body_path: ${{ steps.body.outputs.body_path }}
           files: |
             src-tauri/target/release/bundle/nsis/*.exe
