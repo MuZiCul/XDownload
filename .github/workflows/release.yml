@@ -1,0 +1,105 @@
+name: Release
+
+# 打 v* 标签（如 v2.8.1）推送后自动：编译 exe/msi + 打包扩展 + 创建 GitHub Release。
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # 需要完整历史 + 所有 tag，用于自动生成 changelog。
+          fetch-depth: 0
+
+      # ---------- 版本号（唯一数据源 Cargo.toml，tag 与之对应） ----------
+      - name: Extract version from tag
+        id: version
+        shell: pwsh
+        run: |
+          $v = "${{ github.ref_name }}".TrimStart('v')
+          Write-Output "version=$v" >> $env:GITHUB_OUTPUT
+
+      # ---------- 前端依赖 ----------
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install pnpm
+        shell: pwsh
+        run: npm install -g pnpm
+
+      - name: Install UI dependencies
+        working-directory: ui
+        shell: pwsh
+        run: pnpm install --frozen-lockfile
+
+      # ---------- Rust + MSI 工具 ----------
+      - name: Setup Rust (MSVC)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install WiX (MSI toolset)
+        shell: pwsh
+        run: choco install wixtoolset -y --no-progress
+
+      # ---------- Release 正文 ----------
+      # 大版本（minor，如 2.7→2.8）：写 RELEASE/RELEASE_vX.Y.Z.md，优先使用。
+      # 小版本（patch，如 2.7.1→2.7.2）：不写文件，从 git log 自动生成 changelog。
+      - name: Generate release body
+        id: body
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $releaseFile = "RELEASE/RELEASE_v$version.md"
+          if (Test-Path $releaseFile) {
+            Copy-Item $releaseFile "body.md" -Force
+          } else {
+            $tag = "${{ github.ref_name }}"
+            $prev = git tag --list "v*" --sort=-v:refname | Where-Object { $_ -ne $tag } | Select-Object -First 1
+            $header = "# XDownload v$version`n`n## Changes`n"
+            $log = if ($prev) {
+              (git log "$prev..HEAD" --no-merges --pretty=format:"- %s") | Select-Object -First 60
+            } else {
+              @("- Initial release")
+            }
+            Set-Content -Path "body.md" -Value ($header + ($log -join "`n")) -Encoding utf8NoBOM
+          }
+          Write-Output "body_path=$env:GITHUB_WORKSPACE\body.md" >> $env:GITHUB_OUTPUT
+
+      # ---------- 构建（beforeBuildCommand 自动跑前端） ----------
+      - name: Build desktop app (frontend + Rust + installers)
+        working-directory: src-tauri
+        shell: pwsh
+        run: cargo tauri build
+
+      # ---------- 扩展 zip（固定随发版） ----------
+      - name: Build extension zip
+        working-directory: extension
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1
+
+      # ---------- 创建 Release + 上传资产 ----------
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: XDownload ${{ steps.version.outputs.version }}
+          body_path: ${{ steps.body.outputs.body_path }}
+          files: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
+            extension/dist/*.zip

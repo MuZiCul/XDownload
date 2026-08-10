@@ -47,6 +47,10 @@ pub struct DownloadRecord {
     pub like_count: i64,
     /// Absolute path of the final saved file (may no longer exist).
     pub file_path: Option<String>,
+    /// All absolute paths saved for this download (multi-media tweets produce
+    /// several files; `file_path` is the first one for backward compatibility).
+    #[serde(default)]
+    pub file_paths: Vec<String>,
     /// File size in bytes (filled after a successful download).
     #[serde(default)]
     pub file_size: Option<i64>,
@@ -135,7 +139,9 @@ impl DownloadHistory {
         Self::save_data(&DownloadHistoryData::default())
     }
 
-    /// Record a successful download.
+    /// Record a successful download. `file_path` is the primary path (first
+    /// file); `file_paths` holds every saved file (multi-media tweets).
+    #[allow(clippy::too_many_arguments)]
     pub fn record(
         id: &str,
         title: Option<String>,
@@ -146,6 +152,7 @@ impl DownloadHistory {
         view_count: i64,
         like_count: i64,
         file_path: Option<String>,
+        file_paths: Vec<String>,
     ) -> Result<()> {
         let mut data = Self::load_data();
         data.records.insert(
@@ -160,6 +167,7 @@ impl DownloadHistory {
                 view_count,
                 like_count,
                 file_path,
+                file_paths,
                 file_size: None,
                 downloaded_at: chrono::Utc::now().timestamp(),
                 status: DownloadStatus::Success,
@@ -208,6 +216,7 @@ impl DownloadHistory {
                 view_count,
                 like_count,
                 file_path: None,
+                file_paths: Vec::new(),
                 file_size: None,
                 downloaded_at: chrono::Utc::now().timestamp(),
                 status: DownloadStatus::Failed,

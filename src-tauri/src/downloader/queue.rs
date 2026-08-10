@@ -100,10 +100,13 @@ impl DownloadQueue {
         auto_start: bool,
         info: Option<serde_json::Value>,
     ) -> Result<String, String> {
+        // 去重与存储统一使用 trim 后的 URL，避免带尾随空格的链接绕过判重。
+        let mut config = config;
         let url = config.url.trim().to_string();
         if url.is_empty() {
             return Err("链接不能为空".to_string());
         }
+        config.url = url.clone();
         let seq = TASK_SEQ.fetch_add(1, Ordering::Relaxed) as u64;
         let id = seq.to_string();
         {
@@ -208,7 +211,8 @@ impl DownloadQueue {
         let mut retries = ConfigManager::load().retry_count.unwrap_or(0);
         let mut attempts: u8 = 0;
         let mut last_error: Option<String> = None;
-        let mut saved: Option<String> = None;
+        // 所有成功移动的文件路径（多 media 推文有多个）；主路径 = 第一个。
+        let mut saved_paths: Vec<String> = Vec::new();
 
         loop {
             attempts = attempts.saturating_add(1);
@@ -229,11 +233,11 @@ impl DownloadQueue {
                 .download(&id, preserve_cache, &config, progress_cb)
                 .await
             {
-                Ok(Some(path)) => {
-                    saved = Some(path);
+                Ok(paths) if !paths.is_empty() => {
+                    saved_paths = paths;
                     break;
                 }
-                Ok(None) => {
+                Ok(_) => {
                     last_error = Some("下载失败（无详细信息）".to_string());
                 }
                 Err(e) => {
@@ -258,6 +262,16 @@ impl DownloadQueue {
         // Remove from the running list.
         {
             let mut st = self.state.lock().unwrap();
+            // 竞态防护：若该任务已被 resume 并由新 worker 接管（running 中
+            // 存在 resume=true 的同 id 任务），旧 worker 不删除新实例、不写
+            // 历史、不 emit finished，静默结束（避免 UI 卡片被移除后又因新
+            // worker 加回的闪烁，也避免重复事件）。
+            if st.running.iter().any(|t| t.id == id && t.resume) {
+                drop(st);
+                self.persist();
+                self.pump();
+                return;
+            }
             st.running.retain(|t| t.id != id);
             // 该任务已被 pause_task 同步移入暂停列表（kill 后走到这里）：
             // 保留 cache 供续传，直接结束，不写历史、不 emit finished。
@@ -328,7 +342,9 @@ impl DownloadQueue {
         // written to history).
         if !cancelled {
             if let Some(video_id) = task.config.video_id.as_deref() {
-                if let Some(path) = saved.clone() {
+                // 主路径 = 第一个文件（兼容历史页「打开文件位置」/ is_downloaded）。
+                let main_path = saved_paths.first().cloned();
+                if let Some(path) = main_path {
                     let _ = DownloadHistory::record(
                         video_id,
                         h_title,
@@ -339,6 +355,7 @@ impl DownloadQueue {
                         h_views,
                         h_likes,
                         Some(path.clone()),
+                        saved_paths.clone(),
                     );
                     // 主动获取文件大小并写入历史（显示在下载时间后）。
                     if let Ok(meta) = std::fs::metadata(&path) {
@@ -361,7 +378,7 @@ impl DownloadQueue {
             }
         }
 
-        let status = if saved.is_some() {
+        let status = if !saved_paths.is_empty() {
             "completed"
         } else if cancelled {
             "cancelled"
@@ -374,7 +391,7 @@ impl DownloadQueue {
                 "task_id": id,
                 "status": status,
                 "error": last_error,
-                "file_path": saved,
+                "file_path": saved_paths.first(),
                 "attempts": attempts,
             }),
         );

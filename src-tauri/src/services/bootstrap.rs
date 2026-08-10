@@ -42,11 +42,16 @@ impl Bootstrap {
     /// the configured proxy. The overall timeout stays generous for large
     /// downloads (ffmpeg zip etc.).
     fn build_direct_client() -> Result<reqwest::Client> {
+        // 版本号单一数据源 = Cargo.toml（CARGO_PKG_VERSION 编译期注入）。
+        let ua = format!(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) XDownload/{}",
+            env!("CARGO_PKG_VERSION")
+        );
         reqwest::Client::builder()
             .no_proxy()
             .connect_timeout(Duration::from_secs(8))
             .timeout(Duration::from_secs(180))
-            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) XDownload/2.8.0")
+            .user_agent(ua)
             .build()
             .context("failed to build direct HTTP client")
     }
@@ -57,10 +62,14 @@ impl Bootstrap {
         let Some(proxy) = ProxyConfig::to_reqwest_proxy() else {
             return Ok(None);
         };
+        let ua = format!(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) XDownload/{}",
+            env!("CARGO_PKG_VERSION")
+        );
         reqwest::Client::builder()
             .proxy(proxy)
             .timeout(Duration::from_secs(180))
-            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) XDownload/2.8.0")
+            .user_agent(ua)
             .build()
             .map(Some)
             .context("failed to build proxy HTTP client")

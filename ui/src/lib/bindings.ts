@@ -295,6 +295,11 @@ export async function openFilePath(filePath: string): Promise<void> {
   return invoke("open_file_path", { filePath });
 }
 
+/** 获取应用版本号（数据源：Cargo.toml）。 */
+export async function getVersion(): Promise<string> {
+  return invoke("get_version");
+}
+
 /** 读取持久化的隐私模式状态。 */
 export async function getPrivacyMode(): Promise<boolean> {
   return invoke("get_privacy_mode");

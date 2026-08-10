@@ -151,9 +151,10 @@ impl YtDlpDownloader {
         }
     }
 
-    /// Download a video as a queue task. Returns the final file path (from
-    /// `--print-to-file after_move:filepath`) on success, `None` if the
-    /// process failed without producing stderr output.
+    /// Download a video as a queue task. Returns every successfully moved
+    /// file path (from `--print-to-file after_move:filepath`) — a multi-media
+    /// tweet yields several files; an empty vec if the process failed without
+    /// producing stderr output.
     ///
     /// Each task stages files in its own `download_cache/{task_id}/` directory
     /// and is cancelled independently via `cancel_task`.
@@ -167,7 +168,7 @@ impl YtDlpDownloader {
         preserve_cache: bool,
         config: &DownloadConfig,
         progress_cb: impl Fn(DownloadProgress) + Send + 'static,
-    ) -> Result<Option<String>> {
+    ) -> Result<Vec<String>> {
         // Register a per-task cancel flag so this task can be stopped without
         // affecting concurrent tasks.
         let flag = Arc::new(AtomicBool::new(false));
@@ -218,7 +219,7 @@ impl YtDlpDownloader {
         cancel: Arc<AtomicBool>,
         pid_sink: Arc<dyn Fn(u32) + Send + Sync + 'static>,
         progress_cb: impl Fn(DownloadProgress) + Send + 'static,
-    ) -> Result<Option<String>> {
+    ) -> Result<Vec<String>> {
         // Stage the download inside the (per-task) cache folder first. Finished
         // files are moved into the real download directory only after yt-dlp
         // completes, so an interrupted download never leaves partial files in
@@ -432,7 +433,7 @@ impl YtDlpDownloader {
             if !stderr.is_empty() {
                 anyhow::bail!("下载失败: {}", stderr);
             }
-            return Ok(None);
+            return Ok(Vec::new());
         }
 
         // Read the actual saved paths written by --print-to-file. When multiple
@@ -450,30 +451,35 @@ impl YtDlpDownloader {
 
         // Move every finished file out of the cache into the real download
         // directory, sanitizing each filename (collapse spaces, strip Windows
-        // illegal chars). Files listed by --print-to-file are moved first and
-        // the LAST one becomes the history path; any remaining finished extras
-        // (thumbnails, subtitles) are moved too so nothing is lost. Files that
-        // still end in .part are discarded with the cache wipe afterwards.
+        // illegal chars). Files listed by --print-to-file are moved first;
+        // any remaining finished extras (thumbnails, subtitles) are moved too
+        // so nothing is lost. Every successfully moved path is returned (a
+        // multi-media tweet yields several files). Files that still end in
+        // .part are discarded with the cache wipe afterwards.
         std::fs::create_dir_all(&config.output_dir).ok();
-        let mut saved_path: Option<String> = None;
+        let mut moved_paths: Vec<String> = Vec::new();
         for p in &saved_paths {
             if let Some(dst) = Self::move_to_download_dir(std::path::Path::new(p), &config.output_dir) {
-                saved_path = Some(dst);
+                moved_paths.push(dst);
             }
         }
         if let Ok(entries) = std::fs::read_dir(cache_dir) {
             for entry in entries.flatten() {
-                let _ = Self::move_to_download_dir(&entry.path(), &config.output_dir);
+                if let Some(dst) = Self::move_to_download_dir(&entry.path(), &config.output_dir) {
+                    moved_paths.push(dst);
+                }
             }
         }
         // Nothing finished should remain; wipe whatever is left (.part, info).
         Self::cleanup_cache_dir(cache_dir);
 
-        Ok(saved_path)
+        Ok(moved_paths)
     }
 
     /// Move a finished file out of the download cache into the real download
-    /// directory, sanitizing its filename. Returns the destination path.
+    /// directory, sanitizing its filename. Returns the destination path, or
+    /// `None` when the file could not actually be moved (so the history only
+    /// records paths that really exist).
     fn move_to_download_dir(src: &std::path::Path, output_dir: &str) -> Option<String> {
         if !src.is_file() {
             return None;
@@ -501,6 +507,15 @@ impl YtDlpDownloader {
             // Cross-device move or locked target — fall back to copy + remove.
             if std::fs::copy(src, &dst).is_ok() {
                 let _ = std::fs::remove_file(src);
+            } else {
+                // Could not move or copy — do not report a path that does not
+                // exist in the download directory.
+                tracing::warn!(
+                    "move_to_download_dir: failed to move {} -> {}",
+                    src.display(),
+                    dst.display()
+                );
+                return None;
             }
         }
         Some(dst.to_string_lossy().to_string())

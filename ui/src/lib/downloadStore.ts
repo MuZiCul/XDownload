@@ -132,10 +132,15 @@ async function fetchAndFillInfoAsync(id: string, url: string): Promise<void> {
     // 失败仅影响下次重启的信息恢复，不影响本次展示与下载。
     updateTaskInfo(id, info).catch(() => {});
   } catch {
-    // 获取失败：标记 infoFailed，并把任务暂停（pump 自动跳过它，下载轮到
-    // 该任务时不会启动，继续下一个）。
+    // 获取失败：标记 infoFailed。仅当任务还在排队（queued）时才暂停并跳过
+    // 下载——这是「两阶段」流程的正常兜底。若任务已开始下载
+    // （download-started 兜底再 fetch 失败），不中断正在进行的下载，
+    // 避免网络波动时下载被意外 kill。
     patchTask(id, { infoFailed: true });
-    pauseQueueTask(id).catch(() => {});
+    const t = state.queueTasks.find((x) => x.id === id);
+    if (t && t.status === "queued") {
+      pauseQueueTask(id).catch(() => {});
+    }
   }
 }
 
@@ -429,11 +434,15 @@ export function cancelQueueTaskGlobal(taskId: string) {
   cancelQueueTask(taskId).catch(() => {});
 }
 
-/** Remove a task from the queue list. Active tasks are also cancelled on the
- *  backend first; finished tasks are removed locally only. */
+/** Remove a task from the queue list. Active tasks (queued / paused /
+ *  downloading) are also cancelled on the backend first so they don't get
+ *  resurrected by a later refresh; finished tasks are removed locally only. */
 export function removeQueueTaskGlobal(id: string) {
   const t = state.queueTasks.find((x) => x.id === id);
-  if (t && (t.status === "queued" || t.status === "downloading")) {
+  if (
+    t &&
+    (t.status === "queued" || t.status === "paused" || t.status === "downloading")
+  ) {
     cancelQueueTask(id).catch(() => {});
   }
   setState({ queueTasks: state.queueTasks.filter((x) => x.id !== id) });
