@@ -82,10 +82,11 @@ jobs:
           Write-Output "body_path=$env:GITHUB_WORKSPACE\body.md" >> $env:GITHUB_OUTPUT
 
       # ---------- 构建（beforeBuildCommand 自动跑前端） ----------
+      # 用项目自带的 @tauri-apps/cli（pnpm install 已装，版本 ^2.11.4 精确匹配），
+      # 从项目根调用 node 脚本，与本地 debug_build.bat 一致。
       - name: Build desktop app (frontend + Rust + installers)
-        working-directory: src-tauri
         shell: pwsh
-        run: cargo tauri build
+        run: node ui/node_modules/@tauri-apps/cli/tauri.js build
 
       # ---------- 扩展 zip（固定随发版） ----------
       - name: Build extension zip
