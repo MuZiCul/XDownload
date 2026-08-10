@@ -3,6 +3,7 @@ use crate::downloader::progress::parse_progress_line;
 use crate::models::config::DownloadConfig;
 use crate::models::progress::DownloadProgress;
 use crate::models::video_info::VideoInfo;
+use crate::services::config::ConfigManager;
 use crate::services::proxy::ProxyConfig;
 use crate::utils::process;
 use anyhow::{Context, Result};
@@ -39,6 +40,18 @@ fn is_valid_rate_limit(s: &str) -> bool {
     ok && (suffix.is_empty() || matches!(suffix.to_uppercase().as_str(), "K" | "M" | "G"))
 }
 
+/// Metadata captured from yt-dlp after a download finishes, used to fill
+/// history records when the frontend's info is missing.
+#[derive(Debug, Clone, Default)]
+pub struct DownloadedMeta {
+    pub title: Option<String>,
+    pub uploader: Option<String>,
+    pub thumbnail: Option<String>,
+    pub duration: Option<i64>,
+    pub view_count: Option<i64>,
+    pub like_count: Option<i64>,
+}
+
 /// Core downloader wrapping yt-dlp CLI.
 ///
 /// All downloads go through the multi-task queue (`DownloadQueue`), which
@@ -52,6 +65,11 @@ pub struct YtDlpDownloader {
     /// Per-task child process PIDs (task_id → pid), so a single task can be
     /// cancelled without affecting others.
     task_pids: Arc<Mutex<HashMap<String, u32>>>,
+    /// Actual metadata captured from yt-dlp after the download finished
+    /// (task_id → raw meta line), used to fill history records when the
+    /// frontend's fetchVideoInfo data was missing (deep-link / extension
+    /// enqueued tasks).
+    task_meta: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl YtDlpDownloader {
@@ -67,6 +85,7 @@ impl YtDlpDownloader {
             cookies_file: Mutex::new(None),
             task_cancel_flags: Arc::new(Mutex::new(HashMap::new())),
             task_pids: Arc::new(Mutex::new(HashMap::new())),
+            task_meta: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -230,6 +249,10 @@ impl YtDlpDownloader {
         let tmp_path =
             std::env::temp_dir().join(format!("xdownload_last_path_{}.txt", task_id));
         let _ = std::fs::remove_file(&tmp_path);
+        // 实际元数据输出文件（title/uploader/thumbnail/duration/views/likes）。
+        let meta_path =
+            std::env::temp_dir().join(format!("xdownload_last_meta_{}.txt", task_id));
+        let _ = std::fs::remove_file(&meta_path);
         let pid_sink: Arc<dyn Fn(u32) + Send + Sync + 'static> = {
             let task_pids = self.task_pids.clone();
             let id_owned = task_id.to_string();
@@ -243,11 +266,23 @@ impl YtDlpDownloader {
                 config,
                 &cache_dir,
                 &tmp_path,
+                &meta_path,
                 flag.clone(),
                 pid_sink,
                 progress_cb,
             )
             .await;
+
+        // 读取 yt-dlp 输出的真实元数据，供历史记录信息兜底（如 fetch 数据缺失）。
+        if let Ok(contents) = std::fs::read_to_string(&meta_path) {
+            if let Some(last) = contents.lines().last().map(|l| l.to_string()) {
+                self.task_meta
+                    .lock()
+                    .unwrap()
+                    .insert(task_id.to_string(), last);
+            }
+        }
+        let _ = std::fs::remove_file(&meta_path);
 
         self.task_cancel_flags.lock().unwrap().remove(task_id);
         self.task_pids.lock().unwrap().remove(task_id);
@@ -263,6 +298,7 @@ impl YtDlpDownloader {
         config: &DownloadConfig,
         cache_dir: &std::path::Path,
         tmp_path: &std::path::Path,
+        meta_path: &std::path::Path,
         cancel: Arc<AtomicBool>,
         pid_sink: Arc<dyn Fn(u32) + Send + Sync + 'static>,
         progress_cb: impl Fn(DownloadProgress) + Send + 'static,
@@ -306,6 +342,23 @@ impl YtDlpDownloader {
                 );
             }
         }
+        // HLS/DASH 分片并发与重试（可配置，见设置「HLS 下载」）。
+        // 并发分片可显著加速 X 的 HLS 音视频分离流下载（默认单并发极慢），
+        // 分片重试避免偶发坏分片导致整个任务失败。
+        let hls_cfg = ConfigManager::load();
+        if let Some(n) = hls_cfg.hls_concurrent_fragments {
+            if n > 0 {
+                cmd.push("--concurrent-fragments".to_string());
+                cmd.push(n.to_string());
+            }
+        }
+        if let Some(n) = hls_cfg.hls_fragment_retries {
+            if n > 0 {
+                cmd.push("--fragment-retries".to_string());
+                cmd.push(n.to_string());
+            }
+        }
+
         // Deliberately NOT passing --no-playlist here: a tweet with several
         // media entries is exposed by yt-dlp as multiple playlist items, and
         // --no-playlist would silently download only the first one. An
@@ -404,6 +457,16 @@ impl YtDlpDownloader {
         cmd.push("--print-to-file".to_string());
         cmd.push("after_move:filepath".to_string());
         cmd.push(tmp_path.to_string_lossy().to_string());
+
+        // Also dump the real metadata (tab-separated) so the history record can
+        // be filled even when the frontend's fetchVideoInfo data is missing.
+        let _ = std::fs::remove_file(meta_path);
+        cmd.push("--print-to-file".to_string());
+        cmd.push(
+            "after_move:%(title)s\t%(uploader)s\t%(thumbnail)s\t%(duration)s\t%(view_count)s\t%(like_count)s"
+                .to_string(),
+        );
+        cmd.push(meta_path.to_string_lossy().to_string());
 
         cmd.push(config.url.clone());
 
@@ -530,9 +593,10 @@ impl YtDlpDownloader {
             }
         }
         // Successful download — everything worth keeping was moved above.
-        // Wipe the staging leftovers (.part / .info.json) so the cache stays
-        // clean; a later re-download of the same URL starts fresh.
-        Self::cleanup_cache_dir(cache_dir);
+        // Wipe the whole staging directory (.part / .info.json and the dir
+        // itself) so no empty cache folders are left behind; a later
+        // re-download of the same URL starts fresh.
+        let _ = std::fs::remove_dir_all(cache_dir);
 
         Ok(moved_paths)
     }
@@ -580,6 +644,54 @@ impl YtDlpDownloader {
             }
         }
         Some(dst.to_string_lossy().to_string())
+    }
+
+    /// Read and remove the captured metadata for a finished task. Returns
+    /// `None` when nothing was captured (e.g. task failed before completion).
+    pub fn read_task_meta(&self, task_id: &str) -> Option<DownloadedMeta> {
+        let raw = self.task_meta.lock().unwrap().remove(task_id)?;
+        let fields: Vec<&str> = raw.split('\t').collect();
+        if fields.len() < 6 {
+            return None;
+        }
+        let clean = |s: &str| -> Option<String> {
+            if s.is_empty() || s == "NA" {
+                None
+            } else {
+                Some(s.to_string())
+            }
+        };
+        let num = |s: &str| -> Option<i64> {
+            if s.is_empty() || s == "NA" {
+                None
+            } else {
+                s.trim().parse().ok()
+            }
+        };
+        Some(DownloadedMeta {
+            title: clean(fields[0]),
+            uploader: clean(fields[1]),
+            thumbnail: clean(fields[2]),
+            duration: num(fields[3]),
+            view_count: num(fields[4]),
+            like_count: num(fields[5]),
+        })
+    }
+
+    /// Delete the cache directory of a single task (partial files, staged
+    /// fragments, info files). Called when the user DELETES a task so its
+    /// `.part` / `.ytdl` leftovers don't accumulate. Pause / resume is
+    /// unaffected — pausing never calls this.
+    pub fn cleanup_task_cache(&self, config: &DownloadConfig) -> bool {
+        let dir = crate::utils::app_home::AppHome::download_cache_dir()
+            .join(Self::cache_key(config));
+        if dir.exists() {
+            tracing::info!("cleaning cache for deleted task: {}", dir.display());
+            let _ = std::fs::remove_dir_all(&dir);
+            true
+        } else {
+            false
+        }
     }
 
     /// Remove everything currently staged in the download cache — partial

@@ -6,6 +6,18 @@
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+  /* 桌面应用体验：除输入框外禁止文本选中，拖动鼠标/双击不会出现选区 */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* 输入类元素恢复可选中（可输入、可复制内容） */
+input,
+textarea,
+select,
+[contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 body {

@@ -103,6 +103,14 @@ export async function clearDownloadQueue(): Promise<void> {
   return invoke("clear_download_queue");
 }
 
+/** 将排队任务移动到指定位置（0 = 置顶）。返回是否生效（仅 queued 任务可移动）。 */
+export async function reorderQueueTask(
+  taskId: string,
+  newIndex: number
+): Promise<boolean> {
+  return invoke("reorder_queue_task", { taskId, newIndex });
+}
+
 /** 取消全部活跃任务（排队/暂停/运行中）；下载完成的历史记录不受影响。 */
 export async function cancelAllTasks(): Promise<void> {
   return invoke("cancel_all_tasks");
@@ -138,6 +146,14 @@ export async function listDownloadHistory(): Promise<DownloadHistoryItem[]> {
 
 export async function deleteDownloadHistory(id: string): Promise<void> {
   return invoke("delete_download_history", { id });
+}
+
+/** 删除下载记录，可选择同时删除磁盘上的已下载文件。 */
+export async function deleteDownloadHistoryFile(
+  id: string,
+  deleteFile: boolean
+): Promise<void> {
+  return invoke("delete_download_history_file", { id, deleteFile });
 }
 
 export async function clearDownloadHistory(): Promise<void> {

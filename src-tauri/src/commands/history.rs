@@ -59,6 +59,26 @@ pub fn delete_download_history(id: String) -> Result<(), String> {
     DownloadHistory::remove(&id).map_err(|e| e.to_string())
 }
 
+/// Delete a single download-history record, optionally also deleting the
+/// downloaded file on disk (resolved to an absolute path first).
+#[tauri::command]
+pub fn delete_download_history_file(
+    id: String,
+    delete_file: bool,
+) -> Result<(), String> {
+    if delete_file {
+        if let Some(rec) = DownloadHistory::get(&id) {
+            if let Some(p) = rec.file_path.as_deref().map(abs_history_path) {
+                let path = Path::new(&p);
+                if path.exists() {
+                    std::fs::remove_file(path).map_err(|e| e.to_string())?;
+                }
+            }
+        }
+    }
+    DownloadHistory::remove(&id).map_err(|e| e.to_string())
+}
+
 /// Clear all download history.
 #[tauri::command]
 pub fn clear_download_history() -> Result<(), String> {

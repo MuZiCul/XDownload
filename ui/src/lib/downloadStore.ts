@@ -11,6 +11,7 @@ import {
   cancelQueueTask,
   cancelAllTasks,
   clearDownloadQueue,
+  reorderQueueTask,
   startQueue,
   pauseQueue,
   resumeQueue,
@@ -384,11 +385,13 @@ export function initDownloadStore() {
   queueStatus()
     .then((items) => {
       if (items.length === 0) return;
-      // 恢复时回填卡片信息（保存进度退出后重启不丢信息）；按入队序号
-      // （seq）排序，保证任务位置稳定（不随暂停/恢复/完成轮转）。
-      const sorted = [...items].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+      // 恢复时回填卡片信息（保存进度退出后重启不丢信息）。
+      // 顺序直接采用后端返回的顺序（running → paused → queued），
+      // queued 段即实际下载顺序 —— 不按 seq 排序，避免 pause/resume 后
+      // 显示顺序与下载顺序脱节。
+      const itemsOrdered = [...items];
       setState({
-        queueTasks: sorted.map((it) => ({
+        queueTasks: itemsOrdered.map((it) => ({
           id: it.task_id,
           url: it.url,
           title: it.title,
@@ -457,15 +460,24 @@ export function clearQueueTasksGlobal() {
   });
 }
 
+/** Move a queued task to a new position (0 = top). Refreshes the list so the
+ *  seq-based ordering reflects the reordered queue. */
+export function reorderQueueTaskGlobal(taskId: string, newIndex: number) {
+  reorderQueueTask(taskId, newIndex)
+    .catch(() => {})
+    .finally(() => refreshQueueGlobal());
+}
+
 /** Sync the frontend task list with the backend snapshot. Preserves the
  *  progress/speed/info of tasks already shown; updates status/url/title. */
 export async function refreshQueueGlobal() {
   try {
     const items = await queueStatus();
-    // 按入队序号（seq）排序，暂停/恢复/完成后任务位置保持稳定。
-    const sorted = [...items].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+    // 采用后端返回顺序（running → paused → queued，queued 即下载顺序），
+    // 与"全部暂停→全部开始"后的实际下载顺序保持一致。
+    const itemsOrdered = [...items];
     setState({
-      queueTasks: sorted.map((it) => {
+      queueTasks: itemsOrdered.map((it) => {
         const existing = state.queueTasks.find((t) => t.id === it.task_id);
         return {
           id: it.task_id,

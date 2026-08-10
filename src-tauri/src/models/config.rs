@@ -141,4 +141,12 @@ pub struct AppSettings {
     /// 下载限速（yt-dlp --limit-rate），如 "1M"、"25M"。None = 不限速。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub download_rate_limit: Option<String>,
+    /// HLS/DASH 分片并发下载数（yt-dlp --concurrent-fragments）。
+    /// None = 不传参（yt-dlp 默认 1）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hls_concurrent_fragments: Option<u8>,
+    /// HLS/DASH 分片失败重试次数（yt-dlp --fragment-retries）。
+    /// None = 不传参（yt-dlp 默认 10）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hls_fragment_retries: Option<u8>,
 }

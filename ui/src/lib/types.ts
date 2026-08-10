@@ -103,6 +103,10 @@ export interface AppSettings {
   queue_persist?: boolean;
   /** 下载限速（yt-dlp --limit-rate），如 "1M"、"25M"。空 = 不限速。 */
   download_rate_limit?: string;
+  /** HLS/DASH 分片并发下载数（yt-dlp --concurrent-fragments）。 */
+  hls_concurrent_fragments?: number;
+  /** HLS/DASH 分片失败重试次数（yt-dlp --fragment-retries）。 */
+  hls_fragment_retries?: number;
 }
 
 // --- Proxy ---
