@@ -84,6 +84,13 @@ pub fn save_language(lang: String) -> Result<(), String> {
     ConfigManager::save_lang(&lang).map_err(|e| e.to_string())
 }
 
+/// Get the app version. Version number is a single source of truth in
+/// `Cargo.toml` (`CARGO_PKG_VERSION`), injected at compile time.
+#[tauri::command]
+pub fn get_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
 /// Get the persisted privacy mode state.
 #[tauri::command]
 pub fn get_privacy_mode() -> bool {

@@ -1,7 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-config-schema/schema.json",
   "productName": "XDownload",
-  "version": "2.8.0",
   "identifier": "com.muzicul.xdownload",
   "build": {
     "beforeDevCommand": "pnpm --prefix ui dev:web",
@@ -19,7 +18,7 @@
   "app": {
     "windows": [
       {
-        "title": "XDownload v2.8.0",
+        "title": "XDownload",
         "width": 960,
         "height": 680,
         "resizable": true,

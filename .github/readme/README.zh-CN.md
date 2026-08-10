@@ -47,7 +47,7 @@
 
 从 [Releases](https://github.com/MuZiCul/XDownload/releases) 下载最新安装包。
 
-- **Windows**: `XDownload_2.8.0_x64-setup.exe` (NSIS) / `.msi`
+- **Windows**: `XDownload_2.8.1_x64-setup.exe` (NSIS) / `.msi`
 
 首次启动会自动下载 yt-dlp + ffmpeg，也可以手动放入 `bin/` 目录。
 

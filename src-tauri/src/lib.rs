@@ -201,6 +201,7 @@ pub fn run() {
             commands::bootstrap::open_file_path,
             commands::settings::get_privacy_mode,
             commands::settings::set_privacy_mode,
+            commands::settings::get_version,
             commands::bootstrap::quit_app,
             commands::bootstrap::get_uninstall_info,
             commands::bootstrap::uninstall_app,
@@ -215,6 +216,12 @@ pub fn run() {
             commands::history::clear_download_history,
         ])
         .setup(move |app| {
+            // 窗口标题带上版本号（版本号唯一数据源 = Cargo.toml）。
+            if let Some(win) = app.get_webview_window("main") {
+                let title = format!("XDownload v{}", app.package_info().version);
+                let _ = win.set_title(&title);
+            }
+
             // System tray icon + context menu.
             tray::init(app)?;
 

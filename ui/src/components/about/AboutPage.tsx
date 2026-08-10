@@ -1,12 +1,18 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Github, RefreshCw } from "lucide-react";
-import { checkUpdate } from "../../lib/bindings";
+import { checkUpdate, getVersion } from "../../lib/bindings";
 import { toast } from "sonner";
 import { useI18n } from "../../lib/i18n";
 
 export default function AboutPage() {
   const { t } = useI18n();
   const [checking, setChecking] = useState(false);
+  const [version, setVersion] = useState("");
+
+  // 版本号动态获取（数据源：Cargo.toml）。
+  useEffect(() => {
+    getVersion().then(setVersion).catch(() => {});
+  }, []);
 
   const handleCheckUpdate = async () => {
     if (checking) return;
@@ -51,7 +57,7 @@ export default function AboutPage() {
 
           {/* Version + check update button */}
           <div className="flex items-center justify-center gap-2 mb-2">
-            <p className="text-sm text-gray-500">v2.8.0</p>
+            <p className="text-sm text-gray-500">{version ? `v${version}` : ""}</p>
             <button
               className="inline-flex items-center gap-1 text-[11px] text-blue-500 hover:text-blue-600 hover:underline disabled:text-gray-300 disabled:no-underline transition-colors"
               onClick={handleCheckUpdate}
