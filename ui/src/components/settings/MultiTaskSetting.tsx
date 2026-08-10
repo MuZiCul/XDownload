@@ -48,6 +48,11 @@ export default function MultiTaskSetting({
 }: Props) {
   const { t } = useI18n();
   const [saving, setSaving] = useState(false);
+  // 下拉框的当前模式：预设档位 or 自定义。独立的模式状态（而非由 rateLimit
+  // 值推断），避免"自定义值恰好等于某预设档位"时模式错乱。
+  const [mode, setMode] = useState<"preset" | "custom">(() =>
+    RATE_LIMIT_PRESETS.some((p) => p.value === rateLimit) ? "preset" : "custom"
+  );
   const [committed, setCommitted] = useState({
     concurrency,
     retryCount,
@@ -60,13 +65,9 @@ export default function MultiTaskSetting({
     queuePersist !== committed.queuePersist ||
     rateLimit !== committed.rateLimit;
 
-  // 当前是否命中预设档位（含"不限速"）；否则视为自定义值。
-  const isPreset = RATE_LIMIT_PRESETS.some((p) => p.value === rateLimit);
-  const presetValue = isPreset ? rateLimit : "custom";
-
   const handleSave = async () => {
     // 保存前校验自定义限速值（预设档位永远合法）；非法则提示并回滚，不落盘。
-    if (presetValue === "custom" && rateLimit !== "" && !RATE_LIMIT_RE.test(rateLimit)) {
+    if (mode === "custom" && rateLimit !== "" && !RATE_LIMIT_RE.test(rateLimit)) {
       toast.error(t("multitask.invalidRate"));
       onChange({ download_rate_limit: committed.rateLimit });
       return;
@@ -132,13 +133,17 @@ export default function MultiTaskSetting({
         <label className="flex items-center gap-2 text-xs text-zinc-600">
           {t("multitask.rateLimit")}
           <select
-            value={presetValue}
+            value={mode === "custom" ? "custom" : rateLimit}
             onChange={(e) => {
               const v = e.target.value;
               if (v === "custom") {
-                // 进入自定义：保留当前值，让输入框接管
-                onChange({ download_rate_limit: rateLimit || "1M" });
+                setMode("custom");
+                // 进入自定义：若无当前值，给一个合法默认让输入框有内容可编辑。
+                if (rateLimit === "" || RATE_LIMIT_PRESETS.some((p) => p.value === rateLimit)) {
+                  onChange({ download_rate_limit: "2M" });
+                }
               } else {
+                setMode("preset");
                 onChange({ download_rate_limit: v });
               }
             }}
@@ -154,14 +159,14 @@ export default function MultiTaskSetting({
             <option value="custom">{t("multitask.custom")}</option>
           </select>
         </label>
-        {presetValue === "custom" && (
+        {mode === "custom" && (
           <input
             type="text"
             value={rateLimit}
             onChange={(e) =>
               onChange({ download_rate_limit: sanitizeRateLimitInput(e.target.value) })
             }
-            placeholder="1M"
+            placeholder="2M"
             className="text-xs border rounded px-2 py-1 w-20"
           />
         )}

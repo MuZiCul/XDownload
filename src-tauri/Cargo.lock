@@ -6337,7 +6337,7 @@ dependencies = [
 
 [[package]]
 name = "xdownload"
-version = "2.8.4"
+version = "2.8.5"
 dependencies = [
  "anyhow",
  "chrono",
