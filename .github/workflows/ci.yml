@@ -1,0 +1,60 @@
+name: CI
+
+# 测试门禁：push 到任意分支 + PR 时运行后端单测、前端类型检查与前端单测，
+# 防止坏代码进入发布流程（release.yml 只在打 v* tag 时触发构建发布）。
+on:
+  push:
+    branches-ignore:
+      - "dependabot/**"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ---------- 前端：类型检查 + 单测 ----------
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install pnpm
+        shell: pwsh
+        run: npm install -g pnpm
+
+      - name: Install UI dependencies
+        working-directory: ui
+        shell: pwsh
+        run: pnpm install --frozen-lockfile
+
+      - name: TypeScript type check
+        working-directory: ui
+        shell: pwsh
+        run: pnpm typecheck
+
+      - name: Frontend unit tests (vitest)
+        working-directory: ui
+        shell: pwsh
+        run: pnpm test
+
+      # ---------- 后端：Rust 单测 ----------
+      - name: Setup Rust (MSVC)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Rust unit tests (cargo test)
+        working-directory: src-tauri
+        shell: pwsh
+        run: cargo test --lib

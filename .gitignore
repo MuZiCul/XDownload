@@ -4,7 +4,6 @@
 
 # Project exclude paths
 /node_modules/
-/src-tauri/target/
 /src-tauri/downloads/
 /src-tauri/config/
 /bin/

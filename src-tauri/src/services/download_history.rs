@@ -287,3 +287,70 @@ impl DownloadHistory {
         p.with_file_name(new_name).to_string_lossy().to_string()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sanitize_removes_windows_illegal_chars() {
+        // 注意：Windows 上 PathBuf 会把 `:` 当作盘符前缀、`\` 当作路径分隔符，
+        // 因此这里用其它非法字符（* ? " < > |）验证清洗逻辑。
+        assert_eq!(
+            DownloadHistory::sanitize_filename(r#"a*b*c?d"e<f>g|h.mp4"#),
+            "abcdefgh.mp4"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_collapses_spaces() {
+        assert_eq!(
+            DownloadHistory::sanitize_filename("hello   world  .mp4"),
+            "hello world .mp4"
+        );
+        assert_eq!(
+            DownloadHistory::sanitize_filename("a    b.mp4"),
+            "a b.mp4"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_keeps_chinese_and_extension() {
+        assert_eq!(
+            DownloadHistory::sanitize_filename("我的 视频 (官方).mp4"),
+            "我的 视频 (官方).mp4"
+        );
+        // `|`（Windows 非法字符）被移除，扩展名保留。
+        assert_eq!(
+            DownloadHistory::sanitize_filename("视频|剪辑.重制.mp4"),
+            "视频剪辑.重制.mp4"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_keeps_valid_name_unchanged() {
+        let name = "simple-name_1#+.mp4";
+        assert_eq!(DownloadHistory::sanitize_filename(name), name);
+    }
+
+    #[test]
+    fn test_sanitize_empty_result_returns_original() {
+        assert_eq!(DownloadHistory::sanitize_filename(r#"::**??.mp4"#), r#"::**??.mp4"#);
+    }
+
+    #[test]
+    fn test_sanitize_collapses_spaces_without_extension() {
+        assert_eq!(
+            DownloadHistory::sanitize_filename("file  name"),
+            "file name"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_path_preserves_directories() {
+        assert_eq!(
+            DownloadHistory::sanitize_filename(r#"D:\Downloads\a b:c.mp4"#),
+            r#"D:\Downloads\a bc.mp4"#
+        );
+    }
+}

@@ -165,3 +165,99 @@ fn parse_long_safe(s: &str) -> i64 {
     }
     0
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_stderr_progress() {
+        let p = parse_progress_line("[download]  50.0% of ~10.0MiB at  1.5MiB/s ETA 00:05")
+            .expect("should parse");
+        assert_eq!(p.percent, "50.0%");
+        assert_eq!(p.speed, "1.5MiB/s");
+        assert_eq!(p.eta, "00:05");
+        assert_eq!(p.status, "downloading");
+        assert!(p.stage.is_empty());
+    }
+
+    #[test]
+    fn test_complete_line() {
+        let p = parse_progress_line("[download] 100% of 10.0MiB in 00:05 at 2.0MiB/s")
+            .expect("should parse");
+        assert_eq!(p.percent, "100%");
+        assert_eq!(p.status, "finished");
+        assert_eq!(p.eta, "00:05");
+        assert_eq!(p.speed, "2.0MiB/s");
+    }
+
+    #[test]
+    fn test_postprocess_stages() {
+        let merger = parse_progress_line("[Merger] Merging formats into \"xxx.mp4\"")
+            .expect("should parse");
+        assert_eq!(merger.status, "merging");
+        assert_eq!(merger.stage, "merge");
+
+        let extract = parse_progress_line("[ExtractAudio] Destination: xxx.mp3")
+            .expect("should parse");
+        assert_eq!(extract.status, "postprocess");
+        assert_eq!(extract.stage, "merge");
+    }
+
+    #[test]
+    fn test_pipe_template_format() {
+        let p = parse_progress_line(
+            "download:1234567|4567890|1.5MiB/s|00:05|45.2%|downloading|none|h264",
+        )
+        .expect("should parse");
+        assert_eq!(p.downloaded_bytes, 1234567);
+        assert_eq!(p.total_bytes, 4567890);
+        assert_eq!(p.speed, "1.5MiB/s");
+        assert_eq!(p.eta, "00:05");
+        assert_eq!(p.percent, "45.2%");
+        assert_eq!(p.status, "downloading");
+        // video-only stream → video stage
+        assert_eq!(p.stage, "video");
+    }
+
+    #[test]
+    fn test_pipe_audio_stage() {
+        let p = parse_progress_line("download:100|200|1MiB/s|00:01|50%|downloading|mp4a|none")
+            .expect("should parse");
+        assert_eq!(p.stage, "audio");
+    }
+
+    #[test]
+    fn test_backward_compat_pipe() {
+        let p = parse_progress_line("100|200|1MiB/s|00:01|50%|downloading")
+            .expect("should parse");
+        assert_eq!(p.downloaded_bytes, 100);
+        assert_eq!(p.percent, "50%");
+    }
+
+    #[test]
+    fn test_stage_from_codecs() {
+        assert_eq!(stage_from_codecs("none", "h264"), "video");
+        assert_eq!(stage_from_codecs("mp4a", "none"), "audio");
+        assert_eq!(stage_from_codecs("mp4a", "h264"), "video");
+        assert_eq!(stage_from_codecs("", ""), "");
+        assert_eq!(stage_from_codecs("mp4a", "none"), "audio");
+    }
+
+    #[test]
+    fn test_parse_long_safe() {
+        assert_eq!(parse_long_safe("1234"), 1234);
+        assert_eq!(parse_long_safe("12.9"), 12);
+        assert_eq!(parse_long_safe(""), 0);
+        assert_eq!(parse_long_safe("NA"), 0);
+        assert_eq!(parse_long_safe("unknown"), 0);
+        assert_eq!(parse_long_safe("abc"), 0);
+    }
+
+    #[test]
+    fn test_unparseable_lines_return_none() {
+        assert!(parse_progress_line("[download] nothing useful here").is_none());
+        assert!(parse_progress_line("").is_none());
+        assert!(parse_progress_line("hello world").is_none());
+    }
+}

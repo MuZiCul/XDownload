@@ -24,7 +24,7 @@ echo.
 echo ========================================
 echo Done! Output:
 echo ========================================
-dir /b /s "%ROOT%src-tauri\target\release\bundle\nsis\*.exe" 2>nul
-dir /b /s "%ROOT%src-tauri\target\release\bundle\msi\*.msi" 2>nul
+dir /b /s "%ROOT%target\release\bundle\nsis\*.exe" 2>nul
+dir /b /s "%ROOT%target\release\bundle\msi\*.msi" 2>nul
 echo.
 pause
