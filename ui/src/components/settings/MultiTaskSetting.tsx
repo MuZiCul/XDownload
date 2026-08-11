@@ -31,19 +31,22 @@ type Props = {
   queuePersist: boolean;
   /** yt-dlp --limit-rate 值（如 "1M"）；空串 = 不限速。 */
   rateLimit: string;
+  /** 断点续传开关：开启时任务面板隐藏暂停/开始按钮。 */
+  resumeSupport: boolean;
   onChange: (
     patch: Partial<
-      Pick<AppSettings, "concurrency" | "retry_count" | "queue_persist" | "download_rate_limit">
+      Pick<AppSettings, "concurrency" | "retry_count" | "queue_persist" | "download_rate_limit" | "resume_support">
     >
   ) => void;
 };
 
-/** 多任务设置卡片：并发数 / 失败重试 / 队列持久化 / 下载限速（同一卡片，单独保存）。 */
+/** 多任务设置卡片：并发数 / 失败重试 / 队列持久化 / 下载限速 / 断点续传（同一卡片，单独保存）。 */
 export default function MultiTaskSetting({
   concurrency,
   retryCount,
   queuePersist,
   rateLimit,
+  resumeSupport,
   onChange,
 }: Props) {
   const { t } = useI18n();
@@ -58,12 +61,14 @@ export default function MultiTaskSetting({
     retryCount,
     queuePersist,
     rateLimit,
+    resumeSupport,
   });
   const changed =
     concurrency !== committed.concurrency ||
     retryCount !== committed.retryCount ||
     queuePersist !== committed.queuePersist ||
-    rateLimit !== committed.rateLimit;
+    rateLimit !== committed.rateLimit ||
+    resumeSupport !== committed.resumeSupport;
 
   const handleSave = async () => {
     // 保存前校验自定义限速值（预设档位永远合法）；非法则提示并回滚，不落盘。
@@ -79,8 +84,9 @@ export default function MultiTaskSetting({
       cfg.retry_count = retryCount;
       cfg.queue_persist = queuePersist;
       cfg.download_rate_limit = rateLimit || "";
+      cfg.resume_support = resumeSupport;
       await saveSettings(cfg);
-      setCommitted({ concurrency, retryCount, queuePersist, rateLimit });
+      setCommitted({ concurrency, retryCount, queuePersist, rateLimit, resumeSupport });
       toast.success(t("multitask.saved"));
     } catch (err: any) {
       toast.error(t("common.saveFail", { err }));
@@ -127,6 +133,15 @@ export default function MultiTaskSetting({
             type="checkbox"
             checked={queuePersist}
             onChange={(e) => onChange({ queue_persist: e.target.checked })}
+            className="accent-blue-600"
+          />
+        </label>
+        <label className="flex items-center gap-2 text-xs text-zinc-600">
+          {t("multitask.resumeSupport")}
+          <input
+            type="checkbox"
+            checked={resumeSupport}
+            onChange={(e) => onChange({ resume_support: e.target.checked })}
             className="accent-blue-600"
           />
         </label>

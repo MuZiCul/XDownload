@@ -41,7 +41,7 @@ export default function UrlBar({ url, onUrlChange, onFetch, isLoading }: Props) 
   };
 
   return (
-    <div className="flex items-center gap-2 mb-3 bg-white border border-zinc-200 rounded-xl px-4 py-2.5 shadow-sm">
+    <div className="flex items-center gap-2 mb-3 bg-white border border-zinc-200 rounded-xl px-4 py-2.5 shadow-[1px_2px_6px_rgba(0,0,0,0.12)] transition-shadow hover:shadow-[2px_3px_10px_rgba(59,130,246,0.35)]">
       <input
         type="text"
         value={url}

@@ -4,8 +4,78 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>XDownload</title>
+    <style>
+      /* 启动画面：窗口一出现即渲染，React 挂载完成后淡出移除（见 main.tsx）。
+         不放在 #root 内——React 18 createRoot 会清空容器子节点。 */
+      #boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        background: linear-gradient(180deg, #ffffff 0%, #eef2f8 100%);
+        font-family: "Inter", -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+      }
+      #boot-splash .boot-logo {
+        width: 76px;
+        height: 76px;
+        border-radius: 50%;
+        background: #111827;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 12px 32px rgba(17, 24, 39, 0.35);
+      }
+      #boot-splash .boot-title {
+        font-size: 22px;
+        font-weight: 700;
+        color: #1e293b;
+        letter-spacing: 0.5px;
+      }
+      #boot-splash .boot-status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: #64748b;
+        font-size: 13px;
+      }
+      #boot-splash .boot-spinner {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        border: 2px solid rgba(100, 116, 139, 0.25);
+        border-top-color: #2563eb;
+        animation: boot-spin 0.9s linear infinite;
+      }
+      @keyframes boot-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      #boot-splash.boot-splash-hide {
+        opacity: 0;
+        transition: opacity 0.3s ease;
+        pointer-events: none;
+      }
+    </style>
   </head>
   <body class="bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100">
+    <div id="boot-splash">
+      <div class="boot-logo">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M12 3v10m0 0 4-4m-4 4-4-4" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </div>
+      <div class="boot-title">XDownload</div>
+      <div class="boot-status">
+        <div class="boot-spinner"></div>
+        <span>正在启动…</span>
+      </div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

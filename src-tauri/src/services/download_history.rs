@@ -10,6 +10,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use tracing::{debug, error, info, warn};
 
 /// Outcome of a download record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,21 +82,61 @@ impl DownloadHistory {
     }
 
     fn load_data() -> DownloadHistoryData {
-        match std::fs::read_to_string(Self::history_file()) {
+        let file = Self::history_file();
+        match std::fs::read_to_string(&file) {
             Ok(json) => {
                 // Tolerate a UTF-8 BOM (some editors / scripts write one), which
                 // would otherwise make serde_json fail and silently clear history.
                 let json = json.trim_start_matches('\u{FEFF}');
-                serde_json::from_str(json).unwrap_or_default()
+                match serde_json::from_str::<DownloadHistoryData>(json) {
+                    Ok(data) => {
+                        debug!(
+                            "loaded download history from {} ({} records)",
+                            file.display(),
+                            data.records.len()
+                        );
+                        data
+                    }
+                    Err(e) => {
+                        warn!("failed to parse download history {}: {}", file.display(), e);
+                        DownloadHistoryData::default()
+                    }
+                }
             }
-            Err(_) => DownloadHistoryData::default(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                debug!("download history file {} does not exist yet", file.display());
+                DownloadHistoryData::default()
+            }
+            Err(e) => {
+                warn!("failed to read download history {}: {}", file.display(), e);
+                DownloadHistoryData::default()
+            }
         }
     }
 
     fn save_data(data: &DownloadHistoryData) -> Result<()> {
         AppHome::ensure_config_dir().context("failed to create config dir")?;
-        let json = serde_json::to_string_pretty(data).context("failed to serialize history")?;
-        std::fs::write(Self::history_file(), json).context("failed to write history file")
+        let json = match serde_json::to_string_pretty(data) {
+            Ok(j) => j,
+            Err(e) => {
+                error!("failed to serialize download history: {}", e);
+                return Err(e).context("failed to serialize history");
+            }
+        };
+        match std::fs::write(Self::history_file(), &json) {
+            Ok(_) => {}
+            Err(e) => {
+                error!("failed to write download history {}: {}", Self::history_file().display(), e);
+                return Err(e).context("failed to write history file");
+            }
+        }
+        debug!(
+            "saved download history {} ({} records, {} bytes)",
+            Self::history_file().display(),
+            data.records.len(),
+            json.len()
+        );
+        Ok(())
     }
 
     /// Look up a download record by video id (does not check the file exists).
@@ -129,13 +170,19 @@ impl DownloadHistory {
 
     /// Remove a single record by video id.
     pub fn remove(id: &str) -> Result<()> {
+        info!("removing download history record: id={}", id);
         let mut data = Self::load_data();
-        data.records.remove(id);
-        Self::save_data(&data)
+        let existed = data.records.remove(id).is_some();
+        Self::save_data(&data)?;
+        if !existed {
+            warn!("download history record not found: id={}", id);
+        }
+        Ok(())
     }
 
     /// Remove all download records.
     pub fn clear() -> Result<()> {
+        info!("clearing all download history");
         Self::save_data(&DownloadHistoryData::default())
     }
 
@@ -154,6 +201,7 @@ impl DownloadHistory {
         file_path: Option<String>,
         file_paths: Vec<String>,
     ) -> Result<()> {
+        info!("recording download success: id={}, file_count={}", id, file_paths.len());
         let mut data = Self::load_data();
         data.records.insert(
             id.to_string(),
@@ -203,6 +251,7 @@ impl DownloadHistory {
         error: String,
         attempts: u8,
     ) -> Result<()> {
+        info!("recording download failure: id={}, attempts={}", id, attempts);
         let mut data = Self::load_data();
         data.records.insert(
             id.to_string(),
