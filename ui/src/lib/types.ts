@@ -107,6 +107,8 @@ export interface AppSettings {
   hls_concurrent_fragments?: number;
   /** HLS/DASH 分片失败重试次数（yt-dlp --fragment-retries）。 */
   hls_fragment_retries?: number;
+  /** 断点续传开关（默认关）：开启时任务面板隐藏暂停/开始按钮。 */
+  resume_support?: boolean;
 }
 
 // --- Proxy ---

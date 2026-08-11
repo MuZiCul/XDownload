@@ -4,6 +4,7 @@ pub mod cookies;
 pub mod disclaimer;
 pub mod download_history;
 pub mod i18n;
+pub mod log_web;
 pub mod network;
 pub mod proxy;
 

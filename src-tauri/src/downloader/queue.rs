@@ -17,6 +17,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
+use tracing::{debug, info, warn};
 
 static TASK_SEQ: AtomicUsize = AtomicUsize::new(0);
 
@@ -456,6 +457,9 @@ impl DownloadQueue {
                 .map(|t| t.config.clone());
             st.queued.retain(|t| t.id != task_id);
             st.paused_tasks.retain(|t| t.id != task_id);
+            // running 也要立即移除，否则重新添加同 URL 会被「链接已在队列中」
+            // 拒绝（worker 异步退场前任务一直残留在 running 列表）。
+            st.running.retain(|t| t.id != task_id);
             cfg
         };
         self.downloader.cancel_task(task_id);
@@ -768,8 +772,21 @@ impl DownloadQueue {
             tasks.push(x);
         }
         drop(st);
-        if let Ok(json) = serde_json::to_string_pretty(&tasks) {
-            let _ = std::fs::write(Self::queue_file(), json);
+        match serde_json::to_string_pretty(&tasks) {
+            Ok(json) => match std::fs::write(Self::queue_file(), &json) {
+                Ok(_) => debug!(
+                    "persisted queue to {} ({} tasks, {} bytes)",
+                    Self::queue_file().display(),
+                    tasks.len(),
+                    json.len()
+                ),
+                Err(e) => warn!(
+                    "failed to persist queue to {}: {}",
+                    Self::queue_file().display(),
+                    e
+                ),
+            },
+            Err(e) => warn!("failed to serialize queue for persistence: {}", e),
         }
     }
 
@@ -781,15 +798,35 @@ impl DownloadQueue {
         if !file.exists() {
             return;
         }
-        let tasks: Vec<QueuedTask> = std::fs::read_to_string(&file)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default();
+        let raw = match std::fs::read_to_string(&file) {
+            Ok(s) => s,
+            Err(e) => {
+                warn!("failed to read queue file {}: {}", file.display(), e);
+                let _ = std::fs::remove_file(&file);
+                return;
+            }
+        };
+        let tasks: Vec<QueuedTask> = match serde_json::from_str(&raw) {
+            Ok(t) => t,
+            Err(e) => {
+                warn!(
+                    "failed to parse queue file {} ({} bytes): {}",
+                    file.display(),
+                    raw.len(),
+                    e
+                );
+                let _ = std::fs::remove_file(&file);
+                return;
+            }
+        };
         let _ = std::fs::remove_file(&file);
 
         if tasks.is_empty() {
+            debug!("queue file {} contained no tasks, nothing to restore", file.display());
             return;
         }
+        let mut restored = 0usize;
+        let mut skipped = 0usize;
         {
             let mut st = self.state.lock().unwrap();
             for t in tasks {
@@ -801,8 +838,10 @@ impl DownloadQueue {
                     .chain(st.paused_tasks.iter())
                     .any(|x| x.config.url == t.config.url);
                 if dup {
+                    skipped += 1;
                     continue;
                 }
+                restored += 1;
                 let _ = self.app.emit(
                     "download-queued",
                     serde_json::json!({
@@ -832,6 +871,12 @@ impl DownloadQueue {
                 }
             }
         }
+        info!(
+            "restored {} persisted task(s) from {} (skipped {} duplicate(s))",
+            restored,
+            file.display(),
+            skipped
+        );
         self.pump();
     }
 }

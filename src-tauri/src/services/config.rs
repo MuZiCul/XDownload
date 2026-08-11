@@ -2,6 +2,7 @@ use crate::models::config::AppSettings;
 use crate::utils::app_home::AppHome;
 use anyhow::{Context, Result};
 use std::path::PathBuf;
+use tracing::{debug, error, info, warn};
 
 /// Persistent configuration manager.
 ///
@@ -62,6 +63,10 @@ impl ConfigManager {
                 // First run — seed default.json with factory defaults
                 let defaults = AppSettings::default();
                 Self::ensure_dir().ok();
+                info!(
+                    "no default config, seeding {} with factory defaults",
+                    Self::default_file().display()
+                );
                 Self::write_json(&Self::default_file(), &defaults).ok();
                 defaults
             }
@@ -71,23 +76,55 @@ impl ConfigManager {
     /// Save current settings as the new default config.
     pub fn save_as_default(settings: &AppSettings) -> Result<()> {
         Self::ensure_dir()?;
+        info!(
+            "saving current settings as default config → {}",
+            Self::default_file().display()
+        );
         Self::write_json(&Self::default_file(), settings)
     }
 
     // ==================== Helpers ====================
 
     fn read_json(path: &std::path::Path) -> Result<AppSettings> {
-        let json = std::fs::read_to_string(path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
-        serde_json::from_str(&json)
-            .with_context(|| format!("failed to parse {}", path.display()))
+        let json = match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                debug!("config file {} does not exist yet, using defaults", path.display());
+                return Err(anyhow::anyhow!(e).context(format!("config file not found: {}", path.display())));
+            }
+            Err(e) => {
+                warn!("failed to read config {}: {}", path.display(), e);
+                return Err(anyhow::anyhow!(e).context(format!("failed to read {}", path.display())));
+            }
+        };
+        let cfg = match serde_json::from_str(&json) {
+            Ok(c) => c,
+            Err(e) => {
+                warn!("failed to parse config {}: {}", path.display(), e);
+                return Err(anyhow::anyhow!(e).context(format!("failed to parse {}", path.display())));
+            }
+        };
+        debug!("read config {} ({} bytes)", path.display(), json.len());
+        Ok(cfg)
     }
 
     fn write_json(path: &std::path::Path, settings: &AppSettings) -> Result<()> {
-        let json = serde_json::to_string_pretty(settings)
-            .context("failed to serialize settings")?;
-        std::fs::write(path, json)
-            .with_context(|| format!("failed to write {}", path.display()))
+        let json = match serde_json::to_string_pretty(settings) {
+            Ok(j) => j,
+            Err(e) => {
+                error!("failed to serialize settings: {}", e);
+                return Err(e).context("failed to serialize settings");
+            }
+        };
+        match std::fs::write(path, &json) {
+            Ok(_) => {}
+            Err(e) => {
+                error!("failed to write config {}: {}", path.display(), e);
+                return Err(e).context(format!("failed to write {}", path.display()));
+            }
+        }
+        debug!("wrote config {} ({} bytes)", path.display(), json.len());
+        Ok(())
     }
 
     /// Merge the given settings into the active config (read-modify-write).
@@ -100,6 +137,7 @@ impl ConfigManager {
     // ==================== Proxy ====================
 
     pub fn save_proxy(host: &str, port: u32, scheme: &str) -> Result<()> {
+        info!("saving proxy config: {}://{}:{}", scheme, host, port);
         Self::merge_and_save(|cfg| {
             cfg.proxy_host = Some(host.to_string());
             cfg.proxy_port = Some(port);
@@ -108,6 +146,7 @@ impl ConfigManager {
     }
 
     pub fn remove_proxy() -> Result<()> {
+        info!("removing proxy config");
         Self::merge_and_save(|cfg| {
             cfg.proxy_host = None;
             cfg.proxy_port = None;
@@ -138,6 +177,7 @@ impl ConfigManager {
     // ==================== Cookies ====================
 
     pub fn save_cookies(browser: Option<&str>, cookies_file: Option<&str>) -> Result<()> {
+        info!("saving cookies config: browser={:?}, file={:?}", browser, cookies_file);
         Self::merge_and_save(|cfg| {
             if let Some(b) = browser {
                 if !b.is_empty() {
@@ -156,6 +196,7 @@ impl ConfigManager {
     }
 
     pub fn clear_cookies() -> Result<()> {
+        info!("clearing cookies config");
         Self::merge_and_save(|cfg| {
             cfg.cookies_from_browser = None;
             cfg.cookies_file = None;
@@ -176,6 +217,7 @@ impl ConfigManager {
     // ==================== Language ====================
 
     pub fn save_lang(lang: &str) -> Result<()> {
+        info!("saving language preference: {}", lang);
         Self::merge_and_save(|cfg| {
             cfg.lang = Some(lang.to_string());
         })
@@ -188,6 +230,7 @@ impl ConfigManager {
     // ==================== Privacy Mode ====================
 
     pub fn save_privacy_mode(enabled: bool) -> Result<()> {
+        info!("saving privacy mode: {}", enabled);
         Self::merge_and_save(|cfg| {
             cfg.privacy_mode = Some(enabled);
         })
@@ -217,6 +260,7 @@ impl ConfigManager {
     // ==================== Download Dir ====================
 
     pub fn save_download_dir(dir: &str) -> Result<()> {
+        info!("saving download directory: {}", if dir.is_empty() { "(reset to default)" } else { dir });
         Self::merge_and_save(|cfg| {
             if dir.is_empty() {
                 cfg.download_dir = None;

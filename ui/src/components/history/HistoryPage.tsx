@@ -11,6 +11,7 @@ import {
   ListPlus,
   Square,
   ChevronUp,
+  ChevronDown,
   ArrowUpToLine,
 } from "lucide-react";
 import { openUrl, openPath } from "@tauri-apps/plugin-opener";
@@ -81,11 +82,15 @@ export default function HistoryPage({ onRedownload }: Props) {
   const [items, setItems] = useState<DownloadHistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [batchOpen, setBatchOpen] = useState(false);
+  // 断点续传开关（默认关）：开启时隐藏暂停/开始按钮。
+  const [resumeSupport, setResumeSupport] = useState(false);
   // 历史记录删除确认：null = 未打开，否则为待删记录 id 与文件路径。
   const [deleteTarget, setDeleteTarget] = useState<{
     id: string;
     filePath: string | null;
   } | null>(null);
+  // 历史失败卡片展开的错误详情记录 id（null = 全部收起）。
+  const [expandedErrId, setExpandedErrId] = useState<string | null>(null);
   // 批量入队时检测到「已下载」的链接，等待用户逐条处理（重新下载/取消）。
   const [duplicates, setDuplicates] = useState<DuplicateItem[]>([]);
   // 下载完成板块排序方式。
@@ -187,6 +192,13 @@ export default function HistoryPage({ onRedownload }: Props) {
 
   useEffect(() => {
     load();
+  }, []);
+
+  // 断点续传开关：读取设置控制暂停/开始按钮显隐。
+  useEffect(() => {
+    loadSettings()
+      .then((s) => setResumeSupport(s.resume_support ?? false))
+      .catch(() => {});
   }, []);
 
   // 下载完成板块：任务终态后自动刷新历史（配合 download-finished 移除活跃任务）。
@@ -371,24 +383,35 @@ export default function HistoryPage({ onRedownload }: Props) {
         <div className="flex items-center gap-1.5">
           {queueTasks.length > 0 && (
             <>
-              {queueTasks.some((t) => t.status === "downloading") ? (
-                <button
-                  className="btn px-2.5 py-1 text-xs font-semibold flex items-center gap-1"
-                  onClick={pauseAllGlobal}
-                  title={t("tasks.pauseAll")}
+              {resumeSupport ? (
+                <span
+                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold border border-emerald-200 bg-emerald-50 text-emerald-700 rounded-xl"
+                  title={t("tasks.resumeActive")}
                 >
-                  <Pause size={12} />
-                  {t("tasks.pauseAll")}
-                </button>
+                  {t("tasks.resumeActive")}
+                </span>
               ) : (
-                <button
-                  className="btn px-2.5 py-1 text-xs font-semibold flex items-center gap-1"
-                  onClick={resumeAllGlobal}
-                  title={t("tasks.startAll")}
-                >
-                  <Play size={12} />
-                  {t("tasks.startAll")}
-                </button>
+                <>
+                  {queueTasks.some((t) => t.status === "downloading") ? (
+                    <button
+                      className="btn px-2.5 py-1 text-xs font-semibold flex items-center gap-1"
+                      onClick={pauseAllGlobal}
+                      title={t("tasks.pauseAll")}
+                    >
+                      <Pause size={12} />
+                      {t("tasks.pauseAll")}
+                    </button>
+                  ) : (
+                    <button
+                      className="btn px-2.5 py-1 text-xs font-semibold flex items-center gap-1"
+                      onClick={resumeAllGlobal}
+                      title={t("tasks.startAll")}
+                    >
+                      <Play size={12} />
+                      {t("tasks.startAll")}
+                    </button>
+                  )}
+                </>
               )}
               <button
                 className="btn px-2.5 py-1 text-xs font-semibold flex items-center gap-1 text-red-600"
@@ -421,6 +444,7 @@ export default function HistoryPage({ onRedownload }: Props) {
               <TaskCard
                 key={task.id}
                 task={task}
+                hidePause={resumeSupport}
                 isFirst={firstSortableId === task.id}
                 onMoveUp={() => {
                   // 按任务自身所在列表（暂停区/排队区各自内部）计算索引，
@@ -546,20 +570,42 @@ export default function HistoryPage({ onRedownload }: Props) {
 
                   <div className="flex items-center gap-2 flex-wrap">
                     {item.status === "failed" ? (
-                      <div
-                        className="inline-flex items-center gap-1 text-[11px] font-medium text-red-700 bg-red-50 border border-red-200 rounded-md px-2 py-1"
-                        title={
-                          item.error
-                            ? `${t("history.failed")}：${item.error}`
-                            : t("history.failed")
-                        }
-                      >
-                        {t("history.failed")}
-                        {item.error && <span className="max-w-[180px] truncate">{item.error}</span>}
-                        <span className="text-red-400">
-                          {t("history.attempts", { count: item.attempts })}
-                        </span>
-                      </div>
+                      <>
+                        <button
+                          className="inline-flex items-center gap-1 text-[11px] font-medium text-red-700 bg-red-50 border border-red-200 rounded-md px-2 py-1 hover:bg-red-100"
+                          onClick={() =>
+                            setExpandedErrId((prev) =>
+                              prev === item.id ? null : item.id
+                            )
+                          }
+                          title={
+                            item.error
+                              ? `${t("history.failed")}：${item.error}`
+                              : t("history.failed")
+                          }
+                        >
+                          {t("history.failed")}
+                          {item.error && (
+                            <span className="max-w-[180px] truncate">
+                              {item.error}
+                            </span>
+                          )}
+                          <span className="text-red-400">
+                            {t("history.attempts", { count: item.attempts })}
+                          </span>
+                          {item.error &&
+                            (expandedErrId === item.id ? (
+                              <ChevronUp size={11} />
+                            ) : (
+                              <ChevronDown size={11} />
+                            ))}
+                        </button>
+                        {expandedErrId === item.id && item.error && (
+                          <pre className="w-full text-[11px] text-red-600 bg-red-50 border border-red-100 rounded-md px-2 py-1.5 whitespace-pre-wrap break-all select-text max-h-40 overflow-auto">
+                            {item.error}
+                          </pre>
+                        )}
+                      </>
                     ) : (
                       <div className="inline-flex items-center gap-1 text-[10px] font-medium text-zinc-600 bg-zinc-50 border border-zinc-200 rounded-md px-1.5 py-0.5">
                         {formatDateTime(item.downloaded_at)}
@@ -758,6 +804,7 @@ function getRecentBucket(
 function TaskCard({
   task,
   isFirst,
+  hidePause,
   onMoveUp,
   onMoveTop,
   onTitleMenu,
@@ -765,6 +812,8 @@ function TaskCard({
   task: DownloadTask;
   /** 该任务是否为可排序列表（queued+paused）中的第一个。 */
   isFirst?: boolean;
+  /** 断点续传开启时隐藏暂停/继续按钮。 */
+  hidePause?: boolean;
   onMoveUp?: () => void;
   onMoveTop?: () => void;
   onTitleMenu: (
@@ -778,6 +827,8 @@ function TaskCard({
   const info = task.info;
   const title = privacy ? "***" : info?.title || task.title || task.url;
   const openLink = task.url || null;
+  // 信息获取失败的错误详情展开/收起。
+  const [errOpen, setErrOpen] = useState(false);
 
   const statusBadge = () => {
     // 信息获取失败的任务：无论 paused/queued 都优先显示失败徽标。
@@ -935,31 +986,32 @@ function TaskCard({
                 </button>
               </>
             )}
-            {task.infoFailed ? (
-              <button
-                className="p-1 rounded hover:bg-zinc-100 text-zinc-400 hover:text-emerald-600"
-                onClick={() => refetchTaskInfoGlobal(task.id)}
-                title={t("tasks.retryInfo")}
-              >
-                <RefreshCw size={13} />
-              </button>
-            ) : task.status === "paused" ? (
-              <button
-                className="p-1 rounded hover:bg-zinc-100 text-zinc-400 hover:text-emerald-600"
-                onClick={() => resumeQueueTaskGlobal(task.id)}
-                title={t("batch.resumeTask")}
-              >
-                <Play size={13} />
-              </button>
-            ) : task.status === "queued" || task.status === "downloading" ? (
-              <button
-                className="p-1 rounded hover:bg-zinc-100 text-zinc-400 hover:text-amber-600"
-                onClick={() => pauseQueueTaskGlobal(task.id)}
-                title={t("batch.pauseTask")}
-              >
-                <Pause size={13} />
-              </button>
-            ) : null}
+            {!hidePause &&
+              (task.infoFailed ? (
+                <button
+                  className="p-1 rounded hover:bg-zinc-100 text-zinc-400 hover:text-emerald-600"
+                  onClick={() => refetchTaskInfoGlobal(task.id)}
+                  title={t("tasks.retryInfo")}
+                >
+                  <RefreshCw size={13} />
+                </button>
+              ) : task.status === "paused" ? (
+                <button
+                  className="p-1 rounded hover:bg-zinc-100 text-zinc-400 hover:text-emerald-600"
+                  onClick={() => resumeQueueTaskGlobal(task.id)}
+                  title={t("batch.resumeTask")}
+                >
+                  <Play size={13} />
+                </button>
+              ) : task.status === "queued" || task.status === "downloading" ? (
+                <button
+                  className="p-1 rounded hover:bg-zinc-100 text-zinc-400 hover:text-amber-600"
+                  onClick={() => pauseQueueTaskGlobal(task.id)}
+                  title={t("batch.pauseTask")}
+                >
+                  <Pause size={13} />
+                </button>
+              ) : null)}
             <button
               className="p-1 rounded hover:bg-zinc-100 text-zinc-400 hover:text-zinc-600"
               onClick={() => removeQueueTaskGlobal(task.id)}
@@ -968,6 +1020,25 @@ function TaskCard({
               <X size={13} />
             </button>
           </div>
+          {task.infoFailed && task.error && (
+            <div className="mt-1">
+              <button
+                className="flex items-center gap-1 text-[11px] text-red-500 hover:text-red-700 max-w-full"
+                onClick={() => setErrOpen((v) => !v)}
+                title={errOpen ? t("tasks.errHide") : t("tasks.errShow")}
+              >
+                {errOpen ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+                <span className="truncate">
+                  {errOpen ? t("tasks.errHide") : t("tasks.errShow")}
+                </span>
+              </button>
+              {errOpen && (
+                <pre className="mt-1 text-[11px] text-red-600 bg-red-50 border border-red-100 rounded-md px-2 py-1.5 whitespace-pre-wrap break-all select-text max-h-40 overflow-auto">
+                  {task.error}
+                </pre>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

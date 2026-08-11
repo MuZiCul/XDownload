@@ -13,10 +13,12 @@ use commands::download::DownloaderState;
 use downloader::queue::DownloadQueue;
 use downloader::ytdlp::YtDlpDownloader;
 use models::config::DownloadConfig;
+use std::collections::HashSet;
 use std::fs::{File, OpenOptions};
 use std::io::Write as IoWrite;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
+use std::time::Duration;
 use tauri::{Emitter, Manager};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tracing_subscriber::fmt::time::FormatTime;
@@ -77,7 +79,7 @@ struct LocalTimer;
 
 impl FormatTime for LocalTimer {
     fn format_time(&self, w: &mut Writer<'_>) -> std::fmt::Result {
-        write!(w, "{}", chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z"))
+        write!(w, "{}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"))
     }
 }
 
@@ -238,6 +240,34 @@ pub fn run() {
             // is enabled (re-enqueues and starts draining).
             queue.restore_if_enabled();
 
+            // 深链批量合并 worker：短窗口收集 → 去重 → 并发 fetch → 批量入队。
+            let batcher = DeepLinkBatcher::default();
+            app.manage(batcher.clone());
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    loop {
+                        batcher.notify.notified().await;
+                        // 300ms 窗口：收集窗口期内密集到达的深链，合并成一批。
+                        tokio::time::sleep(Duration::from_millis(300)).await;
+                        let targets: Vec<String> = {
+                            let mut p = batcher.pending.lock().unwrap();
+                            p.drain(..).collect()
+                        };
+                        if targets.is_empty() {
+                            continue;
+                        }
+                        // 同 URL 只入队一次（保留首次出现顺序）。
+                        let mut seen = HashSet::new();
+                        let unique: Vec<String> = targets
+                            .into_iter()
+                            .filter(|t| seen.insert(t.clone()))
+                            .collect();
+                        process_deep_link_batch(&handle, &unique).await;
+                    }
+                });
+            }
+
             // 浏览器扩展深链：xdownload://add?url=<encoded status url>
             // 已运行时由 single-instance 转发 URL 回调；未运行时协议拉起应用，
             // URL 作为命令行参数传入，需用 get_current() 读取（on_open_url 的
@@ -302,7 +332,18 @@ pub fn run() {
         .expect("error while running XDownload");
 }
 
-/// Validate a deep-link URL, then enqueue the target as a download task.
+/// 深链批量合并缓冲：浏览器扩展快速连续点击多个视频时，多条
+/// `xdownload://add?url=` 深链会密集到达。worker 收集一个短窗口内的
+/// URL，去重后并发 fetch、批量入队，并只向前端发一条合并提示。
+#[derive(Clone, Default)]
+struct DeepLinkBatcher {
+    /// 待处理的目标 URL（校验通过后先入缓冲）。
+    pending: Arc<StdMutex<Vec<String>>>,
+    /// 有新的深链到达时唤醒 worker。
+    notify: Arc<tokio::sync::Notify>,
+}
+
+/// Validate a deep-link URL, then hand it to the batch worker for queuing.
 fn handle_deep_link(app: &tauri::AppHandle, raw: &str) {
     let Some(target) = parse_deep_link_url(raw) else {
         tracing::warn!("deep-link: invalid url {}", raw);
@@ -313,26 +354,39 @@ fn handle_deep_link(app: &tauri::AppHandle, raw: &str) {
         return;
     }
     tracing::info!("deep-link: received {}", target);
-    let handle = app.clone();
-    tauri::async_runtime::spawn(async move {
-        if let Some(state) = handle.try_state::<commands::download::DownloaderState>() {
-            // 绝对路径兜底：协议拉起时进程 cwd 可能是 system32，相对路径
-            // "downloads" 会解析到错误位置，必须用安装目录下的 downloads。
-            let output_dir = services::config::ConfigManager::load_download_dir()
-                .unwrap_or_else(|| {
-                    utils::app_home::AppHome::downloads_dir()
-                        .to_string_lossy()
-                        .to_string()
-                });
+    let Some(batcher) = app.try_state::<DeepLinkBatcher>() else {
+        return;
+    };
+    batcher.pending.lock().unwrap().push(target);
+    batcher.notify.notify_one();
+}
+
+/// 批量处理一批深链 URL：并发 fetch 视频信息、逐条入队、合并上报前端。
+async fn process_deep_link_batch(handle: &tauri::AppHandle, targets: &[String]) {
+    let Some(state) = handle.try_state::<commands::download::DownloaderState>() else {
+        return;
+    };
+    // 绝对路径兜底：协议拉起时进程 cwd 可能是 system32，相对路径
+    // "downloads" 会解析到错误位置，必须用安装目录下的 downloads。
+    let output_dir = services::config::ConfigManager::load_download_dir()
+        .unwrap_or_else(|| {
+            utils::app_home::AppHome::downloads_dir()
+                .to_string_lossy()
+                .to_string()
+        });
+    let downloader = state.downloader.clone();
+    let queue = state.queue.clone();
+
+    // 并发 fetch（join_all），显著缩短连续点击多条时的总等待。
+    let results = futures_util::future::join_all(targets.iter().map(|target| {
+        let downloader = downloader.clone();
+        async move {
             // 从 status URL 提取 id 填入 video_id：历史记录以 video_id 为键，
             // 缺失会导致下载完成后不写下载历史。
-            let video_id = commands::download::extract_status_id(&target);
-
-            // 深链来源单独处理：先 fetch 视频信息再入队（与普通 UI 流程一致），
-            // 入队时就把 info 带上，保证任务卡片与下载历史的信息完整。
+            let video_id = commands::download::extract_status_id(target);
             // fetch 失败仍入队（不带 info，下载照常，yt-dlp 下载时会自行解析）。
-            let fetch_result = state.downloader.fetch_video_info(&target).await;
-            let (title, info) = match fetch_result {
+            let fetch = downloader.fetch_video_info(target).await;
+            let (title, info) = match fetch {
                 Ok(info) => {
                     tracing::info!("deep-link: info fetched for {}", target);
                     (info.title.clone(), serde_json::to_value(&info).ok())
@@ -342,49 +396,59 @@ fn handle_deep_link(app: &tauri::AppHandle, raw: &str) {
                     (None, None)
                 }
             };
+            (target.clone(), video_id, title, info)
+        }
+    }))
+    .await;
 
-            let config = DownloadConfig {
-                url: target.clone(),
-                video_id,
-                title: title.clone(),
-                thumbnail: None,
-                uploader: None,
-                duration: 0,
-                view_count: 0,
-                like_count: 0,
-                format_id: "bestvideo+bestaudio/best".to_string(),
-                output_dir,
-                output_template: "%(title)s.%(ext)s".to_string(),
-                extract_audio: false,
-                embed_subtitles: false,
-                embed_thumbnail: false,
-                write_thumbnail: false,
-                proxy: None,
-                socket_timeout: 30,
-                cookies_file: None,
-                cookies_from_browser: None,
-                max_height: 0,
-                download_archive: None,
-                playlist_items: None,
-                download_rate_limit: services::config::ConfigManager::load()
-                    .download_rate_limit
-                    .clone(),
-            };
-            match state.queue.enqueue(config, title, true, info) {
-                Ok(id) => {
-                    tracing::info!("deep-link: enqueued task {} for {}", id, target);
-                    // 专用事件：告知前端「已从浏览器获得下载任务」（普通入队的
-                    // download-queued 不区分来源，这里单独发一个事件，前端据此
-                    // 弹出 toast 并跳转到任务页）。
-                    let _ = handle.emit(
-                        "deep-link-queued",
-                        serde_json::json!({ "task_id": id }),
-                    );
-                }
-                Err(e) => tracing::warn!("deep-link: enqueue failed: {}", e),
+    let mut added = 0usize;
+    for (target, video_id, title, info) in results {
+        let config = DownloadConfig {
+            url: target.clone(),
+            video_id,
+            title: title.clone(),
+            thumbnail: None,
+            uploader: None,
+            duration: 0,
+            view_count: 0,
+            like_count: 0,
+            format_id: "bestvideo+bestaudio/best".to_string(),
+            output_dir: output_dir.clone(),
+            output_template: "%(title)s.%(ext)s".to_string(),
+            extract_audio: false,
+            embed_subtitles: false,
+            embed_thumbnail: false,
+            write_thumbnail: false,
+            proxy: None,
+            socket_timeout: 30,
+            cookies_file: None,
+            cookies_from_browser: None,
+            max_height: 0,
+            download_archive: None,
+            playlist_items: None,
+            download_rate_limit: services::config::ConfigManager::load()
+                .download_rate_limit
+                .clone(),
+        };
+        match queue.enqueue(config, title, true, info) {
+            Ok(id) => {
+                added += 1;
+                tracing::info!("deep-link: enqueued task {} for {}", id, target);
+            }
+            Err(e) if e.to_string() == "链接已在队列中" => {
+                tracing::info!("deep-link: already in queue: {}", target);
+            }
+            Err(e) => {
+                tracing::warn!("deep-link: enqueue failed: {}", e);
             }
         }
-    });
+    }
+    if added > 0 {
+        // 专用事件：告知前端「已从浏览器获得 N 个下载任务」（合并提示）。
+        // 普通入队的 download-queued 不区分来源，这里单独发一个事件，
+        // 前端据此弹出 toast 并跳转到任务页。
+        let _ = handle.emit("deep-link-queued", serde_json::json!({ "count": added }));
+    }
 }
 
 /// Parse a deep-link URL of the form `xdownload://add?url=<percent-encoded>`.

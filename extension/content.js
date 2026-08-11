@@ -116,11 +116,26 @@
     btn.addEventListener("click", (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
+      // 5 秒冷却中：忽略重复点击。
+      if (btn.disabled) return;
       const statusUrl = findStatusUrl(video);
-      if (statusUrl) {
-        sendToXDownload(statusUrl);
-        flashButton(btn, "已加入队列");
+      if (!statusUrl) {
+        flashButton(btn, "未找到链接");
+        return;
       }
+      // 进入等待：禁用按钮 5 秒，提示正在添加任务，避免连续误触。
+      btn.disabled = true;
+      btn.textContent = "正在添加任务";
+      btn.style.opacity = "0.6";
+      btn.style.cursor = "default";
+      sendToXDownload(statusUrl);
+      clearTimeout(btn._xdlCooldown);
+      btn._xdlCooldown = setTimeout(() => {
+        btn.disabled = false;
+        btn.textContent = "下载";
+        btn.style.opacity = "1";
+        btn.style.cursor = "pointer";
+      }, 5000);
     });
 
     // 挂载到 video 的外层（播放器容器），找不到则用 video 父级
@@ -134,11 +149,11 @@
     return btn;
   }
 
-  let flashTimer = null;
+  // 按钮级短提示（用于「未找到链接」等瞬时反馈），每个按钮独立 timer。
   function flashButton(btn, text) {
     btn.textContent = text;
-    clearTimeout(flashTimer);
-    flashTimer = setTimeout(() => {
+    clearTimeout(btn._xdlFlash);
+    btn._xdlFlash = setTimeout(() => {
       btn.textContent = "下载";
     }, 1200);
   }

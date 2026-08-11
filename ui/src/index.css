@@ -36,7 +36,9 @@ body {
 
 /* Card */
 .section-card {
-  @apply border border-zinc-200/80 rounded-2xl p-4 mb-3 bg-white shadow-sm;
+  @apply border border-zinc-200/80 rounded-xl p-4 mb-3 bg-white
+         shadow-[1px_2px_6px_rgba(0,0,0,0.12)] transition-shadow
+         hover:shadow-[2px_3px_10px_rgba(59,130,246,0.35)];
 }
 
 .section-title {

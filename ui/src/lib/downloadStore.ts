@@ -132,12 +132,12 @@ async function fetchAndFillInfoAsync(id: string, url: string): Promise<void> {
     // 回写后端持久化，保证「保存进度并退出 → 重启」后卡片信息不丢失。
     // 失败仅影响下次重启的信息恢复，不影响本次展示与下载。
     updateTaskInfo(id, info).catch(() => {});
-  } catch {
-    // 获取失败：标记 infoFailed。仅当任务还在排队（queued）时才暂停并跳过
-    // 下载——这是「两阶段」流程的正常兜底。若任务已开始下载
+  } catch (e: any) {
+    // 获取失败：标记 infoFailed 并记录具体原因。仅当任务还在排队（queued）
+    // 时才暂停并跳过下载——这是「两阶段」流程的正常兜底。若任务已开始下载
     // （download-started 兜底再 fetch 失败），不中断正在进行的下载，
     // 避免网络波动时下载被意外 kill。
-    patchTask(id, { infoFailed: true });
+    patchTask(id, { infoFailed: true, error: friendlyErrorMessage(e) });
     const t = state.queueTasks.find((x) => x.id === id);
     if (t && t.status === "queued") {
       pauseQueueTask(id).catch(() => {});
@@ -301,8 +301,13 @@ export function initDownloadStore() {
     });
   });
 
-  // 深链（浏览器扩展）入队成功：提示用户并跳转到任务页。
-  listen<any>("deep-link-queued", () => {
+  // 深链（浏览器扩展）批量入队成功：合并提示并跳转到任务页。
+  listen<any>("deep-link-queued", (event) => {
+    const count = Number(event.payload?.count ?? 1);
+    const msg =
+      count > 1
+        ? i18nT("gbar.deepLinkQueuedBatch", { n: count })
+        : i18nT("gbar.deepLinkQueued");
     toast.success(
       createElement(
         "div",
@@ -310,7 +315,7 @@ export function initDownloadStore() {
         createElement(
           "span",
           { className: "truncate min-w-0 text-zinc-700" },
-          i18nT("gbar.deepLinkQueued")
+          msg
         )
       ),
       { id: "deep-link-global" }
