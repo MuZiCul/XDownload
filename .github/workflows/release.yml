@@ -14,7 +14,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           # 需要完整历史 + 所有 tag，用于自动生成 changelog。
           fetch-depth: 0
@@ -29,7 +29,7 @@ jobs:
 
       # ---------- 前端依赖 ----------
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 20
 
@@ -71,13 +71,33 @@ jobs:
           } else {
             $tag = "${{ github.ref_name }}"
             $prev = git tag --list "v*" --sort=-v:refname | Where-Object { $_ -ne $tag } | Select-Object -First 1
-            $header = "# XDownload v$version`n`n## Changes`n"
-            $log = if ($prev) {
-              (git log "$prev..HEAD" --no-merges --pretty=format:"- %s") | Select-Object -First 60
+            # Tag already carries the version number, so omit it from the body.
+            # Group commits by type (New/Changed/Fixed/Removed); omit sections without entries.
+            # Keep this script pure ASCII so it parses correctly under Windows PowerShell 5.1.
+            $lines = if ($prev) {
+              @(git log "$prev..HEAD" --no-merges --pretty=format:"%s") | Select-Object -First 60
             } else {
-              @("- Initial release")
+              @("Initial release")
             }
-            Set-Content -Path "body.md" -Value ($header + ($log -join "`n")) -Encoding utf8NoBOM
+            $sections = [ordered]@{
+              "New" = @(); "Changed" = @(); "Fixed" = @(); "Removed" = @(); "Other" = @()
+            }
+            foreach ($l in $lines) {
+              if ($l -match '^feat(\([^)]*\))?:') { $sections["New"] += $l }
+              elseif ($l -match '^fix(\([^)]*\))?:') { $sections["Fixed"] += $l }
+              elseif ($l -match '^(refactor|perf|improve|style|docs)(\([^)]*\))?:') { $sections["Changed"] += $l }
+              elseif ($l -match '^(remove|delete|drop)(\([^)]*\))?:') { $sections["Removed"] += $l }
+              else { $sections["Other"] += $l }
+            }
+            $body = @()
+            foreach ($k in $sections.Keys) {
+              if ($sections[$k].Count -gt 0) {
+                $body += "## $k"
+                foreach ($i in $sections[$k]) { $body += "- $i" }
+                $body += ""
+              }
+            }
+            Set-Content -Path "body.md" -Value ($body -join "`n") -Encoding utf8NoBOM
           }
           Write-Output "body_path=$env:GITHUB_WORKSPACE\body.md" >> $env:GITHUB_OUTPUT
 
