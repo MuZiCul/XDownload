@@ -54,6 +54,13 @@ jobs:
         with:
           workspaces: src-tauri
 
+      # generate_context!() 宏在编译期校验 frontendDist("../ui/dist")，
+      # CI 环境没有该目录会导致 proc macro panicked，必须先构建前端。
+      - name: Build UI for frontendDist
+        working-directory: ui
+        shell: pwsh
+        run: pnpm build:web
+
       - name: Rust unit tests (cargo test)
         working-directory: src-tauri
         shell: pwsh
