@@ -94,6 +94,20 @@
     .btn:hover {
       background: #1a8cd8;
     }
+    .btn:disabled {
+      background: #cfd9de;
+      cursor: not-allowed;
+    }
+    code {
+      display: block;
+      margin-top: 6px;
+      padding: 6px 8px;
+      background: #f4f4f4;
+      border-radius: 6px;
+      font-size: 12px;
+      word-break: break-all;
+      color: #0f1419;
+    }
     .footer {
       margin-top: 12px;
       text-align: center;
@@ -107,7 +121,7 @@
     <img src="icons/icon-128.png" alt="XDownload" />
     <div>
       <h1>XDownload 下载助手</h1>
-      <div class="ver">v1.1.0</div>
+      <div class="ver">v1.3.0</div>
     </div>
   </div>
 
@@ -135,6 +149,25 @@
     </div>
   </div>
 
+  <div class="step">
+    <div class="num">4</div>
+    <div class="body">
+      <b>书签同步 queryId</b>
+      <span id="qid-status">正在读取…</span>
+      <code id="qid-value">-</code>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>如何更新 queryId？</b><br />
+    queryId 是 X 书签列表接口的动态标识。打开 x.com 的
+    <a id="qid-hint" href="https://x.com/i/bookmarks" target="_blank" rel="noopener">书签页</a>
+    并刷新，扩展会自动捕获最新值，然后点击下方按钮推送给桌面端。
+    <b>仅当桌面端「书签同步」拉取失败时，才需要手动更新。</b>
+  </div>
+
+  <button id="push-qid" class="btn" disabled>推送 queryId 到桌面端</button>
+
   <div class="note">
     <b>点击「下载」后没有反应？</b><br />
     这通常意味着 XDownload 桌面端<b>未安装</b>或<b>未运行</b>。请先下载安装并启动桌面端，再回到页面重试。若浏览器弹出「未知协议」提示，同样说明桌面端未就绪。
@@ -145,5 +178,7 @@
   </a>
 
   <div class="footer">仅支持 X (Twitter) 视频链接</div>
+
+  <script src="popup.js"></script>
 </body>
 </html>

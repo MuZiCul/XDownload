@@ -136,7 +136,7 @@ export default function ConfigButtons({ settings, onApply }: Props) {
 
   return (
     <>
-      <div className="flex items-center gap-2 mt-1">
+      <div className="sticky top-0 z-20 bg-[#fafafa]/95 backdrop-blur -mx-3 px-3 py-2 -mt-3 flex items-center gap-2 flex-wrap">
         <button
           className="btn flex items-center gap-1"
           onClick={() => setShowSaveDialog(true)}

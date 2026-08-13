@@ -2,23 +2,34 @@ import { useState, useEffect } from "react";
 import {
   validateCookies,
   scanCookies,
-  saveAndApplyCookies,
-  loadSavedCookies,
+  listBrowsers,
+  saveCookieSource,
+  loadCookieSource,
   checkYtdlp,
 } from "../../lib/bindings";
 import { toast } from "sonner";
 import { Save } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { useI18n } from "../../lib/i18n";
+import SectionTitle from "./SectionTitle";
 
-const BROWSERS = [
-  { value: "none", label: "cookies.none" },
+/** 全部受支持浏览器（用于安装检测失败时的降级回退）。 */
+const ALL_BROWSERS = [
   { value: "chrome", label: "Chrome" },
   { value: "firefox", label: "Firefox" },
   { value: "edge", label: "Edge" },
   { value: "brave", label: "Brave" },
   { value: "opera", label: "Opera" },
 ];
+
+/** 浏览器显示名（i18n key 优先，否则用默认名）。 */
+const BROWSER_LABELS: Record<string, string> = {
+  chrome: "Chrome",
+  firefox: "Firefox",
+  edge: "Edge",
+  brave: "Brave",
+  opera: "Opera",
+};
 
 type Props = {
   browser?: string;
@@ -35,15 +46,31 @@ export default function CookiesSetting({ browser, onChange }: Props) {
   const [verifiedUsername, setVerifiedUsername] = useState<string | null>(null);
   const [loadedUsername, setLoadedUsername] = useState<string | null>(null);
   const [initialized, setInitialized] = useState(false);
+  /** 已安装浏览器列表；未加载到（检测失败）时降级为全部浏览器。 */
+  const [installed, setInstalled] = useState<string[] | null>(null);
 
   useEffect(() => {
     if (browser) setSelected(browser);
   }, [browser]);
 
-  // On mount: load saved config
+  // 下拉框选项：检测已安装的浏览器，只展示它们；检测失败时回退全量。
+  const options = (installed ?? ALL_BROWSERS.map((b) => b.value)).map((value) => ({
+    value,
+    label: BROWSER_LABELS[value] ?? value,
+  }));
+
+  // On mount: load installed browsers + saved config
   useEffect(() => {
-    loadSavedCookies()
-      .then(([savedBrowser]) => {
+    listBrowsers()
+      .then((list) => {
+        // 只保留已知的浏览器名；后端返回顺序即展示顺序。
+        const known = list.filter((b) => BROWSER_LABELS[b]);
+        setInstalled(known.length > 0 ? known : null);
+      })
+      .catch(() => setInstalled(null));
+
+    loadCookieSource()
+      .then((savedBrowser) => {
         if (savedBrowser) {
           setLoadedBrowser(savedBrowser);
           setSelected(savedBrowser);
@@ -132,7 +159,7 @@ export default function CookiesSetting({ browser, onChange }: Props) {
     if (selected === "none" || !verified || selected === loadedBrowser) return;
     setSaving(true);
     try {
-      await saveAndApplyCookies(selected);
+      await saveCookieSource(selected);
       setLoadedBrowser(selected);
       setLoadedUsername(verifiedUsername); // carry verified username to loaded state
       onChange(selected);
@@ -175,12 +202,17 @@ export default function CookiesSetting({ browser, onChange }: Props) {
 
   return (
     <div className="section-card">
-      <div className="section-title">
-        Cookies
-        <span className={`normal-case font-normal text-[10px] ${statusColor} ml-2`}>
-          ● {statusText}
-        </span>
-      </div>
+      <SectionTitle
+        title={
+          <>
+            Cookies
+            <span className={`normal-case font-normal text-[10px] ${statusColor} ml-2`}>
+              ● {statusText}
+            </span>
+          </>
+        }
+        tip={t("cookies.hint")}
+      />
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-xs text-gray-500">{t("cookies.browser")}</span>
         <select
@@ -188,11 +220,16 @@ export default function CookiesSetting({ browser, onChange }: Props) {
           onChange={(e) => handleSelect(e.target.value)}
           className="text-xs"
         >
-          {BROWSERS.map((b) => (
+          <option value="none">{t("cookies.none")}</option>
+          {options.map((b) => (
             <option key={b.value} value={b.value}>
-              {t(b.label)}
+              {b.label}
             </option>
           ))}
+          {/* 已保存的浏览器不在已安装列表中时保留显示，避免空白选择 */}
+          {selected !== "none" && !options.some((o) => o.value === selected) && (
+            <option value={selected}>{BROWSER_LABELS[selected] ?? selected}</option>
+          )}
         </select>
         <button className="btn" onClick={handleValidate} disabled={selected === "none" || validating}>
           {validating ? t("cookies.validatingBtn") : t("cookies.validate")}

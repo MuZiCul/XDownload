@@ -222,7 +222,7 @@ impl DownloadQueue {
     /// Execute one task with retry handling, then record history, emit
     /// `download-finished` and pump the next task. A task interrupted by a
     /// per-task pause is moved to the paused list (cache kept for resume).
-    async fn run_worker(self, task: QueuedTask) {
+    async fn run_worker(self, mut task: QueuedTask) {
         let id = task.id.clone();
         let mut retries = ConfigManager::load().retry_count.unwrap_or(0);
         let mut attempts: u8 = 0;
@@ -232,6 +232,20 @@ impl DownloadQueue {
 
         loop {
             attempts = attempts.saturating_add(1);
+            // 前端两阶段信息获取（fetchVideoInfo）会把 info 回写到
+            // st.running 里的任务对象；worker 持有的是 pump 入队时的旧快照
+            // （两阶段路径 info=None）。这里每次尝试前刷新，确保 record()
+            // 能读到完整信息（含 duration），而非依赖 meta 兜底。
+            if let Some(latest) = self
+                .state
+                .lock()
+                .unwrap()
+                .running
+                .iter()
+                .find(|t| t.id == id)
+            {
+                task = latest.clone();
+            }
             let config = task.config.clone();
             let app = self.app.clone();
             let tid = id.clone();

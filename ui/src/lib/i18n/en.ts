@@ -164,6 +164,8 @@ export const en: Record<string, string> = {
   "dir.browse": "Browse",
   "dir.open": "Open",
   "dir.saved": "Download directory saved",
+  "dir.hint":
+    "Directory where downloaded videos are saved:\n· Relative paths: stored under the app root\n· Absolute paths: supported as well",
 
   // ===== Proxy setting =====
   "proxy.title": "Proxy",
@@ -184,18 +186,20 @@ export const en: Record<string, string> = {
   "proxy.testFail": "Proxy test failed: {msg}",
   "proxy.disabledSaved": "Proxy disabled and saved",
   "proxy.savedApplied": "Proxy saved and applied",
+  "proxy.hint":
+    "Configure a network proxy to reach restricted networks:\n· None: no proxy\n· Manual: enter address and port\n· Follow system: use the system proxy\nClick \u201CApply\u201D to take effect.",
 
   // ===== Cookies setting =====
   "cookies.browser": "Browser:",
   "cookies.none": "none",
   "cookies.validate": "Validate",
   "cookies.validatingBtn": "Validating...",
-  "cookies.saveAndApply": "Save & Load",
+  "cookies.saveAndApply": "Save Source",
   "cookies.statusValidating": "Validating: {browser}",
-  "cookies.statusVerified": "Verified: {browser}{user} — save to apply",
-  "cookies.statusLoaded": "Loaded: {browser}{user}",
+  "cookies.statusVerified": "Verified: {browser}{user} — save source to apply",
+  "cookies.statusLoaded": "Saved source: {browser}{user}",
   "cookies.statusNone": "No cookies",
-  "cookies.saved": "Cookies saved and loaded: {browser}",
+  "cookies.saved": "Cookies source saved: {browser}",
   "cookies.step1": "Extracting cookies from {browser}...",
   "cookies.step2": "x.com auth_token found, verifying login...",
   "cookies.step3": "x.com login valid",
@@ -213,6 +217,8 @@ export const en: Record<string, string> = {
   "cookies.error.parse":
     "Could not parse a username from x.com; the page structure may have changed",
   "cookies.error.unknown": "Cookies validation failed: {msg}",
+  "cookies.hint":
+    "Select the browser Cookies used to access x.com:\n· Changes take effect immediately, no restart needed\n· Bookmark sync and downloads use these Cookies to verify the login state",
 
   // ===== Config buttons =====
   "config.save": "Save Config",
@@ -277,6 +283,8 @@ export const en: Record<string, string> = {
   "tools.ffmpegDesc": "Audio/video merge & transcode · ~80MB (~150MB extracted)",
   "tools.rootDir": "Root Dir",
   "tools.checkResultTitle": "Update Check Result",
+  "tools.hint":
+    "yt-dlp (video extraction engine) and ffmpeg (audio/video merge & transcode) are required for downloads:\n· Download/install them first if missing\n· Update them if the version is outdated",
 
   // ===== Multi-task setting =====
   "multitask.title": "Multi-task",
@@ -290,7 +298,43 @@ export const en: Record<string, string> = {
   "multitask.invalidRate": "Invalid rate limit. Use e.g. 1M / 2.5M / 500K",
   "multitask.saved": "Multi-task settings saved",
   "multitask.hint":
-    "Concurrent downloads: tasks running at once (1-3). Retry count: 0 = no retry. Persist queue: restores unfinished tasks on next launch. Rate limit: per-task download speed (1M~100M), e.g. 1M / 500K. Resume support: hides the pause/resume buttons and resumes interrupted/failed downloads automatically from the checkpoint (off by default).",
+    "Concurrent downloads: tasks running at once (1-3).\nRetry count: 0 = no retry.\nPersist queue: restores unfinished tasks on next launch.\nRate limit: per-task download speed (1M~100M), e.g. 1M / 500K.\nResume support: hides the pause/resume buttons and resumes interrupted/failed downloads automatically (off by default).",
+
+  // ===== Bookmarks setting =====
+  "bookmarks.title": "Bookmarks",
+  "bookmarks.sync": "Sync bookmarks",
+  "bookmarks.syncing": "Syncing…",
+  "bookmarks.viewList": "View bookmarks",
+  "bookmarks.listTitle": "Synced bookmarks",
+  "bookmarks.listHint": "Every bookmark seen during syncs is kept locally (video and non-video). Download or re-download any of them:",
+  "bookmarks.listLoading": "Loading…",
+  "bookmarks.listEmpty": "No bookmarks synced yet. Click \u201CSync bookmarks\u201D first.",
+  "bookmarks.noTitle": "(no title)",
+  "bookmarks.noVideoTag": "No video",
+  "bookmarks.download": "Download",
+  "bookmarks.noNew": "No new bookmarks",
+  "bookmarks.noVideo": "{count} new bookmark(s) found, but none contain video",
+  "bookmarks.syncingTitle": "Syncing bookmarks…",
+  "bookmarks.step.prepare": "Preparing…",
+  "bookmarks.step.cookies": "Reading browser cookies…",
+  "bookmarks.step.fetch": "Fetching bookmarks from X…",
+  "bookmarks.step.persist": "Saving bookmarks locally…",
+  "bookmarks.step.diff": "Comparing with download history…",
+  "bookmarks.syncFailTitle": "Bookmarks sync failed",
+  "bookmarks.syncFailQueryId":
+    "queryId may have expired: click the extension icon → open the x.com bookmarks page and refresh (the extension captures the latest queryId automatically) → click \u201CPush queryId to desktop\u201D → sync again here.",
+  "bookmarks.previewTitle": "New bookmarks found",
+  "bookmarks.found": "{total} bookmarks in total, {newCount} new. Check the videos to download and click add — already-downloaded ones can be re-downloaded:",
+  "bookmarks.selectedCount": "{count} selected",
+  "bookmarks.selectAll": "Select all",
+  "bookmarks.downloaded": "Downloaded",
+  "bookmarks.enqueue": "Add to queue ({count})",
+  "bookmarks.enqueueing": "Enqueueing…",
+  "bookmarks.enqueued": "{count} added to the download queue",
+  "bookmarks.enqueueFail": "Failed to enqueue: {err}",
+  "bookmarks.cancel": "Cancel",
+  "bookmarks.hint":
+    "Click \u201CSync bookmarks\u201D to fetch X bookmarks and compare with the download history; the dialog lists all video bookmarks (including already-downloaded ones).\nNot-yet-downloaded ones are pre-checked; downloaded ones can be re-checked for re-download.\nItems are only enqueued after you confirm; unconfirmed bookmarks show up again on the next sync.\nYou need to be logged into x.com in your browser and have browser Cookies configured above.",
 
   // ===== HLS setting =====
   "hls.title": "HLS Download",
@@ -298,22 +342,20 @@ export const en: Record<string, string> = {
   "hls.retry": "Fragment retries",
   "hls.saved": "HLS settings saved",
   "hls.hint":
-    "Fragment concurrency: parallel fragment downloads for HLS audio/video streams (1-16, default 4). Higher values download faster but may trigger server rate limiting. Fragment retries: retry count when a single fragment fails (default 10), avoiding whole-task failure from occasional bad fragments. Pausing/cancelling cannot fully avoid fragment loss; higher concurrency recovers lost fragments faster.",
+    "Fragment concurrency: parallel fragment downloads for HLS audio/video streams (1-16, default 4). Higher values download faster but may trigger server rate limiting.\nFragment retries: retry count when a single fragment fails (default 10), avoiding whole-task failure from occasional bad fragments.\nPausing/cancelling cannot fully avoid fragment loss; higher concurrency recovers faster.",
 
   // ===== Language setting =====
   "lang.title": "Language",
   "lang.saved": "Language saved: {lang}",
   "lang.zh": "Chinese",
   "lang.en": "English",
-  "lang.hintImmediate": "Takes effect immediately",
+  "lang.hintImmediate":
+    "Takes effect immediately.\nThe language switch applies instantly to the UI without restart.",
 
   // ===== About page =====
   "about.desc": "Video downloader based on yt-dlp",
   "about.checking": "Checking...",
   "about.checkUpdate": "Check Update",
-  "about.newVersion": "New version v{ver} found",
-  "about.currentVersion": "Current version v{ver}",
-  "about.goDownload": "Go Download",
   "about.upToDate": "You're up to date",
   "about.checkFail": "Check failed, please check your network",
 
@@ -388,4 +430,17 @@ export const en: Record<string, string> = {
   "app.installUpdate": "Install Update",
   "app.installing": "Installing, the app will exit automatically...",
   "app.goToSettings": "Go to Settings to download",
+  "app.updating": "Updating",
+  "app.checkingTitle": "Network Check",
+  "app.checkingNetwork": "Checking GitHub connectivity...",
+  "app.networkFail": "Cannot reach GitHub. Please check your network or configure a proxy in Settings",
+  "app.networkNoProxy": "Direct connection failed and no proxy is configured",
+  "app.networkProxyFailed": "Direct connection failed and the configured proxy is unreachable",
+  "app.goProxy": "Configure Proxy",
+  "app.retryDownload": "Continue Download",
+  "app.downloadReady": "Download finished, click to install the update",
+  "app.timeoutMsg": "Download timed out. Please get the latest version from GitHub manually",
+  "app.timeoutHint": "{pct}% downloaded. You can continue manually on GitHub",
+  "app.goGithub": "Go to GitHub",
+  "app.stopUpdate": "Stop Update",
 };

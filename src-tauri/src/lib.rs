@@ -77,29 +77,131 @@ impl IoWrite for LocalDailyWriter {
 /// Timestamps log lines in the LOCAL timezone (previously UTC).
 struct LocalTimer;
 
+/// 日志文件保留天数：早于该天数的 `xdownload.log.YYYY-MM-DD` 会在每日首次
+/// 启动时被删除。
+const LOG_RETENTION_DAYS: i64 = 14;
+/// 日志清理 marker 文件名（记录上次执行清理的日期，保证每天只清理一次）。
+const LOG_CLEANUP_MARKER: &str = "log_cleanup_date";
+
+/// 每天第一次启动时清理超过 [`LOG_RETENTION_DAYS`] 天的日志文件。
+///
+/// 与 `cleanup_download_cache` 相同模式：用 marker 文件记住上次清理日期，
+/// 同一天重复启动不再执行。日志文件命名为 `xdownload.log.YYYY-MM-DD`
+/// （见 [`LocalDailyWriter`]），从文件名解析日期判断是否过期。
+pub fn cleanup_old_logs() {
+    // 仅每天第一次启动执行：marker 记录上次清理日期。
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let marker = crate::utils::app_home::AppHome::config_dir().join(LOG_CLEANUP_MARKER);
+    if std::fs::read_to_string(&marker).ok() == Some(today.clone()) {
+        return;
+    }
+
+    let removed = remove_old_logs(
+        &crate::utils::app_home::AppHome::logs_dir(),
+        chrono::Local::now().date_naive(),
+    );
+    let _ = std::fs::write(&marker, today);
+    tracing::info!("cleaned old log files (>{LOG_RETENTION_DAYS} days): removed {removed}");
+}
+
+/// 删除 `logs_dir` 中早于 `now - LOG_RETENTION_DAYS` 天的日志文件，
+/// 返回删除数量。日志文件命名为 `xdownload.log.YYYY-MM-DD`，从文件名
+/// 解析日期；解析失败的文件跳过（不误删无关文件）。
+fn remove_old_logs(logs_dir: &std::path::Path, today: chrono::NaiveDate) -> usize {
+    let cutoff = today - chrono::Days::new(LOG_RETENTION_DAYS as u64);
+    let mut removed = 0usize;
+    if let Ok(entries) = std::fs::read_dir(logs_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            // 匹配 xdownload.log.YYYY-MM-DD
+            let date_str = name.strip_prefix("xdownload.log.").unwrap_or(name);
+            if let Ok(d) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
+                if d < cutoff {
+                    if std::fs::remove_file(&path).is_ok() {
+                        removed += 1;
+                    }
+                }
+            }
+        }
+    }
+    removed
+}
+
+/// Initialize the application
+
 impl FormatTime for LocalTimer {
     fn format_time(&self, w: &mut Writer<'_>) -> std::fmt::Result {
         write!(w, "{}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"))
     }
 }
 
+/// Enable virtual-terminal processing for the stdout console so the ANSI
+/// colors emitted by the tracing console layer are parsed by cmd/conhost
+/// (which otherwise prints the raw escape codes as mojibake). Debug builds are
+/// CONSOLE-subsystem; release builds have no console and this is a harmless
+/// no-op (GetConsoleMode fails on a non-console handle and we bail out).
+#[cfg(windows)]
+fn enable_vt_processing_on_stdout() {
+    use windows::Win32::System::Console::{
+        GetConsoleMode, GetStdHandle, SetConsoleMode, CONSOLE_MODE,
+        ENABLE_VIRTUAL_TERMINAL_PROCESSING, STD_OUTPUT_HANDLE,
+    };
+    unsafe {
+        let Ok(handle) = GetStdHandle(STD_OUTPUT_HANDLE) else {
+            return;
+        };
+        if handle.is_invalid() {
+            return;
+        }
+        let mut mode: CONSOLE_MODE = CONSOLE_MODE(0);
+        if GetConsoleMode(handle, &mut mode).is_err() {
+            return;
+        }
+        let _ = SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+    }
+}
+
+/// No-op on non-Windows platforms.
+#[cfg(not(windows))]
+fn enable_vt_processing_on_stdout() {}
+
 /// Initialize the application
 pub fn run() {
+    // 在输出任何颜色日志前开启控制台 VT 处理（否则 ANSI 颜色码原样打印成乱码）。
+    enable_vt_processing_on_stdout();
+
     // Initialize logging: rotate by LOCAL date and stamp timestamps in the
     // local timezone (previously UTC, off by up to a day / 8 hours). Logs live
     // in logs/ (kept out of config/, and gitignored as a whole).
+    //
+    // 双写：同一份日志同时写入 logs/ 文件与 stdout。debug 构建（CONSOLE
+    // 子系统）会在黑色控制台实时滚动，便于开发调试；release 构建无控制台，
+    // stdout layer 自然没有输出目标，正式版表现与之前完全一致。
     let _ = utils::app_home::AppHome::ensure_logs_dir();
     let (non_blocking, _guard) = tracing_appender::non_blocking(LocalDailyWriter::new(
         utils::app_home::AppHome::logs_dir(),
     ));
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let file_layer = tracing_subscriber::fmt::layer()
         .with_timer(LocalTimer)
-        .with_writer(non_blocking)
+        .with_writer(non_blocking);
+    let console_layer = tracing_subscriber::fmt::layer()
+        .with_timer(LocalTimer)
+        .with_writer(std::io::stdout);
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(file_layer)
+        .with(console_layer)
         .init();
 
     // Load saved language setting
@@ -119,15 +221,20 @@ pub fn run() {
     // downloads can be resumed across sessions.
     YtDlpDownloader::cleanup_download_cache();
 
+    // Clean old log files (once per day, first launch). Logs accumulate
+    // indefinitely otherwise; keep the last 14 days.
+    cleanup_old_logs();
+
+    // Initialize the download history database (config/data.db). The legacy
+    // config/downloads.json is not migrated — history lives in SQLite only.
+    services::download_history::DownloadHistory::init();
+
     // Create the downloader
     let downloader = Arc::new(YtDlpDownloader::new());
 
     // Apply saved cookies
-    let (browser, file) = services::config::ConfigManager::load_saved_cookies();
-    if let Some(ref b) = browser {
+    if let Some(ref b) = services::config::ConfigManager::load_cookie_source() {
         downloader.set_cookies_from_browser(b);
-    } else if let Some(ref f) = file {
-        downloader.set_cookies_file(f);
     }
 
     tauri::Builder::default()
@@ -174,9 +281,8 @@ pub fn run() {
             commands::settings::get_download_dir,
             commands::settings::get_config_path,
             commands::settings::apply_saved_proxy,
-            commands::settings::load_saved_cookies,
-            commands::settings::apply_saved_cookies,
-            commands::settings::save_and_apply_cookies,
+            commands::settings::load_cookie_source,
+            commands::settings::save_cookie_source,
             commands::settings::save_language,
             commands::settings::load_settings_from_path,
             commands::settings::apply_and_persist_settings,
@@ -189,6 +295,7 @@ pub fn run() {
             commands::proxy::set_proxy_mode,
             commands::cookies::validate_cookies,
             commands::cookies::scan_cookies,
+            commands::cookies::list_browsers,
             commands::bootstrap::check_ytdlp,
             commands::bootstrap::check_ffmpeg,
             commands::bootstrap::is_ffmpeg_bundled,
@@ -207,6 +314,9 @@ pub fn run() {
             commands::bootstrap::open_file_path,
             commands::settings::get_privacy_mode,
             commands::settings::set_privacy_mode,
+            commands::settings::sync_bookmarks_preview,
+            commands::settings::confirm_bookmarks_enqueue,
+            commands::settings::list_bookmarks,
             commands::settings::get_version,
             commands::bootstrap::quit_app,
             commands::bootstrap::get_uninstall_info,
@@ -214,6 +324,8 @@ pub fn run() {
             commands::bootstrap::open_uninstall_panel,
             commands::update::check_ytdlp_update,
             commands::update::check_ffmpeg_update,
+            commands::update::check_update_network,
+            commands::update::cleanup_updater_temp,
             commands::history::list_download_history,
             commands::history::delete_download_history,
             commands::history::delete_download_history_file,
@@ -239,6 +351,9 @@ pub fn run() {
             // Restore unfinished multi-task downloads when the persist setting
             // is enabled (re-enqueues and starts draining).
             queue.restore_if_enabled();
+
+            // 书签同步改为手动触发（设置页「同步书签」按钮 → 预览弹窗 →
+            // 用户确认后才入队），不再有后台轮询任务。
 
             // 深链批量合并 worker：短窗口收集 → 去重 → 并发 fetch → 批量入队。
             let batcher = DeepLinkBatcher::default();
@@ -344,7 +459,17 @@ struct DeepLinkBatcher {
 }
 
 /// Validate a deep-link URL, then hand it to the batch worker for queuing.
+/// The `setqueryid` action is handled first (queryId push, not a download).
 fn handle_deep_link(app: &tauri::AppHandle, raw: &str) {
+    // 扩展捕获的 queryId 推送：xdownload://setqueryid?value=<id> → 存 config 表。
+    if let Some(qid) = parse_query_id_deep_link(raw) {
+        match services::query_id::save(&qid) {
+            Ok(_) => tracing::info!("deep-link: saved bookmarks queryId: {}", qid),
+            Err(e) => tracing::warn!("deep-link: failed to save queryId: {e:#}"),
+        }
+        return;
+    }
+
     let Some(target) = parse_deep_link_url(raw) else {
         tracing::warn!("deep-link: invalid url {}", raw);
         return;
@@ -421,7 +546,6 @@ async fn process_deep_link_batch(handle: &tauri::AppHandle, targets: &[String]) 
             write_thumbnail: false,
             proxy: None,
             socket_timeout: 30,
-            cookies_file: None,
             cookies_from_browser: None,
             max_height: 0,
             download_archive: None,
@@ -474,6 +598,29 @@ fn parse_deep_link_url(raw: &str) -> Option<String> {
     target
 }
 
+/// Parse a queryId deep-link `xdownload://setqueryid?value=<encoded>`.
+/// Returns the decoded and validated queryId, or `None` for other hosts /
+/// missing / invalid values. The extension's popup triggers this deep link
+/// after capturing a fresh id from live x.com traffic.
+fn parse_query_id_deep_link(raw: &str) -> Option<String> {
+    let rest = raw.strip_prefix("xdownload://")?;
+    let (host, query) = rest.split_once('?')?;
+    let host = host.trim_end_matches('/');
+    if host != "setqueryid" {
+        return None;
+    }
+    let mut value = None;
+    for pair in query.split('&') {
+        let mut it = pair.splitn(2, '=');
+        let k = it.next()?;
+        let v = it.next()?;
+        if k == "value" {
+            value = Some(percent_decode_str(v));
+        }
+    }
+    value.filter(|v| services::query_id::is_valid_query_id(v))
+}
+
 /// Minimal percent-decode (%XX → byte). The browser extension encodes the
 /// status URL with `encodeURIComponent`, so `%` sequences are expected.
 fn percent_decode_str(s: &str) -> String {
@@ -506,6 +653,55 @@ fn percent_decode_str(s: &str) -> String {
 mod tests {
     use super::*;
 
+    fn make_log_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "xdl_log_cleanup_test_{}_{}",
+            name,
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn removes_only_logs_older_than_retention() {
+        let dir = make_log_dir("retention");
+        // 4 个日志文件 + 1 个非日志文件。today = 2026-08-13，
+        // cutoff = 08-13 - 14天 = 07-30（>= 07-30 保留，< 07-30 删除）。
+        std::fs::write(dir.join("xdownload.log.2026-07-01"), "a").unwrap(); // 过期(<cutoff)
+        std::fs::write(dir.join("xdownload.log.2026-07-29"), "b").unwrap(); // 过期(<cutoff)
+        std::fs::write(dir.join("xdownload.log.2026-07-30"), "c").unwrap(); // 保留(==cutoff)
+        std::fs::write(dir.join("xdownload.log.2026-08-10"), "d").unwrap(); // 保留
+        std::fs::write(dir.join("readme.txt"), "not a log").unwrap(); // 不删
+
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 8, 13).unwrap();
+        let removed = remove_old_logs(&dir, today);
+        assert_eq!(removed, 2);
+        assert!(!dir.join("xdownload.log.2026-07-01").exists());
+        assert!(!dir.join("xdownload.log.2026-07-29").exists());
+        assert!(dir.join("xdownload.log.2026-07-30").exists());
+        assert!(dir.join("xdownload.log.2026-08-10").exists());
+        assert!(dir.join("readme.txt").exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn keeps_all_when_none_are_old() {
+        let dir = make_log_dir("fresh");
+        std::fs::write(dir.join("xdownload.log.2026-08-13"), "a").unwrap();
+        std::fs::write(dir.join("xdownload.log.2026-08-01"), "b").unwrap();
+
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 8, 13).unwrap();
+        let removed = remove_old_logs(&dir, today);
+        assert_eq!(removed, 0);
+        assert!(dir.join("xdownload.log.2026-08-13").exists());
+        assert!(dir.join("xdownload.log.2026-08-01").exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn test_parse_deep_link_standard() {
         let target = parse_deep_link_url(
@@ -535,6 +731,39 @@ mod tests {
     #[test]
     fn test_parse_deep_link_missing_url_param() {
         assert_eq!(parse_deep_link_url("xdownload://add?foo=bar"), None);
+    }
+
+    #[test]
+    fn test_parse_query_id_deep_link() {
+        // 标准形态。
+        let v = parse_query_id_deep_link("xdownload://setqueryid?value=iblrFnKr6PZUR-dWpfXG6g");
+        assert_eq!(v.as_deref(), Some("iblrFnKr6PZUR-dWpfXG6g"));
+        // popup 用 encodeURIComponent，'%69...' 应解码。
+        let v = parse_query_id_deep_link("xdownload://setqueryid?value=%69blrFnKr6PZUR-dWpfXG6g");
+        assert_eq!(v.as_deref(), Some("iblrFnKr6PZUR-dWpfXG6g"));
+        // 带尾斜杠的 host。
+        let v = parse_query_id_deep_link("xdownload://setqueryid/?value=abc123_-");
+        assert_eq!(v.as_deref(), Some("abc123_-"));
+        // 非 setqueryid host → None（不干扰 add）。
+        assert_eq!(
+            parse_query_id_deep_link("xdownload://add?url=https://x.com/a"),
+            None
+        );
+        // 缺 value 参数 → None。
+        assert_eq!(parse_query_id_deep_link("xdownload://setqueryid?foo=bar"), None);
+        assert_eq!(parse_query_id_deep_link("xdownload://setqueryid"), None);
+        // 非法字符（空格/中文）→ None。
+        assert_eq!(
+            parse_query_id_deep_link("xdownload://setqueryid?value=has%20space"),
+            None
+        );
+        assert_eq!(
+            parse_query_id_deep_link("xdownload://setqueryid?value=%E6%88%91"),
+            None
+        );
+        // 超长 → None。
+        let long = format!("xdownload://setqueryid?value={}", "a".repeat(65));
+        assert_eq!(parse_query_id_deep_link(&long), None);
     }
 
     #[test]

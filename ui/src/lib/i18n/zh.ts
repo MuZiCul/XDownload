@@ -163,6 +163,8 @@ export const zh: Record<string, string> = {
   "dir.browse": "浏览",
   "dir.open": "打开",
   "dir.saved": "视频保存位置已保存",
+  "dir.hint":
+    "设置视频下载的保存目录：\n· 相对路径：保存在软件根目录下\n· 绝对路径：也可直接指定完整路径",
 
   // ===== Proxy setting =====
   "proxy.title": "代理",
@@ -182,18 +184,20 @@ export const zh: Record<string, string> = {
   "proxy.testFail": "代理测试失败: {msg}",
   "proxy.disabledSaved": "代理已禁用并保存",
   "proxy.savedApplied": "代理已保存并应用",
+  "proxy.hint":
+    "配置网络代理以访问受限网络：\n· 无：不代理\n· 手动：填写地址与端口\n· 跟随系统：使用系统代理设置\n配置后需点击「应用」生效。",
 
   // ===== Cookies setting =====
   "cookies.browser": "浏览器:",
   "cookies.none": "无",
   "cookies.validate": "验证",
   "cookies.validatingBtn": "验证中...",
-  "cookies.saveAndApply": "保存并加载",
+  "cookies.saveAndApply": "保存来源",
   "cookies.statusValidating": "验证中: {browser}",
-  "cookies.statusVerified": "已验证: {browser}{user}，请保存并加载生效",
-  "cookies.statusLoaded": "已加载: {browser}{user}",
+  "cookies.statusVerified": "已验证: {browser}{user}，保存来源后生效",
+  "cookies.statusLoaded": "已保存来源: {browser}{user}",
   "cookies.statusNone": "无 cookies",
-  "cookies.saved": "Cookies 已保存并加载: {browser}",
+  "cookies.saved": "Cookies 来源已保存: {browser}",
   "cookies.step1": "正在从 {browser} 提取 cookies...",
   "cookies.step2": "已提取到 x.com auth_token，正在验证登录状态...",
   "cookies.step3": "x.com 登录有效",
@@ -210,6 +214,8 @@ export const zh: Record<string, string> = {
   "cookies.error.timeout": "{browser} 验证超时",
   "cookies.error.parse": "未能从 x.com 页面解析出用户名，可能页面结构已变更",
   "cookies.error.unknown": "cookies 验证失败: {msg}",
+  "cookies.hint":
+    "选择用于访问 x.com 的浏览器 Cookies 来源：\n· 来源变更即时生效，无需重启\n· 书签同步与视频下载会用该 Cookies 验证登录状态",
 
   // ===== Config buttons =====
   "config.save": "保存配置",
@@ -270,6 +276,8 @@ export const zh: Record<string, string> = {
   "tools.ffmpegDesc": "音视频合并与转码 · 约 80MB（解压后 ~150MB）",
   "tools.rootDir": "根目录",
   "tools.checkResultTitle": "检查更新结果",
+  "tools.hint":
+    "yt-dlp（视频解析下载引擎）与 ffmpeg（音视频合并转码）是下载必需的组件：\n· 缺失时需先「下载」安装\n· 版本过旧时可「检查更新」",
 
   // ===== Multi-task setting =====
   "multitask.title": "多任务",
@@ -283,7 +291,43 @@ export const zh: Record<string, string> = {
   "multitask.invalidRate": "限速格式无效，请输入如 1M / 2.5M / 500K",
   "multitask.saved": "多任务设置已保存",
   "multitask.hint":
-    "并发下载数：同时下载的任务数（1-3）；失败重试次数：0 表示不重试；队列持久化：开启后重启应用会恢复未完成任务；下载限速：每个任务的限速值（1M~100M），格式如 1M / 500K；断点续传：开启后任务面板隐藏暂停/开始按钮，下载中断/失败会自动从断点继续（默认关闭）",
+    "并发下载数：同时下载的任务数（1-3）。\n失败重试次数：0 表示不重试。\n队列持久化：开启后重启应用会恢复未完成任务。\n下载限速：每个任务的限速值（1M~100M），格式如 1M / 500K。\n断点续传：开启后任务面板隐藏暂停/开始按钮，下载中断/失败会自动从断点继续（默认关闭）",
+
+  // ===== Bookmarks setting =====
+  "bookmarks.title": "书签管理",
+  "bookmarks.sync": "同步书签",
+  "bookmarks.syncing": "同步中…",
+  "bookmarks.viewList": "查看书签",
+  "bookmarks.listTitle": "已同步的书签",
+  "bookmarks.listHint": "本地保存了历次同步发现的书签（含视频与无视频），可单独下载或重新下载：",
+  "bookmarks.listLoading": "加载中…",
+  "bookmarks.listEmpty": "还没有同步过书签，先点击「同步书签」。",
+  "bookmarks.noTitle": "（无标题）",
+  "bookmarks.noVideoTag": "无视频",
+  "bookmarks.download": "下载",
+  "bookmarks.noNew": "没有新的书签",
+  "bookmarks.noVideo": "有 {count} 条新增书签，但都不含视频",
+  "bookmarks.syncingTitle": "正在同步书签…",
+  "bookmarks.step.prepare": "准备中…",
+  "bookmarks.step.cookies": "正在读取浏览器 Cookies…",
+  "bookmarks.step.fetch": "正在从 X 拉取书签…",
+  "bookmarks.step.persist": "正在保存书签到本地…",
+  "bookmarks.step.diff": "正在比对下载历史…",
+  "bookmarks.syncFailTitle": "书签同步失败",
+  "bookmarks.syncFailQueryId":
+    "queryId 可能已失效：请点击浏览器扩展图标 → 打开 x.com 书签页并刷新（扩展会自动捕获最新 queryId）→ 点击「推送 queryId 到桌面端」→ 回到此处重新同步。",
+  "bookmarks.previewTitle": "发现新书签",
+  "bookmarks.found": "共 {total} 条书签，其中 {newCount} 条是新增的。勾选要下载的视频后点击加入队列，已下载的也可勾选重新下载：",
+  "bookmarks.selectedCount": "已选 {count} 条",
+  "bookmarks.selectAll": "全选",
+  "bookmarks.downloaded": "已下载",
+  "bookmarks.enqueue": "加入队列（{count}）",
+  "bookmarks.enqueueing": "正在入队…",
+  "bookmarks.enqueued": "已加入 {count} 条到下载队列",
+  "bookmarks.enqueueFail": "加入下载队列失败：{err}",
+  "bookmarks.cancel": "取消",
+  "bookmarks.hint":
+    "点击「同步书签」拉取 X 书签并与下载历史比对，弹窗展示所有含视频书签（含已下载）。\n默认勾选未下载的，已下载的也可勾选重新下载。\n确认后才加入下载队列；未确认的书签下次同步仍会出现。\n需要先在浏览器中登录 x.com，并在上方配置浏览器 Cookies。",
 
   // ===== HLS setting =====
   "hls.title": "HLS 下载",
@@ -291,22 +335,19 @@ export const zh: Record<string, string> = {
   "hls.retry": "分片重试次数",
   "hls.saved": "HLS 设置已保存",
   "hls.hint":
-    "分片并发数：HLS 音视频分离流的并行分片下载数（1-16，默认 4），值越大下载越快，过高易触发服务器限流；分片重试次数：单个分片下载失败时的重试次数（默认 10），避免偶发坏分片导致整个任务失败。暂停/取消下载无法完全避免分片损失，并发越高补回越快",
+    "分片并发数：HLS 音视频分离流的并行分片下载数（1-16，默认 4），值越大下载越快，过高易触发服务器限流。\n分片重试次数：单个分片下载失败时的重试次数（默认 10），避免偶发坏分片导致整个任务失败。\n暂停/取消下载无法完全避免分片损失，并发越高补回越快",
 
   // ===== Language setting =====
   "lang.title": "语言 / Language",
   "lang.saved": "语言已保存: {lang}",
   "lang.zh": "中文",
   "lang.en": "English",
-  "lang.hintImmediate": "保存后立即生效",
+  "lang.hintImmediate": "保存后立即生效\n切换语言后无需重启，设置会即时应用到界面。",
 
   // ===== About page =====
   "about.desc": "基于 yt-dlp 的视频下载器",
   "about.checking": "检测中...",
   "about.checkUpdate": "检测更新",
-  "about.newVersion": "发现新版本 v{ver}",
-  "about.currentVersion": "当前版本 v{ver}",
-  "about.goDownload": "前往下载",
   "about.upToDate": "已是最新版本",
   "about.checkFail": "检测失败，请检查网络连接",
 
@@ -380,4 +421,17 @@ export const zh: Record<string, string> = {
   "app.installUpdate": "安装更新",
   "app.installing": "正在安装，应用将自动退出...",
   "app.goToSettings": "前往设置下载",
+  "app.updating": "更新中",
+  "app.checkingTitle": "检测网络",
+  "app.checkingNetwork": "正在检测 GitHub 网络连接…",
+  "app.networkFail": "无法连接 GitHub，请检查网络或在设置中配置代理",
+  "app.networkNoProxy": "直连失败，且未配置代理",
+  "app.networkProxyFailed": "直连失败，已配置的代理也无法连接",
+  "app.goProxy": "配置代理",
+  "app.retryDownload": "继续下载",
+  "app.downloadReady": "下载完成，点击安装更新",
+  "app.timeoutMsg": "下载超时，请前往 GitHub 手动下载最新版本",
+  "app.timeoutHint": "已下载 {pct}%，可前往 GitHub 继续手动下载",
+  "app.goGithub": "前往 GitHub",
+  "app.stopUpdate": "停止更新",
 };

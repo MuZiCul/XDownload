@@ -45,8 +45,6 @@ pub struct DownloadConfig {
     #[serde(default = "default_socket_timeout")]
     pub socket_timeout: i32,
     #[serde(default)]
-    pub cookies_file: Option<String>,
-    #[serde(default)]
     pub cookies_from_browser: Option<String>,
     #[serde(default)]
     pub max_height: i32,
@@ -93,7 +91,6 @@ impl DownloadConfig {
             write_thumbnail: false,
             proxy: None,
             socket_timeout: default_socket_timeout(),
-            cookies_file: None,
             cookies_from_browser: None,
             max_height: 0,
             download_archive: None,
@@ -124,8 +121,6 @@ pub struct AppSettings {
     pub proxy_scheme: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cookies_from_browser: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cookies_file: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lang: Option<String>,
     /// Multi-task settings.

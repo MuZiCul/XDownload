@@ -4,6 +4,7 @@ import type { AppSettings } from "../../lib/types";
 import { toast } from "sonner";
 import { Save } from "lucide-react";
 import { useI18n } from "../../lib/i18n";
+import SectionTitle from "./SectionTitle";
 
 /** 并发分片数档位（yt-dlp --concurrent-fragments）。 */
 export const HLS_CONCURRENT_PRESETS = [1, 2, 4, 6, 8, 12, 16];
@@ -49,7 +50,7 @@ export default function HlsSetting({ concurrent, retries, onChange }: Props) {
 
   return (
     <div className="section-card">
-      <div className="section-title">{t("hls.title")}</div>
+      <SectionTitle title={t("hls.title")} tip={t("hls.hint")} />
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
         <label className="flex items-center gap-2 text-xs text-zinc-600">
           {t("hls.concurrent")}
@@ -92,7 +93,6 @@ export default function HlsSetting({ concurrent, retries, onChange }: Props) {
           {saving ? t("common.saving") : t("common.save")}
         </button>
       </div>
-      <div className="text-[11px] text-zinc-400 mt-2">{t("hls.hint")}</div>
     </div>
   );
 }

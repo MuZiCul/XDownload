@@ -5,6 +5,7 @@ import type { AppSettings } from "../../lib/types";
 import { toast } from "sonner";
 import { Save, FolderOpen } from "lucide-react";
 import { useI18n } from "../../lib/i18n";
+import SectionTitle from "./SectionTitle";
 
 type Props = {
   dir: string;
@@ -47,7 +48,7 @@ export default function DirSetting({ dir, onChange }: Props) {
 
   return (
     <div className="section-card">
-      <div className="section-title">{t("dir.title")}</div>
+      <SectionTitle title={t("dir.title")} tip={t("dir.hint")} />
       <div className="flex items-center gap-2">
         <input
           type="text"

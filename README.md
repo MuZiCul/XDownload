@@ -41,7 +41,9 @@ Powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp) + ffmpeg, wrapped in a cle
 - **Cookies** — import from your browser to access restricted content
 - **Built-in tools** — download yt-dlp + ffmpeg right from the settings page
 - **Update alerts** — startup checks for new versions of XDownload / yt-dlp / ffmpeg
-- **Browser extension** — an MV3 companion extension adds a download button right on X posts; one click deep-links the video into the desktop app
+- **Bookmarks sync** — manual one-click sync of your X bookmarks with a preview dialog: every video bookmark (downloaded or not, color-coded) with per-item checkboxes for batch or single enqueue; already-downloaded ones can be re-downloaded. The download history acts as the cursor, so skipped/deleted tasks show up again on the next sync
+- **Bookmark catalogue** — every synced bookmark (video and non-video) is persisted locally in SQLite; browse them offline in a modal and download / re-download any of them
+- **Browser extension** — an MV3 companion extension adds a download button right on X posts; one click deep-links the video into the desktop app; v1.3.0 auto-captures and pushes the latest queryId for bookmarks sync
 - **Privacy mode** — mask video titles with `***` and blur covers with a frosted-glass overlay; toggle from settings, the status bar, or the tray, and it persists across restarts
 - **Log viewer** — open a live, auto-refreshing log viewer (dark theme, level coloring, per-date tabs) in the browser right from the settings page
 - **Batch deep-links** — rapid-fire clicks on several X posts get merged into one batch (deduped, concurrent info fetch) and show a single toast instead of N
@@ -52,7 +54,7 @@ Powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp) + ffmpeg, wrapped in a cle
 
 Grab the latest installer from [Releases](https://github.com/MuZiCul/XDownload/releases).
 
-- **Windows**: `XDownload_2.8.8_x64-setup.exe` (NSIS) / `.msi`
+- **Windows**: `XDownload_2.9.0_x64-setup.exe` (NSIS) / `.msi`
 
 First launch downloads yt-dlp + ffmpeg automatically — or drop them into `bin/` yourself.
 

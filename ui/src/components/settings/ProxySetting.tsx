@@ -4,6 +4,7 @@ import type { ProxyStatus, ProxyTestResult, AppSettings } from "../../lib/types"
 import { toast } from "sonner";
 import { Save } from "lucide-react";
 import { useI18n } from "../../lib/i18n";
+import SectionTitle from "./SectionTitle";
 
 // Cache the last proxy connectivity test keyed by (host, port, scheme) so that
 // switching tabs (which remounts this component) does not re-test an unchanged
@@ -217,18 +218,23 @@ export default function ProxySetting({ host, port, scheme, onChange }: Props) {
 
   return (
     <div className="section-card">
-      <div className="section-title">
-        {t("proxy.title")}
-        {testState === "testing" && (
-          <span className="normal-case font-normal text-[10px] text-yellow-600 ml-2">{t("proxy.testing")}</span>
-        )}
-        {testState === "success" && (
-          <span className="normal-case font-normal text-[10px] text-green-600 ml-2">{t("proxy.ok")}</span>
-        )}
-        {testState === "error" && (
-          <span className="normal-case font-normal text-[10px] text-red-600 ml-2">{t("proxy.error")}</span>
-        )}
-      </div>
+      <SectionTitle
+        title={
+          <>
+            {t("proxy.title")}
+            {testState === "testing" && (
+              <span className="normal-case font-normal text-[10px] text-yellow-600 ml-2">{t("proxy.testing")}</span>
+            )}
+            {testState === "success" && (
+              <span className="normal-case font-normal text-[10px] text-green-600 ml-2">{t("proxy.ok")}</span>
+            )}
+            {testState === "error" && (
+              <span className="normal-case font-normal text-[10px] text-red-600 ml-2">{t("proxy.error")}</span>
+            )}
+          </>
+        }
+        tip={t("proxy.hint")}
+      />
       <div className="flex flex-wrap items-center gap-2">
         <label className="flex items-center gap-1 text-xs cursor-pointer">
           <input type="radio" name="proxyMode" checked={mode === "none"} onChange={() => handleModeChange("none")} className="size-3" />
