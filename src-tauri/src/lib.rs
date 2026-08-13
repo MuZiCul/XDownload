@@ -554,7 +554,14 @@ async fn process_deep_link_batch(handle: &tauri::AppHandle, targets: &[String]) 
                 .download_rate_limit
                 .clone(),
         };
-        match queue.enqueue(config, title, true, info) {
+        // 深链（浏览器扩展）批量入队 → 标记为「批量」来源。
+        match queue.enqueue(
+            config,
+            title,
+            true,
+            info,
+            crate::services::download_history::source::BATCH,
+        ) {
             Ok(id) => {
                 added += 1;
                 tracing::info!("deep-link: enqueued task {} for {}", id, target);

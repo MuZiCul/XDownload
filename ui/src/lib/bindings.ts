@@ -53,13 +53,15 @@ export async function enqueueDownload(
   config: DownloadConfig,
   title?: string | null,
   autoStart?: boolean,
-  info?: unknown
+  info?: unknown,
+  source?: string
 ): Promise<string> {
   return invoke("enqueue_download", {
     config,
     title,
     autoStart: autoStart ?? true,
     info,
+    source,
   });
 }
 
@@ -143,6 +145,8 @@ export interface QueueItem {
   status: "queued" | "downloading" | "paused";
   /** 后端持久化的卡片信息（保存进度重启后恢复）。 */
   info?: unknown;
+  /** 任务来源：single | batch | bookmark（后端已转换，缺省 single）。 */
+  source?: string;
 }
 
 export async function listDownloadHistory(): Promise<DownloadHistoryItem[]> {

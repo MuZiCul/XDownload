@@ -225,6 +225,34 @@ export interface DownloadHistoryItem {
   error: string | null;
   /** Number of download attempts including retries. */
   attempts: number;
+  /** Task source: "single" | "batch" | "bookmark"（缺省 "single"，兼容旧记录）。 */
+  source: string;
+}
+
+/** 下载任务来源（与后端 download_history::source 的字符串约定一致）。 */
+export const TaskSource = {
+  Single: "single",
+  Batch: "batch",
+  Bookmark: "bookmark",
+} as const;
+
+export type TaskSourceValue = (typeof TaskSource)[keyof typeof TaskSource];
+
+/** 来源 → i18n key（t("tasks.source.single") 等）。 */
+export function taskSourceKey(source: string | undefined | null): string | null {
+  switch (source) {
+    case TaskSource.Batch:
+      return "tasks.source.batch";
+    case TaskSource.Bookmark:
+      return "tasks.source.bookmark";
+    case TaskSource.Single:
+    case undefined:
+    case null:
+      // 缺省值一律按「单链」处理（与后端 0 是缺省一致）。
+      return "tasks.source.single";
+    default:
+      return null;
+  }
 }
 
 export interface BootstrapProgress {

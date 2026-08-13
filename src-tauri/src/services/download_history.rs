@@ -74,6 +74,11 @@ pub struct DownloadRecord {
     /// Number of download attempts (including retries).
     #[serde(default)]
     pub attempts: u8,
+    /// Task source: "single" | "batch" | "bookmark".
+    /// Stored as an integer column (0/1/2) and converted here by the backend,
+    /// so the frontend always receives a readable value.
+    #[serde(default = "default_source")]
+    pub source: String,
 }
 
 /// SQL status column: 0 = Success, 1 = Failed.
@@ -82,6 +87,44 @@ fn status_code(s: DownloadStatus) -> i64 {
         DownloadStatus::Success => 0,
         DownloadStatus::Failed => 1,
     }
+}
+
+/// Source values used by both the `downloads.source` column and queue tasks.
+/// Numeric values live only in storage (DB column + queue persistence); the
+/// frontend always sees the string form via [`source_name`].
+pub mod source {
+    pub const SINGLE: i64 = 0; // 单链：下载页单条 URL
+    pub const BATCH: i64 = 1; // 批量：历史页批量 URL / 深链扩展批量
+    pub const BOOKMARK: i64 = 2; // 书签：书签同步 / 书签目录单条下载
+
+    /// Default string form used when deserializing a legacy record.
+    pub fn default_name() -> &'static str {
+        "single"
+    }
+}
+
+/// Convert a stored integer source (0/1/2) to its readable string form.
+/// Unknown values fall back to "single" (the legacy default).
+pub fn source_name(code: i64) -> String {
+    match code {
+        source::BATCH => "batch".to_string(),
+        source::BOOKMARK => "bookmark".to_string(),
+        _ => "single".to_string(),
+    }
+}
+
+/// Parse a source string into its stored integer code.
+/// Unknown / missing values fall back to SINGLE (the legacy default).
+pub fn source_code(s: &str) -> i64 {
+    match s {
+        "batch" => source::BATCH,
+        "bookmark" => source::BOOKMARK,
+        _ => source::SINGLE,
+    }
+}
+
+fn default_source() -> String {
+    source::default_name().to_string()
 }
 
 /// Map one `downloads` row back into a [`DownloadRecord`].
@@ -109,12 +152,13 @@ fn record_from_row(row: &Row<'_>) -> rusqlite::Result<DownloadRecord> {
         },
         error: row.get("error")?,
         attempts: row.get::<_, i64>("attempts")? as u8,
+        source: source_name(row.get::<_, i64>("source").unwrap_or(0)),
     })
 }
 
 const SELECT_COLUMNS: &str = "video_id, title, thumbnail, url, uploader, duration, \
      view_count, like_count, file_path, file_paths, file_size, downloaded_at, \
-     status, error, attempts";
+     status, error, attempts, source";
 
 pub struct DownloadHistory;
 
@@ -123,7 +167,6 @@ impl DownloadHistory {
     /// use. Call once at application startup. Failures are logged but never
     /// panic — history degrades to empty.
     pub fn init() {
-        let _guard = crate::services::db::DB_LOCK.lock().unwrap();
         if let Err(e) = crate::services::db::open() {
             warn!("failed to initialize database: {e:#}");
         }
@@ -131,7 +174,6 @@ impl DownloadHistory {
 
     /// Look up a download record by video id (does not check the file exists).
     pub fn get(video_id: &str) -> Option<DownloadRecord> {
-        let _guard = crate::services::db::DB_LOCK.lock().unwrap();
         let conn = crate::services::db::open().ok()?;
         Self::get_in(&conn, video_id).ok().flatten()
     }
@@ -163,7 +205,6 @@ impl DownloadHistory {
 
     /// List all download records, most recent first.
     pub fn list() -> Vec<DownloadRecord> {
-        let _guard = crate::services::db::DB_LOCK.lock().unwrap();
         let Ok(conn) = crate::services::db::open() else {
             return Vec::new();
         };
@@ -181,7 +222,6 @@ impl DownloadHistory {
     /// Remove a single record by video id.
     pub fn remove(video_id: &str) -> Result<()> {
         info!("removing download history record: video_id={video_id}");
-        let _guard = crate::services::db::DB_LOCK.lock().unwrap();
         let conn = crate::services::db::open()?;
         let changed = conn.execute(
             "DELETE FROM downloads WHERE video_id = ?1",
@@ -196,7 +236,6 @@ impl DownloadHistory {
     /// Remove all download records.
     pub fn clear() -> Result<()> {
         info!("clearing all download history");
-        let _guard = crate::services::db::DB_LOCK.lock().unwrap();
         let conn = crate::services::db::open()?;
         conn.execute("DELETE FROM downloads", [])?;
         Ok(())
@@ -217,9 +256,9 @@ impl DownloadHistory {
         like_count: i64,
         file_path: Option<String>,
         file_paths: Vec<String>,
+        source: i64,
     ) -> Result<()> {
         info!("recording download success: video_id={video_id}, file_count={}", file_paths.len());
-        let _guard = crate::services::db::DB_LOCK.lock().unwrap();
         let conn = crate::services::db::open()?;
         record_in(
             &conn,
@@ -238,6 +277,7 @@ impl DownloadHistory {
             DownloadStatus::Success,
             None,
             1,
+            source,
         )
         .map_err(Into::into)
     }
@@ -245,7 +285,6 @@ impl DownloadHistory {
     /// Update the file size (bytes) of an existing record after a successful
     /// download, so the history can display it.
     pub fn record_file_size(video_id: &str, size: i64) -> Result<()> {
-        let _guard = crate::services::db::DB_LOCK.lock().unwrap();
         let conn = crate::services::db::open()?;
         conn.execute(
             "UPDATE downloads SET file_size = ?1 WHERE video_id = ?2",
@@ -267,9 +306,9 @@ impl DownloadHistory {
         like_count: i64,
         error: String,
         attempts: u8,
+        source: i64,
     ) -> Result<()> {
         info!("recording download failure: video_id={video_id}, attempts={attempts}");
-        let _guard = crate::services::db::DB_LOCK.lock().unwrap();
         let conn = crate::services::db::open()?;
         record_in(
             &conn,
@@ -288,6 +327,7 @@ impl DownloadHistory {
             DownloadStatus::Failed,
             Some(error),
             attempts,
+            source,
         )
         .map_err(Into::into)
     }
@@ -373,14 +413,15 @@ fn record_in(
     status: DownloadStatus,
     error: Option<String>,
     attempts: u8,
+    source: i64,
 ) -> rusqlite::Result<()> {
     let file_paths_json = serde_json::to_string(&file_paths).unwrap_or_else(|_| "[]".to_string());
     conn.execute(
         "INSERT INTO downloads
             (video_id, title, thumbnail, url, uploader, duration, view_count,
              like_count, file_path, file_paths, file_size, downloaded_at,
-             status, error, attempts)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)
+             status, error, attempts, source)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)
          ON CONFLICT(video_id) DO UPDATE SET
              title=excluded.title, thumbnail=excluded.thumbnail,
              url=excluded.url, uploader=excluded.uploader,
@@ -388,7 +429,8 @@ fn record_in(
              like_count=excluded.like_count, file_path=excluded.file_path,
              file_paths=excluded.file_paths, file_size=excluded.file_size,
              downloaded_at=excluded.downloaded_at, status=excluded.status,
-             error=excluded.error, attempts=excluded.attempts",
+             error=excluded.error, attempts=excluded.attempts,
+             source=excluded.source",
         params![
             video_id,
             title,
@@ -405,6 +447,7 @@ fn record_in(
             status_code(status),
             error,
             attempts as i64,
+            source,
         ],
     )?;
     Ok(())
@@ -505,6 +548,7 @@ mod tests {
             status: DownloadStatus::Success,
             error: None,
             attempts: 1,
+            source: source_name(source::SINGLE),
         }
     }
 
@@ -529,6 +573,7 @@ mod tests {
             rec.status,
             rec.error.clone(),
             rec.attempts,
+            source_code(&rec.source),
         )
         .unwrap();
 
@@ -547,6 +592,7 @@ mod tests {
         assert_eq!(got.downloaded_at, 1_700_000_000);
         assert_eq!(got.status, DownloadStatus::Success);
         assert_eq!(got.attempts, 1);
+        assert_eq!(got.source, "single");
 
         // Unknown id → None.
         assert!(DownloadHistory::get_in(&conn, "nope").unwrap().is_none());
@@ -558,7 +604,7 @@ mod tests {
         let rec = sample_record("111");
         record_in(
             &conn, "111", None, None, None, None, 0, 0, 0, None, vec![], None, 5,
-            DownloadStatus::Failed, Some("boom".to_string()), 3,
+            DownloadStatus::Failed, Some("boom".to_string()), 3, source::BATCH,
         )
         .unwrap();
         // Keep the sample in between to prove the count stays at 1.
@@ -579,6 +625,7 @@ mod tests {
             DownloadStatus::Success,
             None,
             1,
+            source::BOOKMARK,
         )
         .unwrap();
 
@@ -591,9 +638,9 @@ mod tests {
     #[test]
     fn list_orders_by_downloaded_at_desc() {
         let conn = mem_conn();
-        record_in(&conn, "a", None, None, None, None, 0, 0, 0, None, vec![], None, 100, DownloadStatus::Success, None, 1).unwrap();
-        record_in(&conn, "b", None, None, None, None, 0, 0, 0, None, vec![], None, 200, DownloadStatus::Success, None, 1).unwrap();
-        record_in(&conn, "c", None, None, None, None, 0, 0, 0, None, vec![], None, 150, DownloadStatus::Success, None, 1).unwrap();
+        record_in(&conn, "a", None, None, None, None, 0, 0, 0, None, vec![], None, 100, DownloadStatus::Success, None, 1, source::SINGLE).unwrap();
+        record_in(&conn, "b", None, None, None, None, 0, 0, 0, None, vec![], None, 200, DownloadStatus::Success, None, 1, source::SINGLE).unwrap();
+        record_in(&conn, "c", None, None, None, None, 0, 0, 0, None, vec![], None, 150, DownloadStatus::Success, None, 1, source::SINGLE).unwrap();
 
         let ids: Vec<String> = DownloadHistory::list_in(&conn)
             .unwrap()
@@ -606,8 +653,8 @@ mod tests {
     #[test]
     fn remove_and_clear_work() {
         let conn = mem_conn();
-        record_in(&conn, "a", None, None, None, None, 0, 0, 0, None, vec![], None, 1, DownloadStatus::Success, None, 1).unwrap();
-        record_in(&conn, "b", None, None, None, None, 0, 0, 0, None, vec![], None, 2, DownloadStatus::Success, None, 1).unwrap();
+        record_in(&conn, "a", None, None, None, None, 0, 0, 0, None, vec![], None, 1, DownloadStatus::Success, None, 1, source::SINGLE).unwrap();
+        record_in(&conn, "b", None, None, None, None, 0, 0, 0, None, vec![], None, 2, DownloadStatus::Success, None, 1, source::SINGLE).unwrap();
 
         conn.execute("DELETE FROM downloads WHERE video_id = ?1", params!["a"]).unwrap();
         assert!(DownloadHistory::get_in(&conn, "a").unwrap().is_none());
@@ -622,7 +669,7 @@ mod tests {
         let conn = mem_conn();
         record_in(
             &conn, "f", Some("t".into()), None, None, None, 0, 0, 0, None, vec![],
-            None, 42, DownloadStatus::Failed, Some("err".into()), 3,
+            None, 42, DownloadStatus::Failed, Some("err".into()), 3, source::SINGLE,
         )
         .unwrap();
         let got = DownloadHistory::get_in(&conn, "f").unwrap().unwrap();

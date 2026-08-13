@@ -1,6 +1,6 @@
 [package]
 name = "xdownload"
-version = "2.9.0"
+version = "2.9.1"
 edition = "2021"
 description = "X/Twitter video downloader based on yt-dlp, rewritten in Rust"
 authors = ["MuZiCul"]
@@ -49,6 +49,9 @@ zip = "2"
 futures-util = "0.3"
 winreg = "0.52"
 rusqlite = { version = "0.32", features = ["bundled"] }
+# 连接池：r2d2_sqlite 0.25 精确依赖 rusqlite ^0.32 + r2d2 ^0.8，无需升级 rusqlite
+r2d2 = "0.8"
+r2d2_sqlite = "0.25"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = [

@@ -25,7 +25,6 @@ pub fn is_valid_query_id(value: &str) -> bool {
 
 /// Load the saved queryId, if any and valid.
 pub fn load() -> Option<String> {
-    let _guard = db::DB_LOCK.lock().unwrap();
     let conn = db::open().ok()?;
     conn.query_row(
         "SELECT value FROM config WHERE key = ?1",
@@ -42,7 +41,6 @@ pub fn save(value: &str) -> Result<()> {
         anyhow::bail!("invalid queryId: {value}");
     }
     tracing::info!("saving bookmarks queryId: {value}");
-    let _guard = db::DB_LOCK.lock().unwrap();
     let conn = db::open()?;
     conn.execute(
         "INSERT INTO config (key, value) VALUES (?1, ?2)

@@ -5,6 +5,7 @@ import {
   buildBatchConfig,
 } from "../../lib/downloadStore";
 import type { BookmarksListItem } from "../../lib/types";
+import { TaskSource } from "../../lib/types";
 import { toast } from "sonner";
 import { RefreshCw, Download, History, X } from "lucide-react";
 import { useI18n } from "../../lib/i18n";
@@ -54,7 +55,7 @@ export default function BookmarksSetting() {
       const s = await loadSettings().catch(() => null);
       await enqueueDownloadGlobal(
         buildBatchConfig(item.url, item.video_id, s),
-        { autoStart: true }
+        { autoStart: true, source: TaskSource.Bookmark }
       );
       toast.success(t("bookmarks.enqueued", { count: 1 }));
       // 刷新目录里的下载状态。

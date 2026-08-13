@@ -68,6 +68,8 @@ export interface DownloadTask {
   infoFailed?: boolean;
   /** 当前正在获取信息（用于「正在获取信息」徽标）。 */
   infoFetching?: boolean;
+  /** 任务来源：single | batch | bookmark。 */
+  source?: string;
 }
 
 export interface DownloadState {
@@ -325,6 +327,7 @@ export function initDownloadStore() {
           speed: "",
           stage: "",
           info: p.info as TaskInfo | undefined,
+          source: typeof p.source === "string" ? p.source : undefined,
         },
       ],
     });
@@ -435,6 +438,7 @@ export function initDownloadStore() {
           stage: "",
           // 后端持久化的卡片信息（保存进度退出重启后恢复）。
           info: (it.info as TaskInfo | undefined) ?? undefined,
+          source: typeof it.source === "string" ? it.source : undefined,
         })),
       });
     })
@@ -448,7 +452,7 @@ export function initDownloadStore() {
  *  the task so cards can show cover / author / stats immediately. */
 export async function enqueueDownloadGlobal(
   cfg: DownloadConfig,
-  opts?: { title?: string | null; autoStart?: boolean }
+  opts?: { title?: string | null; autoStart?: boolean; source?: string }
 ): Promise<string> {
   const info: TaskInfo = {
     thumbnail: cfg.thumbnail ?? null,
@@ -459,9 +463,17 @@ export async function enqueueDownloadGlobal(
     title: cfg.title ?? null,
   };
   // 把 info 一并提交给后端持久化（随 queue.json 保存，重启后可恢复）。
-  const id = await enqueueDownload(cfg, opts?.title ?? null, opts?.autoStart, info);
+  const id = await enqueueDownload(
+    cfg,
+    opts?.title ?? null,
+    opts?.autoStart,
+    info,
+    opts?.source
+  );
   setState({
-    queueTasks: state.queueTasks.map((t) => (t.id === id ? { ...t, info } : t)),
+    queueTasks: state.queueTasks.map((t) =>
+      t.id === id ? { ...t, info, source: opts?.source ?? t.source } : t
+    ),
   });
   return id;
 }
@@ -523,6 +535,9 @@ export async function refreshQueueGlobal() {
           stage: existing?.stage ?? "",
           info:
             existing?.info ?? ((it.info as TaskInfo | undefined) ?? undefined),
+          source:
+            existing?.source ??
+            (typeof it.source === "string" ? it.source : undefined),
         };
       }),
     });

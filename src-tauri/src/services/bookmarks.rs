@@ -982,8 +982,15 @@ fn enqueue_bookmark_item(
     // auto_start=false：先排队，等前端两阶段信息获取（fetchVideoInfo →
     // startQueue）后再启动下载，与历史页批量 URL 路径一致；否则任务会
     // 立即开始下载、卡片信息却要等 download-started 兜底才补上。
+    // source=BOOKMARK：书签同步入队标记为「书签」来源。
     queue
-        .enqueue(download_cfg, Some(item.text.clone()), false, None)
+        .enqueue(
+            download_cfg,
+            Some(item.text.clone()),
+            false,
+            None,
+            crate::services::download_history::source::BOOKMARK,
+        )
         .map(|_| ())
 }
 
@@ -1923,6 +1930,9 @@ mod tests {
                 status,
                 error: None,
                 attempts: 0,
+                source: crate::services::download_history::source_name(
+                    crate::services::download_history::source::SINGLE,
+                ),
             }
         }
 

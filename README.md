@@ -48,13 +48,15 @@ Powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp) + ffmpeg, wrapped in a cle
 - **Log viewer** — open a live, auto-refreshing log viewer (dark theme, level coloring, per-date tabs) in the browser right from the settings page
 - **Batch deep-links** — rapid-fire clicks on several X posts get merged into one batch (deduped, concurrent info fetch) and show a single toast instead of N
 - **Resume switch** — optional toggle that auto-resumes interrupted downloads from the breakpoint and hides the pause/start buttons (off by default)
+- **Source badges** — download task & history cards show where each item came from (bookmark / batch / single link), so you can tell at a glance which entry added it
+- **Faster database** — download history & bookmarks use a connection pool + WAL mode: reads run concurrently and never block the download writer
 - **i18n** — English & 简体中文, switch instantly without restart
 
 ## Install
 
 Grab the latest installer from [Releases](https://github.com/MuZiCul/XDownload/releases).
 
-- **Windows**: `XDownload_2.9.0_x64-setup.exe` (NSIS) / `.msi`
+- **Windows**: `XDownload_2.9.1_x64-setup.exe` (NSIS) / `.msi`
 
 First launch downloads yt-dlp + ffmpeg automatically — or drop them into `bin/` yourself.
 
