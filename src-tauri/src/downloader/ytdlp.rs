@@ -6,7 +6,7 @@ use crate::models::video_info::VideoInfo;
 use crate::services::config::ConfigManager;
 use crate::services::proxy::ProxyConfig;
 use crate::utils::process;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -59,7 +59,6 @@ pub struct DownloadedMeta {
 pub struct YtDlpDownloader {
     ytdlp_path: String,
     cookies_from_browser: Mutex<Option<String>>,
-    cookies_file: Mutex<Option<String>>,
     /// Per-task cancel flags (task_id → flag).
     task_cancel_flags: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
     /// Per-task child process PIDs (task_id → pid), so a single task can be
@@ -82,7 +81,6 @@ impl YtDlpDownloader {
         Self {
             ytdlp_path,
             cookies_from_browser: Mutex::new(None),
-            cookies_file: Mutex::new(None),
             task_cancel_flags: Arc::new(Mutex::new(HashMap::new())),
             task_pids: Arc::new(Mutex::new(HashMap::new())),
             task_meta: Arc::new(Mutex::new(HashMap::new())),
@@ -92,23 +90,10 @@ impl YtDlpDownloader {
     pub fn set_cookies_from_browser(&self, browser: &str) {
         let mut c = self.cookies_from_browser.lock().unwrap();
         *c = Some(browser.to_string());
-        let mut f = self.cookies_file.lock().unwrap();
-        *f = None;
-    }
-
-    pub fn set_cookies_file(&self, path: &str) {
-        let mut f = self.cookies_file.lock().unwrap();
-        *f = Some(path.to_string());
-        let mut c = self.cookies_from_browser.lock().unwrap();
-        *c = None;
     }
 
     pub fn get_cookies_from_browser(&self) -> Option<String> {
         self.cookies_from_browser.lock().unwrap().clone()
-    }
-
-    pub fn get_cookies_file(&self) -> Option<String> {
-        self.cookies_file.lock().unwrap().clone()
     }
 
     /// Cancel a specific multi-task download (by task id). Only that task's
@@ -128,16 +113,10 @@ impl YtDlpDownloader {
 
         // Add cookies from downloader state
         let browser = self.cookies_from_browser.lock().unwrap().clone();
-        let file = self.cookies_file.lock().unwrap().clone();
         if let Some(ref b) = browser {
             if !b.is_empty() {
                 cmd.push("--cookies-from-browser".to_string());
                 cmd.push(b.clone());
-            }
-        } else if let Some(ref f) = file {
-            if !f.is_empty() {
-                cmd.push("--cookies".to_string());
-                cmd.push(f.clone());
             }
         }
 
@@ -408,24 +387,16 @@ impl YtDlpDownloader {
         }
 
         // Cookies: prefer per-request config, fall back to downloader state
-        let (cookies_browser, cookies_file) =
-            if config.cookies_from_browser.is_some() || config.cookies_file.is_some() {
-                (config.cookies_from_browser.clone(), config.cookies_file.clone())
-            } else {
-                let browser = self.cookies_from_browser.lock().unwrap().clone();
-                let file = self.cookies_file.lock().unwrap().clone();
-                (browser, file)
-            };
+        let cookies_browser = if config.cookies_from_browser.is_some() {
+            config.cookies_from_browser.clone()
+        } else {
+            self.cookies_from_browser.lock().unwrap().clone()
+        };
 
         if let Some(ref b) = cookies_browser {
             if !b.is_empty() {
                 cmd.push("--cookies-from-browser".to_string());
                 cmd.push(b.clone());
-            }
-        } else if let Some(ref f) = cookies_file {
-            if !f.is_empty() {
-                cmd.push("--cookies".to_string());
-                cmd.push(f.clone());
             }
         }
 
@@ -661,11 +632,14 @@ impl YtDlpDownloader {
                 Some(s.to_string())
             }
         };
+        // yt-dlp 的数字字段可能是浮点（如 %(duration)s 输出 "454.601"），
+        // 也可能是整数（view_count/like_count）。统一用 f64 解析后取整，
+        // 否则浮点会被 parse::<i64>() 拒绝而静默丢失（历史 bug：duration 全为 0）。
         let num = |s: &str| -> Option<i64> {
             if s.is_empty() || s == "NA" {
                 None
             } else {
-                s.trim().parse().ok()
+                s.trim().parse::<f64>().ok().map(|f| f as i64)
             }
         };
         Some(DownloadedMeta {
@@ -781,49 +755,32 @@ impl YtDlpDownloader {
         if !result.is_success() {
             let stderr = result.stderr_text();
             if crate::services::cookies::CookieManager::is_chrome_lock_error(&stderr) {
-                let fallback = crate::services::cookies::BROWSER_FALLBACK_ORDER
-                    .iter()
-                    .find(|b| {
-                        let current = self.cookies_from_browser.lock().unwrap();
-                        !b.eq_ignore_ascii_case(current.as_deref().unwrap_or(""))
-                    })
-                    .map(|b| b.to_string());
-
-                if let Some(fb) = fallback {
-                    tracing::warn!("Chrome locked, switching to {}", fb);
-                    {
-                        let mut c = self.cookies_from_browser.lock().unwrap();
-                        *c = Some(fb);
-                    }
-
-                    let mut new_cmd: Vec<String> = cmd.to_vec();
-                    let browser = self.cookies_from_browser.lock().unwrap().clone();
-                    let mut found = false;
-                    let mut i = 0;
-                    while i < new_cmd.len() {
-                        if new_cmd[i] == "--cookies-from-browser" && i + 1 < new_cmd.len() {
-                            new_cmd[i + 1] = browser.clone().unwrap_or_default();
-                            found = true;
-                            break;
-                        }
-                        i += 1;
-                    }
-                    drop(browser);
-                    if !found {
-                        let browser = self.cookies_from_browser.lock().unwrap().clone();
-                        new_cmd.push("--cookies-from-browser".to_string());
-                        new_cmd.push(browser.unwrap_or_default());
-                    }
-
-                    let new_args: Vec<&str> = new_cmd.iter().map(|s| s.as_str()).collect();
-                    return process::execute_with_timeout(&new_args, timeout_secs)
-                        .await
-                        .context("retry with fallback browser failed");
-                }
+                // The configured browser (e.g. Chrome) has its Cookies DB
+                // exclusively locked while it is running, so yt-dlp cannot
+                // read it. We deliberately do NOT silently switch to another
+                // browser: the user explicitly chose this browser, and silently
+                // using a different one could authenticate with the wrong
+                // account (or fail if the fallback is not logged in). Instead,
+                // surface a clear, actionable error.
+                anyhow::bail!(
+                    "无法读取浏览器 Cookies：{} 正在运行且锁定了 Cookie 数据库。\n请关闭 {} 后重试，或在设置页切换到其他浏览器（如 Firefox）。\n\n{}",
+                    self.browser_display_name(),
+                    self.browser_display_name(),
+                    stderr.trim()
+                );
             }
         }
 
         Ok(result)
+    }
+
+    /// Human-readable name of the currently configured cookie browser.
+    fn browser_display_name(&self) -> String {
+        self.cookies_from_browser
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| "浏览器".to_string())
     }
 }
 

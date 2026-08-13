@@ -24,7 +24,7 @@ import {
   fetchVideoInfo,
   openFilePath,
 } from "./bindings";
-import type { DownloadConfig } from "./types";
+import type { AppSettings, DownloadConfig } from "./types";
 import { friendlyErrorMessage } from "./errorMessages";
 import { t as i18nT } from "./i18n";
 
@@ -222,6 +222,35 @@ function resumeInfoFetch() {
 /** Subscribe a component to the global download state. */
 export function useDownloadStore(): DownloadState {
   return useSyncExternalStore(subscribe, getSnapshot);
+}
+
+/** Build a batch-style DownloadConfig from settings. Shared by the history
+ *  page, duplicate-confirm modal and the bookmarks list, so every download
+ *  path honours the same settings. */
+export function buildBatchConfig(
+  u: string,
+  videoId: string | null,
+  s: AppSettings | null
+): DownloadConfig {
+  return {
+    url: u,
+    video_id: videoId,
+    title: null,
+    thumbnail: null,
+    format_id: "bestvideo+bestaudio/best",
+    output_dir: s?.download_dir ?? "downloads",
+    output_template: "%(title)s.%(ext)s",
+    extract_audio: false,
+    embed_subtitles: false,
+    embed_thumbnail: false,
+    write_thumbnail: false,
+    proxy: null,
+    socket_timeout: 30,
+    download_rate_limit: s?.download_rate_limit ?? null,
+    cookies_from_browser: s?.cookies_from_browser ?? null,
+    max_height: 0,
+    download_archive: null,
+  };
 }
 
 /**

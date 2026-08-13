@@ -1,5 +1,6 @@
 use crate::models::config::AppSettings;
 use crate::services::config::ConfigManager;
+use tauri::Emitter;
 
 /// Load settings from the active config file (config/settings.json).
 #[tauri::command]
@@ -40,35 +41,19 @@ pub fn apply_saved_proxy() -> bool {
     ConfigManager::apply_saved_proxy()
 }
 
-/// Load saved cookies config (does not apply to downloader).
+/// Load the saved cookie source (browser name) from config.
 #[tauri::command]
-pub fn load_saved_cookies() -> (Option<String>, Option<String>) {
-    ConfigManager::load_saved_cookies()
+pub fn load_cookie_source() -> Option<String> {
+    ConfigManager::load_cookie_source()
 }
 
-/// Load cookies from active config and apply to downloader (read-only).
+/// Save the cookie source (browser name) and apply it to the downloader.
 #[tauri::command]
-pub fn apply_saved_cookies(
-    state: tauri::State<'_, crate::commands::download::DownloaderState>,
-) -> Result<(), String> {
-    let (browser, file) = ConfigManager::load_saved_cookies();
-    if let Some(ref b) = browser {
-        state.downloader.set_cookies_from_browser(b);
-    } else if let Some(ref f) = file {
-        state.downloader.set_cookies_file(f);
-    } else {
-        state.downloader.set_cookies_from_browser("");
-    }
-    Ok(())
-}
-
-/// Save cookies selection and apply to downloader.
-#[tauri::command]
-pub fn save_and_apply_cookies(
+pub fn save_cookie_source(
     browser: Option<String>,
     state: tauri::State<'_, crate::commands::download::DownloaderState>,
 ) -> Result<(), String> {
-    ConfigManager::save_cookies(browser.as_deref(), None::<&str>)
+    ConfigManager::save_cookie_source(browser.as_deref())
         .map_err(|e| e.to_string())?;
     if let Some(ref b) = browser {
         if !b.is_empty() {
@@ -116,6 +101,56 @@ pub fn accept_disclaimer() -> Result<(), String> {
     ConfigManager::accept_disclaimer().map_err(|e| e.to_string())
 }
 
+/// Stage 1 of the manual bookmarks sync: fetch all bookmarks and diff against
+/// the download history (the sync cursor). Returns what a sync would find
+/// (total / new count / the video-bearing new bookmarks) WITHOUT touching the
+/// queue. Emits `bookmark-sync-progress` events at each phase so the UI can
+/// show a real progress step (the modal cannot be closed while syncing).
+#[tauri::command]
+pub async fn sync_bookmarks_preview(
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    let browser = crate::services::config::ConfigManager::load_cookie_source()
+        .unwrap_or_default();
+    tracing::info!("[cmd] sync_bookmarks_preview called, browser={browser}");
+    // 每阶段向后端 emit 进度事件；前端全局模态据此显示步骤。
+    let emit_step = |step: crate::services::bookmarks::BookmarkSyncStep| {
+        let _ = app.emit("bookmark-sync-progress", serde_json::json!({ "step": step }));
+    };
+    match crate::services::bookmarks::fetch_bookmark_changes(&browser, emit_step).await {
+        Ok(changes) => {
+            let v = serde_json::to_value(&changes).map_err(|e| e.to_string())?;
+            tracing::info!("[cmd] sync_bookmarks_preview ok");
+            Ok(v)
+        }
+        Err(e) => {
+            tracing::warn!("[cmd] sync_bookmarks_preview failed: {e}");
+            Err(e)
+        }
+    }
+}
+
+/// Stage 2 of the manual bookmarks sync: enqueue the user-confirmed videos
+/// into the download queue. Nothing is persisted here — the download history
+/// acts as the sync cursor.
+#[tauri::command]
+pub async fn confirm_bookmarks_enqueue(
+    items: Vec<crate::services::bookmarks::BookmarkItem>,
+    state: tauri::State<'_, crate::commands::download::DownloaderState>,
+) -> Result<serde_json::Value, String> {
+    let queue = state.queue.clone();
+    let result = crate::services::bookmarks::confirm_bookmark_enqueue(&queue, items).await?;
+    serde_json::to_value(&result).map_err(|e| e.to_string())
+}
+
+/// List the persisted bookmark catalogue (every bookmark seen during syncs,
+/// video and non-video alike) with live download-state flags. Reads from the
+/// `bookmarks` table, so it works offline without touching X.
+#[tauri::command]
+pub fn list_bookmarks() -> Vec<crate::services::bookmarks_store::BookmarkRow> {
+    crate::services::bookmarks_store::list()
+}
+
 /// Load settings from an arbitrary file path.
 #[tauri::command]
 pub fn load_settings_from_path(path: String) -> Result<AppSettings, String> {
@@ -147,10 +182,6 @@ pub fn apply_and_persist_settings(
     if let Some(ref browser) = settings.cookies_from_browser {
         if !browser.is_empty() {
             state.downloader.set_cookies_from_browser(browser);
-        }
-    } else if let Some(ref file) = settings.cookies_file {
-        if !file.is_empty() {
-            state.downloader.set_cookies_file(file);
         }
     }
     // Apply language to runtime
@@ -184,10 +215,6 @@ pub fn apply_default_config(
     if let Some(ref browser) = defaults.cookies_from_browser {
         if !browser.is_empty() {
             state.downloader.set_cookies_from_browser(browser);
-        }
-    } else if let Some(ref file) = defaults.cookies_file {
-        if !file.is_empty() {
-            state.downloader.set_cookies_file(file);
         }
     }
     if let Some(ref lang) = defaults.lang {

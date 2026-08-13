@@ -30,26 +30,15 @@ export default function AboutPage() {
       }
 
       if (update) {
-        toast(t("about.newVersion", { ver: update.version }), {
-          description: t("about.currentVersion", {
-            ver: update.currentVersion,
-          }),
-          action: {
-            label: t("about.goDownload"),
-            onClick: () => {
-              // 打开与启动检查一致的拟态玻璃更新窗（可下载更新/前往 GitHub）。
-              window.dispatchEvent(
-                new CustomEvent("open-update-modal", {
-                  detail: {
-                    version: update.version,
-                    currentVersion: update.currentVersion,
-                  },
-                })
-              );
+        // 有更新：直接弹拟态玻璃更新窗（可下载更新/前往 GitHub），不再弹 toast。
+        window.dispatchEvent(
+          new CustomEvent("open-update-modal", {
+            detail: {
+              version: update.version,
+              currentVersion: update.currentVersion,
             },
-          },
-          duration: 8000,
-        });
+          })
+        );
       } else {
         toast.success(t("about.upToDate"));
       }

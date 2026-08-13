@@ -134,6 +134,11 @@ impl ConfigManager {
         Self::save(&cfg)
     }
 
+    /// Public wrapper of [`Self::merge_and_save`] for cross-module use.
+    pub fn merge_and_save_public(updater: impl FnOnce(&mut AppSettings)) -> Result<()> {
+        Self::merge_and_save(updater)
+    }
+
     // ==================== Proxy ====================
 
     pub fn save_proxy(host: &str, port: u32, scheme: &str) -> Result<()> {
@@ -176,20 +181,12 @@ impl ConfigManager {
 
     // ==================== Cookies ====================
 
-    pub fn save_cookies(browser: Option<&str>, cookies_file: Option<&str>) -> Result<()> {
-        info!("saving cookies config: browser={:?}, file={:?}", browser, cookies_file);
+    pub fn save_cookie_source(browser: Option<&str>) -> Result<()> {
+        info!("saving cookies config: browser={:?}", browser);
         Self::merge_and_save(|cfg| {
             if let Some(b) = browser {
                 if !b.is_empty() {
                     cfg.cookies_from_browser = Some(b.to_string());
-                    cfg.cookies_file = None;
-                    return;
-                }
-            }
-            if let Some(f) = cookies_file {
-                if !f.is_empty() {
-                    cfg.cookies_file = Some(f.to_string());
-                    cfg.cookies_from_browser = None;
                 }
             }
         })
@@ -199,19 +196,13 @@ impl ConfigManager {
         info!("clearing cookies config");
         Self::merge_and_save(|cfg| {
             cfg.cookies_from_browser = None;
-            cfg.cookies_file = None;
         })
     }
 
-    pub fn load_saved_cookies() -> (Option<String>, Option<String>) {
+    pub fn load_cookie_source() -> Option<String> {
         let cfg = Self::load();
-        if let Some(browser) = cfg.cookies_from_browser.filter(|b| !b.is_empty()) {
-            (Some(browser), None)
-        } else if let Some(file) = cfg.cookies_file.filter(|f| !f.is_empty()) {
-            (None, Some(file))
-        } else {
-            (None, None)
-        }
+        cfg.cookies_from_browser
+            .filter(|b| !b.is_empty())
     }
 
     // ==================== Language ====================

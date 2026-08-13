@@ -11,6 +11,59 @@
  *      中的 `/status/<id>` 链接。
  */
 (() => {
+  // ============================================================
+  // 书签 queryId 打印（来自 background 的 webRequest 观察）
+  //
+  // background.js 通过 chrome.webRequest 观察书签 GraphQL 请求
+  // URL（只读，完全不影响页面），捕获 queryId 后：
+  //   1. 主动向本脚本推送（chrome.tabs.sendMessage）
+  //   2. 本脚本也定期轮询 background，覆盖推送丢失/注入较晚的情况
+  //
+  // 注意：绝不能在这里改写页面 fetch/XMLHttpRequest —— X 对书签
+  // 等私有页面有反篡改检测，hook 会被识别并拒绝加载数据。
+  // ============================================================
+  function logQueryId(qid) {
+    if (!qid) return;
+    console.log("[XDownload] Bookmarks queryId =", qid, "(via extension)");
+  }
+
+  let reported = new Set();
+  function reportFrom(resp) {
+    if (resp && Array.isArray(resp.queryIds)) {
+      resp.queryIds.forEach((qid) => {
+        if (qid && !reported.has(qid)) {
+          reported.add(qid);
+          logQueryId(qid);
+        }
+      });
+    }
+  }
+
+  try {
+    chrome.runtime.onMessage.addListener((msg) => {
+      if (msg && msg.type === "xdl-bookmarks-queryid") {
+        reportFrom({ queryIds: [msg.queryId] });
+      }
+    });
+  } catch (e) {
+    // ignore
+  }
+
+  // 定期轮询 background：content script 可能在书签请求之后才注入
+  // （document_idle），此时需主动取回已捕获的 queryId。
+  let pollCount = 0;
+  const POLL_MAX = 10; // ~20s
+  (function pollQueryId() {
+    try {
+      chrome.runtime.sendMessage({ type: "xdl-get-queryid" }, reportFrom);
+    } catch (e) {
+      // ignore
+    }
+    if (++pollCount < POLL_MAX) {
+      setTimeout(pollQueryId, 2000);
+    }
+  })();
+
   const PROTOCOL_PREFIX = "xdownload://add?url=";
   const BUTTON_DATA_ATTR = "data-xdl-dl";
   const BUTTON_ID_PREFIX = "xdl-btn-";

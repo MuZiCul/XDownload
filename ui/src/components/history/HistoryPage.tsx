@@ -30,11 +30,7 @@ import {
   loadSettings,
   checkVideoDownloaded,
 } from "../../lib/bindings";
-import type {
-  DownloadHistoryItem,
-  DownloadConfig,
-  AppSettings,
-} from "../../lib/types";
+import type { DownloadHistoryItem } from "../../lib/types";
 import {
   useDownloadStore,
   enqueueDownloadGlobal,
@@ -48,6 +44,7 @@ import {
   prepareQueue,
   refetchTaskInfoGlobal,
   reorderQueueTaskGlobal,
+  buildBatchConfig,
   type DownloadTask,
 } from "../../lib/downloadStore";
 import { friendlyErrorMessage } from "../../lib/errorMessages";
@@ -84,9 +81,9 @@ export default function HistoryPage({ onRedownload }: Props) {
   const [batchOpen, setBatchOpen] = useState(false);
   // 断点续传开关（默认关）：开启时隐藏暂停/开始按钮。
   const [resumeSupport, setResumeSupport] = useState(false);
-  // 历史记录删除确认：null = 未打开，否则为待删记录 id 与文件路径。
+  // 历史记录删除确认：null = 未打开，否则为待删记录的 video_id 与文件路径。
   const [deleteTarget, setDeleteTarget] = useState<{
-    id: string;
+    videoId: string;
     filePath: string | null;
   } | null>(null);
   // 历史失败卡片展开的错误详情记录 id（null = 全部收起）。
@@ -154,7 +151,7 @@ export default function HistoryPage({ onRedownload }: Props) {
   const filteredItems = searchInput
     ? items.filter((item) => {
         const q = searchInput.toLowerCase();
-        return [item.title, item.uploader, item.url, item.id].some(
+        return [item.title, item.uploader, item.url, item.video_id].some(
           (v) => v != null && v.toLowerCase().includes(q)
         );
       })
@@ -205,6 +202,9 @@ export default function HistoryPage({ onRedownload }: Props) {
   useEffect(() => {
     // 每次进入页面 / 队列变化时刷新，保证与后端一致。
     load();
+    // 下载完成（队列长度变化）时立即刷新时钟：让「最近下载」徽标以当前
+    // 时刻立即计算档位，而不是等下一个 60 秒定时器 tick。
+    setNow(Date.now());
   }, [queueTasks.length]);
 
   // 内置时钟：每 60 秒刷新一次，驱动「最近下载」徽标分级。
@@ -244,17 +244,17 @@ export default function HistoryPage({ onRedownload }: Props) {
 
   // 点删除按钮：弹确认窗，询问是否同时删除已下载的文件。
   const handleDelete = (item: DownloadHistoryItem) => {
-    setDeleteTarget({ id: item.id, filePath: item.file_path ?? null });
+    setDeleteTarget({ videoId: item.video_id, filePath: item.file_path ?? null });
   };
 
   // 「仅删除记录」：不碰磁盘文件。
   const handleDeleteRecord = async () => {
     if (!deleteTarget) return;
-    const { id } = deleteTarget;
+    const { videoId } = deleteTarget;
     setDeleteTarget(null);
     try {
-      await deleteDownloadHistory(id);
-      setItems((prev) => prev.filter((i) => i.id !== id));
+      await deleteDownloadHistory(videoId);
+      setItems((prev) => prev.filter((i) => i.video_id !== videoId));
     } catch (e: any) {
       toast.error(t("history.deleteFail", { err: e }));
     }
@@ -263,11 +263,11 @@ export default function HistoryPage({ onRedownload }: Props) {
   // 「删除记录和文件」：同时删除磁盘上的已下载文件。
   const handleDeleteRecordAndFile = async () => {
     if (!deleteTarget) return;
-    const { id } = deleteTarget;
+    const { videoId } = deleteTarget;
     setDeleteTarget(null);
     try {
-      await deleteDownloadHistoryFile(id, true);
-      setItems((prev) => prev.filter((i) => i.id !== id));
+      await deleteDownloadHistoryFile(videoId, true);
+      setItems((prev) => prev.filter((i) => i.video_id !== videoId));
     } catch (e: any) {
       toast.error(t("history.deleteFail", { err: e }));
     }
@@ -284,31 +284,6 @@ export default function HistoryPage({ onRedownload }: Props) {
   };
 
   /** 构建批量任务配置（元数据为空，由信息获取阶段补充）。 */
-  const buildBatchConfig = (
-    u: string,
-    videoId: string | null,
-    s: AppSettings | null
-  ): DownloadConfig => ({
-    url: u,
-    video_id: videoId,
-    title: null,
-    thumbnail: null,
-    format_id: "bestvideo+bestaudio/best",
-    output_dir: s?.download_dir ?? "downloads",
-    output_template: "%(title)s.%(ext)s",
-    extract_audio: false,
-    embed_subtitles: false,
-    embed_thumbnail: false,
-    write_thumbnail: false,
-    proxy: null,
-    socket_timeout: 30,
-    download_rate_limit: s?.download_rate_limit ?? null,
-    cookies_file: null,
-    cookies_from_browser: s?.cookies_from_browser ?? null,
-    max_height: 0,
-    download_archive: null,
-  });
-
   // 批量入队（两阶段）：已下载的链接先拦截到确认弹窗，其余全部入队但不立即
   // 下载（autoStart=false），随后触发信息获取流程 —— 所有任务先获取信息
   // （任务卡片显示「正在获取信息」），全部完成后自动从第一个开始下载。
@@ -531,7 +506,7 @@ export default function HistoryPage({ onRedownload }: Props) {
           <>
             {sortedItems.map((item) => (
               <div
-                key={item.id}
+                key={item.video_id}
                 className="flex gap-3 py-3 px-3 rounded-xl border border-zinc-200/80 bg-white
                            shadow-[1px_2px_6px_rgba(0,0,0,0.12)] transition-shadow
                            hover:shadow-[2px_3px_10px_rgba(59,130,246,0.35)]"
@@ -549,7 +524,7 @@ export default function HistoryPage({ onRedownload }: Props) {
                         : "text-zinc-900"
                     }`}
                   >
-                    {privacy ? "***" : item.title || item.id}
+                    {privacy ? "***" : item.title || item.video_id}
                   </p>
 
                   <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs mb-2">
@@ -575,7 +550,7 @@ export default function HistoryPage({ onRedownload }: Props) {
                           className="inline-flex items-center gap-1 text-[11px] font-medium text-red-700 bg-red-50 border border-red-200 rounded-md px-2 py-1 hover:bg-red-100"
                           onClick={() =>
                             setExpandedErrId((prev) =>
-                              prev === item.id ? null : item.id
+                              prev === item.video_id ? null : item.video_id
                             )
                           }
                           title={
@@ -594,13 +569,13 @@ export default function HistoryPage({ onRedownload }: Props) {
                             {t("history.attempts", { count: item.attempts })}
                           </span>
                           {item.error &&
-                            (expandedErrId === item.id ? (
+                            (expandedErrId === item.video_id ? (
                               <ChevronUp size={11} />
                             ) : (
                               <ChevronDown size={11} />
                             ))}
                         </button>
-                        {expandedErrId === item.id && item.error && (
+                        {expandedErrId === item.video_id && item.error && (
                           <pre className="w-full text-[11px] text-red-600 bg-red-50 border border-red-100 rounded-md px-2 py-1.5 whitespace-pre-wrap break-all select-text max-h-40 overflow-auto">
                             {item.error}
                           </pre>
@@ -641,7 +616,7 @@ export default function HistoryPage({ onRedownload }: Props) {
                       {item.status !== "failed" && (
                         <button
                           className="p-1 rounded hover:bg-zinc-100 text-zinc-400 hover:text-zinc-600 shrink-0 disabled:opacity-40 disabled:hover:bg-transparent"
-                          onClick={() => handleOpen(item.id)}
+                          onClick={() => handleOpen(item.video_id)}
                           disabled={!item.file_exists}
                           title={t("video.openPath")}
                         >
@@ -794,8 +769,10 @@ function getRecentBucket(
   nowMs: number
 ): { key: string; cls: string } | null {
   // downloaded_at 是 Unix 秒，Date.now() 是毫秒，需统一单位再计算。
-  const elapsedMin = (nowMs - downloadedAt * 1000) / 60_000;
-  if (elapsedMin < 0 || elapsedMin > 5256000) return null;
+  // 负数（下载刚完成、now 尚未刷新）clamp 到 0，立即命中「最近5分钟」，
+  // 避免刚下载完的记录因被误判为「未来时间」而隐藏徽标。
+  const elapsedMin = Math.max(0, (nowMs - downloadedAt * 1000) / 60_000);
+  if (elapsedMin > 5256000) return null;
   const bucket = RECENT_BUCKETS.find((b) => elapsedMin <= b.maxMinutes);
   return bucket ? { key: bucket.key, cls: bucket.cls } : null;
 }

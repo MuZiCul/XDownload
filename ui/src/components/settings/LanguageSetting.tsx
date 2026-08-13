@@ -3,6 +3,7 @@ import { saveLanguage } from "../../lib/bindings";
 import { toast } from "sonner";
 import { Save } from "lucide-react";
 import { useI18n, setLang, type Lang } from "../../lib/i18n";
+import SectionTitle from "./SectionTitle";
 
 type Props = {
   lang: string;
@@ -36,7 +37,7 @@ export default function LanguageSetting({ lang, onChange }: Props) {
 
   return (
     <div className="section-card">
-      <div className="section-title">{t("lang.title")}</div>
+      <SectionTitle title={t("lang.title")} tip={t("lang.hintImmediate")} />
       <div className="flex items-center gap-2">
         <select
           value={lang}
@@ -54,7 +55,6 @@ export default function LanguageSetting({ lang, onChange }: Props) {
           <Save size={13} />
           {saving ? "..." : t("common.save")}
         </button>
-        <span className="text-[11px] text-zinc-400">{t("lang.hintImmediate")}</span>
       </div>
     </div>
   );

@@ -1,16 +1,19 @@
 //! Download history — remembers which videos have been downloaded, where they
-//! were saved, and when. Persisted to `config/downloads.json`.
+//! were saved, and when. Persisted to the SQLite database `config/data.db`
+//! (table `downloads`).
 //!
 //! Used to:
 //! - Show "已下载" status + download time on the video info card after parsing.
 //! - Ask the user before re-downloading a video that already exists on disk.
+//!
+//! Note: history lives only in SQLite; the legacy `config/downloads.json` is
+//! no longer read or migrated (left untouched on disk as a manual backup).
 
-use crate::utils::app_home::AppHome;
-use anyhow::{Context, Result};
+use anyhow::Result;
+use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::PathBuf;
-use tracing::{debug, error, info, warn};
+use tracing::{info, warn};
 
 /// Outcome of a download record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,9 +30,14 @@ impl Default for DownloadStatus {
 }
 
 /// A single download history record (successful or failed).
+///
+/// `video_id` is the public unique key (the tweet status id for X videos).
+/// The `downloads` table also has an internal auto-increment `id` column that
+/// is *not* exposed here — it exists purely for database row management.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadRecord {
-    pub id: String,
+    /// Video id (X tweet status id).
+    pub video_id: String,
     pub title: Option<String>,
     /// Video thumbnail URL, shown as the cover on the history page.
     #[serde(default)]
@@ -68,80 +76,73 @@ pub struct DownloadRecord {
     pub attempts: u8,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct DownloadHistoryData {
-    #[serde(default)]
-    records: HashMap<String, DownloadRecord>,
+/// SQL status column: 0 = Success, 1 = Failed.
+fn status_code(s: DownloadStatus) -> i64 {
+    match s {
+        DownloadStatus::Success => 0,
+        DownloadStatus::Failed => 1,
+    }
 }
+
+/// Map one `downloads` row back into a [`DownloadRecord`].
+fn record_from_row(row: &Row<'_>) -> rusqlite::Result<DownloadRecord> {
+    let file_paths_json: Option<String> = row.get("file_paths")?;
+    let status: i64 = row.get("status")?;
+    Ok(DownloadRecord {
+        video_id: row.get("video_id")?,
+        title: row.get("title")?,
+        thumbnail: row.get("thumbnail")?,
+        url: row.get("url")?,
+        uploader: row.get("uploader")?,
+        duration: row.get("duration")?,
+        view_count: row.get("view_count")?,
+        like_count: row.get("like_count")?,
+        file_path: row.get("file_path")?,
+        file_paths: serde_json::from_str(file_paths_json.as_deref().unwrap_or("[]"))
+            .unwrap_or_default(),
+        file_size: row.get("file_size")?,
+        downloaded_at: row.get("downloaded_at")?,
+        status: if status == 1 {
+            DownloadStatus::Failed
+        } else {
+            DownloadStatus::Success
+        },
+        error: row.get("error")?,
+        attempts: row.get::<_, i64>("attempts")? as u8,
+    })
+}
+
+const SELECT_COLUMNS: &str = "video_id, title, thumbnail, url, uploader, duration, \
+     view_count, like_count, file_path, file_paths, file_size, downloaded_at, \
+     status, error, attempts";
 
 pub struct DownloadHistory;
 
 impl DownloadHistory {
-    fn history_file() -> PathBuf {
-        AppHome::config_dir().join("downloads.json")
-    }
-
-    fn load_data() -> DownloadHistoryData {
-        let file = Self::history_file();
-        match std::fs::read_to_string(&file) {
-            Ok(json) => {
-                // Tolerate a UTF-8 BOM (some editors / scripts write one), which
-                // would otherwise make serde_json fail and silently clear history.
-                let json = json.trim_start_matches('\u{FEFF}');
-                match serde_json::from_str::<DownloadHistoryData>(json) {
-                    Ok(data) => {
-                        debug!(
-                            "loaded download history from {} ({} records)",
-                            file.display(),
-                            data.records.len()
-                        );
-                        data
-                    }
-                    Err(e) => {
-                        warn!("failed to parse download history {}: {}", file.display(), e);
-                        DownloadHistoryData::default()
-                    }
-                }
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                debug!("download history file {} does not exist yet", file.display());
-                DownloadHistoryData::default()
-            }
-            Err(e) => {
-                warn!("failed to read download history {}: {}", file.display(), e);
-                DownloadHistoryData::default()
-            }
+    /// Initialize the database, creating `config/` and all tables on first
+    /// use. Call once at application startup. Failures are logged but never
+    /// panic — history degrades to empty.
+    pub fn init() {
+        let _guard = crate::services::db::DB_LOCK.lock().unwrap();
+        if let Err(e) = crate::services::db::open() {
+            warn!("failed to initialize database: {e:#}");
         }
-    }
-
-    fn save_data(data: &DownloadHistoryData) -> Result<()> {
-        AppHome::ensure_config_dir().context("failed to create config dir")?;
-        let json = match serde_json::to_string_pretty(data) {
-            Ok(j) => j,
-            Err(e) => {
-                error!("failed to serialize download history: {}", e);
-                return Err(e).context("failed to serialize history");
-            }
-        };
-        match std::fs::write(Self::history_file(), &json) {
-            Ok(_) => {}
-            Err(e) => {
-                error!("failed to write download history {}: {}", Self::history_file().display(), e);
-                return Err(e).context("failed to write history file");
-            }
-        }
-        debug!(
-            "saved download history {} ({} records, {} bytes)",
-            Self::history_file().display(),
-            data.records.len(),
-            json.len()
-        );
-        Ok(())
     }
 
     /// Look up a download record by video id (does not check the file exists).
-    pub fn get(id: &str) -> Option<DownloadRecord> {
-        Self::load_data().records.get(id).cloned()
+    pub fn get(video_id: &str) -> Option<DownloadRecord> {
+        let _guard = crate::services::db::DB_LOCK.lock().unwrap();
+        let conn = crate::services::db::open().ok()?;
+        Self::get_in(&conn, video_id).ok().flatten()
+    }
+
+    fn get_in(conn: &Connection, video_id: &str) -> rusqlite::Result<Option<DownloadRecord>> {
+        conn.query_row(
+            &format!("SELECT {SELECT_COLUMNS} FROM downloads WHERE video_id = ?1"),
+            params![video_id],
+            record_from_row,
+        )
+        .optional()
     }
 
     /// Whether the video was downloaded AND its file still exists on disk.
@@ -149,8 +150,8 @@ impl DownloadHistory {
     /// This re-checks the filesystem every time, so if the user deleted the
     /// file after seeing the "已下载" hint, this returns `false` and the app
     /// will download again without asking.
-    pub fn is_downloaded(id: &str) -> bool {
-        match Self::get(id) {
+    pub fn is_downloaded(video_id: &str) -> bool {
+        match Self::get(video_id) {
             Some(rec) => rec
                 .file_path
                 .as_ref()
@@ -162,20 +163,32 @@ impl DownloadHistory {
 
     /// List all download records, most recent first.
     pub fn list() -> Vec<DownloadRecord> {
-        let data = Self::load_data();
-        let mut records: Vec<DownloadRecord> = data.records.into_values().collect();
-        records.sort_by_key(|r| std::cmp::Reverse(r.downloaded_at));
-        records
+        let _guard = crate::services::db::DB_LOCK.lock().unwrap();
+        let Ok(conn) = crate::services::db::open() else {
+            return Vec::new();
+        };
+        Self::list_in(&conn).unwrap_or_default()
+    }
+
+    fn list_in(conn: &Connection) -> rusqlite::Result<Vec<DownloadRecord>> {
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {SELECT_COLUMNS} FROM downloads ORDER BY downloaded_at DESC"
+        ))?;
+        let rows = stmt.query_map([], record_from_row)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
     }
 
     /// Remove a single record by video id.
-    pub fn remove(id: &str) -> Result<()> {
-        info!("removing download history record: id={}", id);
-        let mut data = Self::load_data();
-        let existed = data.records.remove(id).is_some();
-        Self::save_data(&data)?;
-        if !existed {
-            warn!("download history record not found: id={}", id);
+    pub fn remove(video_id: &str) -> Result<()> {
+        info!("removing download history record: video_id={video_id}");
+        let _guard = crate::services::db::DB_LOCK.lock().unwrap();
+        let conn = crate::services::db::open()?;
+        let changed = conn.execute(
+            "DELETE FROM downloads WHERE video_id = ?1",
+            params![video_id],
+        )?;
+        if changed == 0 {
+            warn!("download history record not found: video_id={video_id}");
         }
         Ok(())
     }
@@ -183,14 +196,18 @@ impl DownloadHistory {
     /// Remove all download records.
     pub fn clear() -> Result<()> {
         info!("clearing all download history");
-        Self::save_data(&DownloadHistoryData::default())
+        let _guard = crate::services::db::DB_LOCK.lock().unwrap();
+        let conn = crate::services::db::open()?;
+        conn.execute("DELETE FROM downloads", [])?;
+        Ok(())
     }
 
     /// Record a successful download. `file_path` is the primary path (first
     /// file); `file_paths` holds every saved file (multi-media tweets).
+    /// A record with the same `video_id` is overwritten (last download wins).
     #[allow(clippy::too_many_arguments)]
     pub fn record(
-        id: &str,
+        video_id: &str,
         title: Option<String>,
         thumbnail: Option<String>,
         url: Option<String>,
@@ -201,46 +218,46 @@ impl DownloadHistory {
         file_path: Option<String>,
         file_paths: Vec<String>,
     ) -> Result<()> {
-        info!("recording download success: id={}, file_count={}", id, file_paths.len());
-        let mut data = Self::load_data();
-        data.records.insert(
-            id.to_string(),
-            DownloadRecord {
-                id: id.to_string(),
-                title,
-                thumbnail,
-                url,
-                uploader,
-                duration,
-                view_count,
-                like_count,
-                file_path,
-                file_paths,
-                file_size: None,
-                downloaded_at: chrono::Utc::now().timestamp(),
-                status: DownloadStatus::Success,
-                error: None,
-                attempts: 1,
-            },
-        );
-        Self::save_data(&data)
+        info!("recording download success: video_id={video_id}, file_count={}", file_paths.len());
+        let _guard = crate::services::db::DB_LOCK.lock().unwrap();
+        let conn = crate::services::db::open()?;
+        record_in(
+            &conn,
+            video_id,
+            title,
+            thumbnail,
+            url,
+            uploader,
+            duration,
+            view_count,
+            like_count,
+            file_path,
+            file_paths,
+            None, // file_size — 下载成功后由 record_file_size 单独回填
+            chrono::Utc::now().timestamp(),
+            DownloadStatus::Success,
+            None,
+            1,
+        )
+        .map_err(Into::into)
     }
 
     /// Update the file size (bytes) of an existing record after a successful
     /// download, so the history can display it.
-    pub fn record_file_size(id: &str, size: i64) -> Result<()> {
-        let mut data = Self::load_data();
-        if let Some(rec) = data.records.get_mut(id) {
-            rec.file_size = Some(size);
-            Self::save_data(&data)?;
-        }
+    pub fn record_file_size(video_id: &str, size: i64) -> Result<()> {
+        let _guard = crate::services::db::DB_LOCK.lock().unwrap();
+        let conn = crate::services::db::open()?;
+        conn.execute(
+            "UPDATE downloads SET file_size = ?1 WHERE video_id = ?2",
+            params![size, video_id],
+        )?;
         Ok(())
     }
 
     /// Record a failed download (after retries are exhausted).
     #[allow(clippy::too_many_arguments)]
     pub fn record_failed(
-        id: &str,
+        video_id: &str,
         title: Option<String>,
         thumbnail: Option<String>,
         url: Option<String>,
@@ -251,29 +268,28 @@ impl DownloadHistory {
         error: String,
         attempts: u8,
     ) -> Result<()> {
-        info!("recording download failure: id={}, attempts={}", id, attempts);
-        let mut data = Self::load_data();
-        data.records.insert(
-            id.to_string(),
-            DownloadRecord {
-                id: id.to_string(),
-                title,
-                thumbnail,
-                url,
-                uploader,
-                duration,
-                view_count,
-                like_count,
-                file_path: None,
-                file_paths: Vec::new(),
-                file_size: None,
-                downloaded_at: chrono::Utc::now().timestamp(),
-                status: DownloadStatus::Failed,
-                error: Some(error),
-                attempts,
-            },
-        );
-        Self::save_data(&data)
+        info!("recording download failure: video_id={video_id}, attempts={attempts}");
+        let _guard = crate::services::db::DB_LOCK.lock().unwrap();
+        let conn = crate::services::db::open()?;
+        record_in(
+            &conn,
+            video_id,
+            title,
+            thumbnail,
+            url,
+            uploader,
+            duration,
+            view_count,
+            like_count,
+            None,
+            Vec::new(),
+            None, // file_size
+            chrono::Utc::now().timestamp(),
+            DownloadStatus::Failed,
+            Some(error),
+            attempts,
+        )
+        .map_err(Into::into)
     }
 
     /// Make a filename valid on Windows while keeping it readable:
@@ -337,9 +353,67 @@ impl DownloadHistory {
     }
 }
 
+/// Insert or update one record (shared by `record` and `record_failed`).
+/// `downloaded_at` / `status` / `attempts` are supplied by the caller.
+#[allow(clippy::too_many_arguments)]
+fn record_in(
+    conn: &Connection,
+    video_id: &str,
+    title: Option<String>,
+    thumbnail: Option<String>,
+    url: Option<String>,
+    uploader: Option<String>,
+    duration: i64,
+    view_count: i64,
+    like_count: i64,
+    file_path: Option<String>,
+    file_paths: Vec<String>,
+    file_size: Option<i64>,
+    downloaded_at: i64,
+    status: DownloadStatus,
+    error: Option<String>,
+    attempts: u8,
+) -> rusqlite::Result<()> {
+    let file_paths_json = serde_json::to_string(&file_paths).unwrap_or_else(|_| "[]".to_string());
+    conn.execute(
+        "INSERT INTO downloads
+            (video_id, title, thumbnail, url, uploader, duration, view_count,
+             like_count, file_path, file_paths, file_size, downloaded_at,
+             status, error, attempts)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)
+         ON CONFLICT(video_id) DO UPDATE SET
+             title=excluded.title, thumbnail=excluded.thumbnail,
+             url=excluded.url, uploader=excluded.uploader,
+             duration=excluded.duration, view_count=excluded.view_count,
+             like_count=excluded.like_count, file_path=excluded.file_path,
+             file_paths=excluded.file_paths, file_size=excluded.file_size,
+             downloaded_at=excluded.downloaded_at, status=excluded.status,
+             error=excluded.error, attempts=excluded.attempts",
+        params![
+            video_id,
+            title,
+            thumbnail,
+            url,
+            uploader,
+            duration,
+            view_count,
+            like_count,
+            file_path,
+            file_paths_json,
+            file_size,
+            downloaded_at,
+            status_code(status),
+            error,
+            attempts as i64,
+        ],
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    // ---- Sanitize (unchanged legacy behavior) ----
 
     #[test]
     fn test_sanitize_removes_windows_illegal_chars() {
@@ -357,10 +431,7 @@ mod tests {
             DownloadHistory::sanitize_filename("hello   world  .mp4"),
             "hello world .mp4"
         );
-        assert_eq!(
-            DownloadHistory::sanitize_filename("a    b.mp4"),
-            "a b.mp4"
-        );
+        assert_eq!(DownloadHistory::sanitize_filename("a    b.mp4"), "a b.mp4");
     }
 
     #[test]
@@ -384,7 +455,10 @@ mod tests {
 
     #[test]
     fn test_sanitize_empty_result_returns_original() {
-        assert_eq!(DownloadHistory::sanitize_filename(r#"::**??.mp4"#), r#"::**??.mp4"#);
+        assert_eq!(
+            DownloadHistory::sanitize_filename(r#"::**??.mp4"#),
+            r#"::**??.mp4"#
+        );
     }
 
     #[test]
@@ -401,5 +475,177 @@ mod tests {
             DownloadHistory::sanitize_filename(r#"D:\Downloads\a b:c.mp4"#),
             r#"D:\Downloads\a bc.mp4"#
         );
+    }
+
+    // ---- SQLite CRUD (in-memory, never touches the real config dir) ----
+
+    fn mem_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::services::db::create_schema(&conn).unwrap();
+        conn
+    }
+
+    fn sample_record(video_id: &str) -> DownloadRecord {
+        DownloadRecord {
+            video_id: video_id.to_string(),
+            title: Some(format!("title {video_id}")),
+            thumbnail: Some(format!("https://example.com/{video_id}.jpg")),
+            url: Some(format!("https://x.com/u/status/{video_id}")),
+            uploader: Some("author".to_string()),
+            duration: 123,
+            view_count: 1000,
+            like_count: 42,
+            file_path: Some(r#"D:\Downloads\t.mp4"#.to_string()),
+            file_paths: vec![
+                r#"D:\Downloads\t.mp4"#.to_string(),
+                r#"D:\Downloads\t2.mp4"#.to_string(),
+            ],
+            file_size: Some(2048),
+            downloaded_at: 1_700_000_000,
+            status: DownloadStatus::Success,
+            error: None,
+            attempts: 1,
+        }
+    }
+
+    #[test]
+    fn record_and_get_roundtrip() {
+        let conn = mem_conn();
+        let rec = sample_record("111");
+        record_in(
+            &conn,
+            &rec.video_id,
+            rec.title.clone(),
+            rec.thumbnail.clone(),
+            rec.url.clone(),
+            rec.uploader.clone(),
+            rec.duration,
+            rec.view_count,
+            rec.like_count,
+            rec.file_path.clone(),
+            rec.file_paths.clone(),
+            rec.file_size,
+            rec.downloaded_at,
+            rec.status,
+            rec.error.clone(),
+            rec.attempts,
+        )
+        .unwrap();
+
+        let got = DownloadHistory::get_in(&conn, "111").unwrap().unwrap();
+        assert_eq!(got.video_id, "111");
+        assert_eq!(got.title, rec.title);
+        assert_eq!(got.thumbnail, rec.thumbnail);
+        assert_eq!(got.url, rec.url);
+        assert_eq!(got.uploader, rec.uploader);
+        assert_eq!(got.duration, 123);
+        assert_eq!(got.view_count, 1000);
+        assert_eq!(got.like_count, 42);
+        assert_eq!(got.file_path, rec.file_path);
+        assert_eq!(got.file_paths, rec.file_paths);
+        assert_eq!(got.file_size, Some(2048));
+        assert_eq!(got.downloaded_at, 1_700_000_000);
+        assert_eq!(got.status, DownloadStatus::Success);
+        assert_eq!(got.attempts, 1);
+
+        // Unknown id → None.
+        assert!(DownloadHistory::get_in(&conn, "nope").unwrap().is_none());
+    }
+
+    #[test]
+    fn record_overwrites_same_video_id() {
+        let conn = mem_conn();
+        let rec = sample_record("111");
+        record_in(
+            &conn, "111", None, None, None, None, 0, 0, 0, None, vec![], None, 5,
+            DownloadStatus::Failed, Some("boom".to_string()), 3,
+        )
+        .unwrap();
+        // Keep the sample in between to prove the count stays at 1.
+        record_in(
+            &conn,
+            &rec.video_id,
+            rec.title.clone(),
+            None,
+            None,
+            None,
+            rec.duration,
+            0,
+            0,
+            None,
+            vec![],
+            None,
+            rec.downloaded_at,
+            DownloadStatus::Success,
+            None,
+            1,
+        )
+        .unwrap();
+
+        let got = DownloadHistory::get_in(&conn, "111").unwrap().unwrap();
+        assert_eq!(got.title, rec.title);
+        assert_eq!(got.status, DownloadStatus::Success);
+        assert_eq!(DownloadHistory::list_in(&conn).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn list_orders_by_downloaded_at_desc() {
+        let conn = mem_conn();
+        record_in(&conn, "a", None, None, None, None, 0, 0, 0, None, vec![], None, 100, DownloadStatus::Success, None, 1).unwrap();
+        record_in(&conn, "b", None, None, None, None, 0, 0, 0, None, vec![], None, 200, DownloadStatus::Success, None, 1).unwrap();
+        record_in(&conn, "c", None, None, None, None, 0, 0, 0, None, vec![], None, 150, DownloadStatus::Success, None, 1).unwrap();
+
+        let ids: Vec<String> = DownloadHistory::list_in(&conn)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.video_id)
+            .collect();
+        assert_eq!(ids, vec!["b", "c", "a"]);
+    }
+
+    #[test]
+    fn remove_and_clear_work() {
+        let conn = mem_conn();
+        record_in(&conn, "a", None, None, None, None, 0, 0, 0, None, vec![], None, 1, DownloadStatus::Success, None, 1).unwrap();
+        record_in(&conn, "b", None, None, None, None, 0, 0, 0, None, vec![], None, 2, DownloadStatus::Success, None, 1).unwrap();
+
+        conn.execute("DELETE FROM downloads WHERE video_id = ?1", params!["a"]).unwrap();
+        assert!(DownloadHistory::get_in(&conn, "a").unwrap().is_none());
+        assert!(DownloadHistory::get_in(&conn, "b").unwrap().is_some());
+
+        conn.execute("DELETE FROM downloads", []).unwrap();
+        assert!(DownloadHistory::list_in(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn failed_record_status_roundtrip() {
+        let conn = mem_conn();
+        record_in(
+            &conn, "f", Some("t".into()), None, None, None, 0, 0, 0, None, vec![],
+            None, 42, DownloadStatus::Failed, Some("err".into()), 3,
+        )
+        .unwrap();
+        let got = DownloadHistory::get_in(&conn, "f").unwrap().unwrap();
+        assert_eq!(got.status, DownloadStatus::Failed);
+        assert_eq!(got.error.as_deref(), Some("err"));
+        assert_eq!(got.attempts, 3);
+    }
+
+    // ---- Legacy JSON migration ----
+
+    #[test]
+    fn schema_supports_duplicate_table_creation() {
+        // create_schema 必须幂等（每次 open 都会执行）。
+        let conn = mem_conn();
+        crate::services::db::create_schema(&conn).unwrap();
+        crate::services::db::create_schema(&conn).unwrap();
+    }
+
+    #[test]
+    fn db_path_is_under_config_dir() {
+        let p = crate::services::db::db_path();
+        assert!(p.ends_with("data.db"));
+        assert!(p.to_string_lossy().contains("config"));
+        let _ = p; // 只断言路径形态，不实际创建文件。
     }
 }

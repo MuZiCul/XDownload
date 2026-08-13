@@ -4,6 +4,7 @@ import type { AppSettings } from "../../lib/types";
 import { toast } from "sonner";
 import { Save } from "lucide-react";
 import { useI18n } from "../../lib/i18n";
+import SectionTitle from "./SectionTitle";
 
 /** 预设限速档位（yt-dlp --limit-rate），从低到高 1M~100M 五档均分。
  *  "unlimited" 表示不限速。 */
@@ -97,7 +98,7 @@ export default function MultiTaskSetting({
 
   return (
     <div className="section-card">
-      <div className="section-title">{t("multitask.title")}</div>
+      <SectionTitle title={t("multitask.title")} tip={t("multitask.hint")} />
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
         <label className="flex items-center gap-2 text-xs text-zinc-600">
           {t("multitask.concurrency")}
@@ -129,21 +130,31 @@ export default function MultiTaskSetting({
         </label>
         <label className="flex items-center gap-2 text-xs text-zinc-600">
           {t("multitask.persist")}
-          <input
-            type="checkbox"
-            checked={queuePersist}
-            onChange={(e) => onChange({ queue_persist: e.target.checked })}
-            className="accent-blue-600"
-          />
+          <button
+            type="button"
+            role="switch"
+            aria-checked={queuePersist}
+            onClick={() => onChange({ queue_persist: !queuePersist })}
+            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${queuePersist ? "bg-blue-600" : "bg-zinc-300"}`}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${queuePersist ? "translate-x-4" : "translate-x-0.5"}`}
+            />
+          </button>
         </label>
         <label className="flex items-center gap-2 text-xs text-zinc-600">
           {t("multitask.resumeSupport")}
-          <input
-            type="checkbox"
-            checked={resumeSupport}
-            onChange={(e) => onChange({ resume_support: e.target.checked })}
-            className="accent-blue-600"
-          />
+          <button
+            type="button"
+            role="switch"
+            aria-checked={resumeSupport}
+            onClick={() => onChange({ resume_support: !resumeSupport })}
+            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${resumeSupport ? "bg-blue-600" : "bg-zinc-300"}`}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${resumeSupport ? "translate-x-4" : "translate-x-0.5"}`}
+            />
+          </button>
         </label>
         <label className="flex items-center gap-2 text-xs text-zinc-600">
           {t("multitask.rateLimit")}
@@ -194,7 +205,6 @@ export default function MultiTaskSetting({
           {saving ? t("common.saving") : t("common.save")}
         </button>
       </div>
-      <div className="text-[11px] text-zinc-400 mt-2">{t("multitask.hint")}</div>
     </div>
   );
 }

@@ -5,6 +5,22 @@ use std::time::Duration;
 /// to determine whether the user is overseas (no proxy needed) or domestic.
 pub struct NetworkDetect;
 
+/// Result of a GitHub reachability probe, used as a pre-flight check before
+/// downloading app updates. Fields let the UI explain the detection outcome
+/// (direct OK → start download; direct failed but proxy OK → download via
+/// proxy; both failed → prompt the user to configure a proxy).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct GitHubReachability {
+    /// Whether `https://github.com` is reachable directly (no proxy).
+    pub direct_ok: bool,
+    /// Whether a proxy is currently configured/enabled.
+    pub proxy_configured: bool,
+    /// Whether GitHub is reachable through the configured proxy.
+    pub proxy_ok: bool,
+    /// Final verdict — reachable via direct or proxy.
+    pub reachable: bool,
+}
+
 /// Default timeout for quick checks (3 seconds).
 const QUICK_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -69,6 +85,50 @@ impl NetworkDetect {
         match client.head("https://www.google.com").send().await {
             Ok(resp) => resp.status().as_u16() > 0,
             Err(_) => false,
+        }
+    }
+
+    /// Probe GitHub reachability as a pre-flight check before downloading an
+    /// app update. Direct probe first (fast, 3s); on failure falls back to the
+    /// configured proxy (5s). Returns a structured result so the UI can show
+    /// the detection outcome and offer the user a proxy hint when needed.
+    pub async fn check_github_reachability() -> GitHubReachability {
+        // 1. Direct probe — no proxy.
+        {
+            let client = Self::direct_client(QUICK_TIMEOUT);
+            if let Ok(resp) = client.head("https://github.com").send().await {
+                if resp.status().as_u16() > 0 {
+                    return GitHubReachability {
+                        direct_ok: true,
+                        proxy_configured: false,
+                        proxy_ok: false,
+                        reachable: true,
+                    };
+                }
+            }
+        }
+
+        // 2. Fall back to the configured proxy (if any).
+        let proxy_configured = ProxyConfig::is_enabled();
+        if proxy_configured {
+            let client = Self::proxy_client(FULL_TIMEOUT);
+            if let Ok(resp) = client.head("https://github.com").send().await {
+                if resp.status().as_u16() > 0 {
+                    return GitHubReachability {
+                        direct_ok: false,
+                        proxy_configured: true,
+                        proxy_ok: true,
+                        reachable: true,
+                    };
+                }
+            }
+        }
+
+        GitHubReachability {
+            direct_ok: false,
+            proxy_configured,
+            proxy_ok: false,
+            reachable: false,
         }
     }
 

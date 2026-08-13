@@ -8,6 +8,7 @@ import ProxySetting from "./ProxySetting";
 import CookiesSetting from "./CookiesSetting";
 import ToolsSetting from "./ToolsSetting";
 import MultiTaskSetting from "./MultiTaskSetting";
+import BookmarksSetting from "./BookmarksSetting";
 import HlsSetting from "./HlsSetting";
 import LanguageSetting from "./LanguageSetting";
 import ConfigButtons from "./ConfigButtons";
@@ -79,6 +80,8 @@ export default function SettingsPage() {
               setSettings((s) => ({ ...s, ...patch }))
             }
           />
+
+          <BookmarksSetting key={`bm-${applyKey}`} />
 
           <HlsSetting
             key={`hls-${applyKey}`}

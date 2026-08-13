@@ -33,7 +33,7 @@ pub fn list_download_history() -> Vec<serde_json::Value> {
                 .map(|p| Path::new(p).exists())
                 .unwrap_or(false);
             serde_json::json!({
-                "id": rec.id,
+                "video_id": rec.video_id,
                 "title": rec.title,
                 "thumbnail": rec.thumbnail,
                 "url": rec.url,
@@ -55,19 +55,19 @@ pub fn list_download_history() -> Vec<serde_json::Value> {
 
 /// Delete a single download-history record by video id.
 #[tauri::command]
-pub fn delete_download_history(id: String) -> Result<(), String> {
-    DownloadHistory::remove(&id).map_err(|e| e.to_string())
+pub fn delete_download_history(video_id: String) -> Result<(), String> {
+    DownloadHistory::remove(&video_id).map_err(|e| e.to_string())
 }
 
 /// Delete a single download-history record, optionally also deleting the
 /// downloaded file on disk (resolved to an absolute path first).
 #[tauri::command]
 pub fn delete_download_history_file(
-    id: String,
+    video_id: String,
     delete_file: bool,
 ) -> Result<(), String> {
     if delete_file {
-        if let Some(rec) = DownloadHistory::get(&id) {
+        if let Some(rec) = DownloadHistory::get(&video_id) {
             if let Some(p) = rec.file_path.as_deref().map(abs_history_path) {
                 let path = Path::new(&p);
                 if path.exists() {
@@ -76,7 +76,7 @@ pub fn delete_download_history_file(
             }
         }
     }
-    DownloadHistory::remove(&id).map_err(|e| e.to_string())
+    DownloadHistory::remove(&video_id).map_err(|e| e.to_string())
 }
 
 /// Clear all download history.

@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { Ban, Download, FolderOpen, HelpCircle, RefreshCw } from "lucide-react";
 import type { YtdlpUpdateResult, FfmpegUpdateResult } from "../../lib/bindings";
 import { useI18n } from "../../lib/i18n";
+import SectionTitle from "./SectionTitle";
 
 type Phase =
   | { kind: "checking" }
@@ -189,7 +190,7 @@ export default function ToolsSetting() {
 
   return (
     <div className="section-card">
-      <div className="section-title">Tools</div>
+      <SectionTitle title="Tools" tip={t("tools.hint")} />
       <div className="flex items-center gap-2 flex-wrap">
         <button
           className="btn"

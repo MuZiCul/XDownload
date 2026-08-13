@@ -310,3 +310,11 @@ fn extract_screen_name_from_html(html: &str) -> Option<String> {
 pub fn scan_cookies() -> Option<String> {
     CookieManager::scan_available_browser()
 }
+
+/// Return the list of browsers installed on this machine (registry /
+/// executable presence). The frontend uses this to only offer installed
+/// browsers in the cookie source dropdown.
+#[tauri::command]
+pub fn list_browsers() -> Vec<String> {
+    CookieManager::installed_browsers()
+}

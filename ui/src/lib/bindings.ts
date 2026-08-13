@@ -9,6 +9,11 @@ import type {
   CookiesValidationResult,
   ToolStatus,
   DownloadHistoryItem,
+  GitHubReachability,
+  BookmarksSyncPreview,
+  BookmarksVideoItem,
+  BookmarksConfirmResult,
+  BookmarksListItem,
 } from "./types";
 
 // --- Misc helpers ---
@@ -144,16 +149,16 @@ export async function listDownloadHistory(): Promise<DownloadHistoryItem[]> {
   return invoke("list_download_history");
 }
 
-export async function deleteDownloadHistory(id: string): Promise<void> {
-  return invoke("delete_download_history", { id });
+export async function deleteDownloadHistory(videoId: string): Promise<void> {
+  return invoke("delete_download_history", { videoId });
 }
 
 /** 删除下载记录，可选择同时删除磁盘上的已下载文件。 */
 export async function deleteDownloadHistoryFile(
-  id: string,
+  videoId: string,
   deleteFile: boolean
 ): Promise<void> {
-  return invoke("delete_download_history_file", { id, deleteFile });
+  return invoke("delete_download_history_file", { videoId, deleteFile });
 }
 
 export async function clearDownloadHistory(): Promise<void> {
@@ -168,6 +173,23 @@ export async function loadSettings(): Promise<AppSettings> {
 
 export async function saveSettings(settings: AppSettings): Promise<void> {
   return invoke("save_settings", { settings });
+}
+
+/** 阶段一：手动同步书签，返回预览结果（不触碰游标/队列）。 */
+export async function syncBookmarksPreview(): Promise<BookmarksSyncPreview> {
+  return invoke("sync_bookmarks_preview");
+}
+
+/** 阶段二：确认把用户选择的书签视频加入下载队列。 */
+export async function confirmBookmarksEnqueue(
+  items: BookmarksVideoItem[]
+): Promise<BookmarksConfirmResult> {
+  return invoke("confirm_bookmarks_enqueue", { items });
+}
+
+/** 列出已同步的书签目录（含视频与无视频，带实时下载状态）。 */
+export async function listBookmarks(): Promise<BookmarksListItem[]> {
+  return invoke("list_bookmarks");
 }
 
 export async function saveSettingsToPath(settings: AppSettings, path: string): Promise<void> {
@@ -202,16 +224,12 @@ export async function applySavedProxy(): Promise<boolean> {
   return invoke("apply_saved_proxy");
 }
 
-export async function loadSavedCookies(): Promise<[string | null, string | null]> {
-  return invoke("load_saved_cookies");
+export async function loadCookieSource(): Promise<string | null> {
+  return invoke("load_cookie_source");
 }
 
-export async function saveAndApplyCookies(browser: string | null): Promise<void> {
-  return invoke("save_and_apply_cookies", { browser });
-}
-
-export async function applySavedCookies(): Promise<void> {
-  return invoke("apply_saved_cookies");
+export async function saveCookieSource(browser: string | null): Promise<void> {
+  return invoke("save_cookie_source", { browser });
 }
 
 export async function saveLanguage(lang: string): Promise<void> {
@@ -254,6 +272,11 @@ export async function validateCookies(browser: string): Promise<CookiesValidatio
 
 export async function scanCookies(): Promise<string | null> {
   return invoke("scan_cookies");
+}
+
+/** 返回本机已安装的浏览器列表（注册表/可执行文件检测）。 */
+export async function listBrowsers(): Promise<string[]> {
+  return invoke("list_browsers");
 }
 
 // --- Bootstrap ---
@@ -395,4 +418,14 @@ export interface FfmpegUpdateResult {
 
 export async function checkFfmpegUpdate(): Promise<FfmpegUpdateResult> {
   return invoke("check_ffmpeg_update");
+}
+
+/** 检测 GitHub 可达性（更新下载前预检）。 */
+export async function checkUpdateNetwork(): Promise<GitHubReachability> {
+  return invoke("check_update_network");
+}
+
+/** 清理 tauri-plugin-updater 临时缓存（%TEMP%\tauri-updater-*）。 */
+export async function cleanupUpdaterTemp(): Promise<void> {
+  return invoke("cleanup_updater_temp");
 }

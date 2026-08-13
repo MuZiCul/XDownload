@@ -387,3 +387,44 @@ fn cmp_semver(a: &str, b: &str) -> i32 {
     }
     0
 }
+
+/// Probe GitHub reachability as a pre-flight check before downloading an app
+/// update. Returns the detailed detection result (direct / proxy) so the UI can
+/// show the detection outcome and offer proxy configuration when unreachable.
+#[tauri::command]
+pub async fn check_update_network() -> crate::services::network::GitHubReachability {
+    crate::services::network::NetworkDetect::check_github_reachability().await
+}
+
+/// Remove tauri-plugin-updater temp files (`%TEMP%\tauri-updater-*`).
+///
+/// Called when the user aborts an update: the updater caches the downloaded
+/// installer under the temp directory, and deleting it stops a pending
+/// download/install from being applied (install reads the cached file).
+#[tauri::command]
+pub fn cleanup_updater_temp() -> Result<(), String> {
+    let temp = std::env::temp_dir();
+    let mut removed: usize = 0;
+    if let Ok(entries) = std::fs::read_dir(&temp) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.starts_with("tauri-updater-") {
+                continue;
+            }
+            let ok = if path.is_dir() {
+                std::fs::remove_dir_all(&path).is_ok()
+            } else {
+                std::fs::remove_file(&path).is_ok()
+            };
+            if ok {
+                removed += 1;
+                tracing::info!("cleanup_updater_temp: removed '{}'", name);
+            } else {
+                tracing::warn!("cleanup_updater_temp: failed to remove '{}'", name);
+            }
+        }
+    }
+    tracing::info!("cleanup_updater_temp: removed {} temp entrie(s)", removed);
+    Ok(())
+}

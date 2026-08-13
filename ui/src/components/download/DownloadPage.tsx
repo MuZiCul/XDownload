@@ -39,7 +39,6 @@ function defaultConfig(): DownloadConfig {
     proxy: null,
     socket_timeout: 30,
     download_rate_limit: null,
-    cookies_file: null,
     cookies_from_browser: null,
     max_height: 0,
     download_archive: null,
@@ -66,7 +65,7 @@ export default function DownloadPage() {
   useEffect(() => {
     const handler = async (e: Event) => {
       const item = (e as CustomEvent<DownloadHistoryItem>).detail;
-      if (!item?.id || !item.url) {
+      if (!item?.video_id || !item.url) {
         toast.warning(t("history.noUrl"));
         return;
       }
@@ -113,7 +112,6 @@ export default function DownloadPage() {
           proxy: null,
           socket_timeout: 30,
           download_rate_limit: s?.download_rate_limit ?? null,
-          cookies_file: null,
           cookies_from_browser: s?.cookies_from_browser ?? null,
           max_height: 0,
           download_archive: null,
