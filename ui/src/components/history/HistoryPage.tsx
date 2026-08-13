@@ -31,6 +31,7 @@ import {
   checkVideoDownloaded,
 } from "../../lib/bindings";
 import type { DownloadHistoryItem } from "../../lib/types";
+import { TaskSource, taskSourceKey } from "../../lib/types";
 import {
   useDownloadStore,
   enqueueDownloadGlobal,
@@ -309,6 +310,7 @@ export default function HistoryPage({ onRedownload }: Props) {
       try {
         await enqueueDownloadGlobal(buildBatchConfig(u, videoId, s), {
           autoStart: false,
+          source: TaskSource.Batch,
         });
         added += 1;
       } catch (err: any) {
@@ -328,6 +330,7 @@ export default function HistoryPage({ onRedownload }: Props) {
     try {
       await enqueueDownloadGlobal(buildBatchConfig(item.url, item.video_id, s), {
         autoStart: true,
+        source: TaskSource.Batch,
       });
       setDuplicates((prev) => prev.filter((x) => x.url !== item.url));
     } catch (err: any) {
@@ -544,6 +547,7 @@ export default function HistoryPage({ onRedownload }: Props) {
                   </div>
 
                   <div className="flex items-center gap-2 flex-wrap">
+                    <SourceBadge source={item.source} />
                     {item.status === "failed" ? (
                       <>
                         <button
@@ -890,6 +894,7 @@ function TaskCard({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          <SourceBadge source={task.source} />
           {statusBadge()}
           {/* 进度条 + 阶段 + 速度：跟在徽标后面，不独占一行 */}
           {task.status === "downloading" && (
@@ -1028,5 +1033,26 @@ function InfoRow({ label, value }: { label: string; value: string }) {
       <span className="text-zinc-400 shrink-0">{label}</span>
       <span className="text-zinc-700 truncate">{value}</span>
     </div>
+  );
+}
+
+/** 任务来源徽标：书签 / 批量 / 单链。无来源或未知来源时返回 null。 */
+function SourceBadge({ source }: { source: string | undefined | null }) {
+  const { t } = useI18n();
+  const key = taskSourceKey(source);
+  if (!key) return null;
+  // 按来源配色：书签=紫、批量=青、单链=灰。
+  const cls =
+    source === TaskSource.Bookmark
+      ? "text-purple-600 bg-purple-50 border-purple-200"
+      : source === TaskSource.Batch
+        ? "text-cyan-700 bg-cyan-50 border-cyan-200"
+        : "text-zinc-500 bg-zinc-50 border-zinc-200";
+  return (
+    <span
+      className={`inline-flex items-center text-[10px] font-medium border rounded-md px-1.5 py-0.5 shrink-0 ${cls}`}
+    >
+      {t(key)}
+    </span>
   );
 }

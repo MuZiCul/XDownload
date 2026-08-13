@@ -10,6 +10,7 @@ import {
   startQueue,
 } from "../../lib/bindings";
 import type { VideoInfo, DownloadConfig, DownloadHistoryItem } from "../../lib/types";
+import { TaskSource } from "../../lib/types";
 import { toast } from "sonner";
 import UrlBar from "./UrlBar";
 import VideoInfoCard from "./VideoInfoCard";
@@ -116,7 +117,10 @@ export default function DownloadPage() {
           max_height: 0,
           download_archive: null,
         };
-        await enqueueDownloadGlobal(cfg, { title: data.title ?? item.title });
+        await enqueueDownloadGlobal(cfg, {
+          title: data.title ?? item.title,
+          source: TaskSource.Single,
+        });
       } catch (err: any) {
         toast.error(t("url.fetchFail", { err: friendlyErrorMessage(err) }), {
           id: "fetch-video",
@@ -267,6 +271,7 @@ export default function DownloadPage() {
       await enqueueDownloadGlobal(cfg, {
         title: videoInfo?.title ?? null,
         autoStart: false,
+        source: TaskSource.Single,
       });
       startQueue().catch(() => {});
       toast.success(t("queue.added"));

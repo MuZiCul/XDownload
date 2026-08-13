@@ -196,12 +196,15 @@ pub fn enqueue_download(
     title: Option<String>,
     auto_start: bool,
     info: Option<serde_json::Value>,
+    source: Option<String>,
     state: tauri::State<'_, DownloaderState>,
 ) -> Result<String, String> {
     if !is_supported_url(&config.url) {
         return Err("仅支持 X/Twitter 视频链接".to_string());
     }
-    state.queue.enqueue(config, title, auto_start, info)
+    // 缺省按「单链」处理（兼容旧调用方/旧前端）。字符串 → 数值由后端判断。
+    let source = crate::services::download_history::source_code(source.as_deref().unwrap_or(""));
+    state.queue.enqueue(config, title, auto_start, info, source)
 }
 
 /// Start draining the multi-task queue (batch mode "开始任务").

@@ -59,6 +59,10 @@ pub struct QueuedTask {
     /// "queued" | "running" | "paused" (empty = legacy record → queued).
     #[serde(default)]
     pub status: String,
+    /// Task source: 0=单链(single) 1=批量(batch) 2=书签(bookmark).
+    /// `0` doubles as the default for legacy / unknown tasks.
+    #[serde(default)]
+    pub source: i64,
 }
 
 #[derive(Default)]
@@ -116,6 +120,7 @@ impl DownloadQueue {
         title: Option<String>,
         auto_start: bool,
         info: Option<serde_json::Value>,
+        source: i64,
     ) -> Result<String, String> {
         // 去重与存储统一使用 trim 后的 URL，避免带尾随空格的链接绕过判重。
         let mut config = config;
@@ -145,11 +150,15 @@ impl DownloadQueue {
                 resume: false,
                 info: info.clone(),
                 status: "queued".to_string(),
+                source,
             });
         }
         let _ = self.app.emit(
             "download-queued",
-            serde_json::json!({ "task_id": id, "url": url, "title": title, "info": info }),
+            serde_json::json!({
+                "task_id": id, "url": url, "title": title, "info": info,
+                "source": crate::services::download_history::source_name(source),
+            }),
         );
         self.persist();
         if auto_start {
@@ -409,6 +418,7 @@ impl DownloadQueue {
                         h_likes,
                         Some(path.clone()),
                         saved_paths.clone(),
+                        task.source,
                     );
                     // 主动获取文件大小并写入历史（显示在下载时间后）。
                     if let Ok(meta) = std::fs::metadata(&path) {
@@ -426,6 +436,7 @@ impl DownloadQueue {
                         h_likes,
                         last_error.clone().unwrap_or_default(),
                         attempts,
+                        task.source,
                     );
                 }
             }
@@ -688,6 +699,7 @@ impl DownloadQueue {
                 "title": t.title,
                 "status": "downloading",
                 "info": t.info,
+                "source": crate::services::download_history::source_name(t.source),
             }));
         }
         for t in st.paused_tasks.iter() {
@@ -698,6 +710,7 @@ impl DownloadQueue {
                 "title": t.title,
                 "status": "paused",
                 "info": t.info,
+                "source": crate::services::download_history::source_name(t.source),
             }));
         }
         for t in st.queued.iter() {
@@ -708,6 +721,7 @@ impl DownloadQueue {
                 "title": t.title,
                 "status": "queued",
                 "info": t.info,
+                "source": crate::services::download_history::source_name(t.source),
             }));
         }
         items
@@ -864,6 +878,7 @@ impl DownloadQueue {
                         "title": t.title,
                         "status": if t.status == "paused" { "paused" } else { "queued" },
                         "info": t.info,
+                        "source": crate::services::download_history::source_name(t.source),
                     }),
                 );
                 // 按持久化时的状态还原：

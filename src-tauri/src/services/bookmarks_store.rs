@@ -7,11 +7,11 @@
 //! stored once per `video_id` (UNIQUE) with its own auto-increment `id`,
 //! preserving insertion order across syncs.
 //!
-//! IMPORTANT — locking: `DB_LOCK` is a plain (non-reentrant) `Mutex`. Every
-//! public entry point that needs the lock builds the `video_id → file_path`
-//! map from `DownloadHistory::list()` *before* acquiring `DB_LOCK`; never call
-//! `DownloadHistory::is_downloaded`/`get`/`list` while holding `DB_LOCK`, or
-//! the same thread deadlocks waiting on itself.
+//! IMPORTANT — connection use: `db::open()` borrows a connection from a small
+//! r2d2 pool (no global lock, so entry points are reentrant). Still build the
+//! `video_id → file_path` map from `DownloadHistory::list()` *before* calling
+//! `db::open()`: the pool is finite (`POOL_MAX_SIZE`), so holding a pooled
+//! connection while calling other `db::*` entry points can exhaust it.
 
 use rusqlite::{params, Connection, Row};
 use serde::Serialize;
@@ -50,8 +50,9 @@ const SELECT_COLUMNS: &str = "id, video_id, url, handle, author_name, title, \
      has_video, downloaded, added_at";
 
 /// Snapshot the download history as a `video_id → file_path` map. Must be
-/// called *without* holding `DB_LOCK` (`DownloadHistory::list` takes the lock
-/// itself); the returned snapshot is then used inside the locked section.
+/// called *before* `db::open()` (`DownloadHistory::list` borrows its own
+/// pooled connection); the snapshot is then used with a single pooled
+/// connection so no connection is held for long.
 fn build_downloaded_map() -> HashMap<String, Option<String>> {
     crate::services::download_history::DownloadHistory::list()
         .into_iter()
@@ -70,7 +71,7 @@ fn is_downloaded_in(map: &HashMap<String, Option<String>>, id: &str) -> bool {
 
 /// Insert or update one bookmark (keyed by `video_id`). `added_at` is only set
 /// on insert — existing rows keep their first-seen time. `downloaded` is
-/// supplied by the caller (computed lock-free) so this stays a pure SQL op.
+/// supplied by the caller (computed ahead of time) so this stays a pure SQL op.
 fn upsert_in(
     conn: &Connection,
     b: &crate::services::bookmarks::BookmarkItem,
@@ -102,13 +103,11 @@ fn upsert_in(
 /// Batch-insert/refresh the bookmarks fetched in one sync (every bookmark,
 /// including text/image-only ones — the `has_video` flag distinguishes them).
 pub fn upsert_all(items: &[crate::services::bookmarks::BookmarkItem]) {
-    // Build the download-state snapshot *before* taking the lock: computing it
-    // needs `DownloadHistory::list()`, which acquires `DB_LOCK` itself, and
-    // doing so while holding the lock would deadlock (non-reentrant Mutex).
+    // Build the download-state snapshot *before* borrowing a pooled
+    // connection: computing it needs `DownloadHistory::list()`, which borrows
+    // its own connection, and doing so while holding ours could exhaust the
+    // small pool.
     let file_map = build_downloaded_map();
-    let Ok(_guard) = crate::services::db::DB_LOCK.lock() else {
-        return;
-    };
     let Ok(conn) = crate::services::db::open() else {
         return;
     };
@@ -124,9 +123,6 @@ pub fn upsert_all(items: &[crate::services::bookmarks::BookmarkItem]) {
 /// deleted since the last sync) and written back so it stays accurate.
 pub fn list() -> Vec<BookmarkRow> {
     let file_map = build_downloaded_map();
-    let Ok(_guard) = crate::services::db::DB_LOCK.lock() else {
-        return Vec::new();
-    };
     let Ok(conn) = crate::services::db::open() else {
         return Vec::new();
     };
