@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   FolderOpen,
   History as HistoryIcon,
@@ -188,6 +189,16 @@ export default function HistoryPage({ onRedownload }: Props) {
     }
   });
 
+  // 「下载完成」列表虚拟滚动：只渲染可视区域的行，数据量大时 DOM 恒定。
+  // 行高动态测量（measureElement + ResizeObserver），失败卡片展开错误详情时自动适配。
+  const historyListRef = useRef<HTMLDivElement>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: sortedItems.length,
+    getScrollElement: () => historyListRef.current,
+    estimateSize: () => 140,
+    overscan: 6,
+  });
+
   useEffect(() => {
     load();
   }, []);
@@ -344,8 +355,9 @@ export default function HistoryPage({ onRedownload }: Props) {
   };
 
   return (
-    <div className="p-3 max-w-[900px] mx-auto">
-      {/* ===== 正在下载 ===== */}
+    <div className="p-3 max-w-[900px] mx-auto h-full flex flex-col gap-2">
+      {/* ===== 正在下载（30% 高度，内部滚动） ===== */}
+      <section className="h-[30%] flex flex-col min-h-0">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <Loader2 size={15} className="text-blue-500" />
@@ -411,7 +423,7 @@ export default function HistoryPage({ onRedownload }: Props) {
         </div>
       </div>
 
-      <div className="space-y-2">
+      <div className="flex-1 overflow-y-auto min-h-0">
         {queueTasks.length === 0 ? (
           <p className="text-xs text-gray-400 text-center py-4">
             {t("tasks.emptyActive")}
@@ -444,9 +456,11 @@ export default function HistoryPage({ onRedownload }: Props) {
           </div>
         )}
       </div>
+      </section>
 
-      {/* ===== 下载完成 ===== */}
-      <div className="flex items-center justify-between mb-2 mt-4">
+      {/* ===== 下载完成（剩余 70%，内部滚动 + 虚拟化） ===== */}
+      <section className="flex-1 flex flex-col min-h-0">
+      <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <HistoryIcon size={15} className="text-zinc-500" />
           <span className="text-[13px] font-semibold text-zinc-800">
@@ -492,7 +506,7 @@ export default function HistoryPage({ onRedownload }: Props) {
         )}
       </div>
 
-      <div className="space-y-2">
+      <div ref={historyListRef} className="flex-1 overflow-y-auto min-h-0">
         {loading ? (
           <p className="text-xs text-gray-400 text-center py-6">
             {t("common.loading")}
@@ -506,14 +520,21 @@ export default function HistoryPage({ onRedownload }: Props) {
             {t("history.noMatch")}
           </p>
         ) : (
-          <>
-            {sortedItems.map((item) => (
-              <div
-                key={item.video_id}
-                className="flex gap-3 py-3 px-3 rounded-xl border border-zinc-200/80 bg-white
-                           shadow-[1px_2px_6px_rgba(0,0,0,0.12)] transition-shadow
-                           hover:shadow-[2px_3px_10px_rgba(59,130,246,0.35)]"
-              >
+          <div className="relative w-full" style={{ height: rowVirtualizer.getTotalSize() }}>
+            {rowVirtualizer.getVirtualItems().map((vi) => {
+              const item = sortedItems[vi.index];
+              return (
+                <div
+                  key={item.video_id}
+                  data-index={vi.index}
+                  ref={rowVirtualizer.measureElement}
+                  className="absolute top-0 left-0 w-full pb-2"
+                  style={{ transform: `translateY(${vi.start}px)` }}
+                >
+                  <div className="flex gap-3 py-3 px-3 rounded-xl border border-zinc-200/80 bg-white
+                             shadow-[1px_2px_6px_rgba(0,0,0,0.12)] transition-shadow
+                             hover:shadow-[2px_3px_10px_rgba(59,130,246,0.35)]"
+                  >
                 <CoverThumb src={item.thumbnail} stretch blurred={privacy} />
 
                 <div className="flex-1 min-w-0">
@@ -644,11 +665,14 @@ export default function HistoryPage({ onRedownload }: Props) {
                     </div>
                   </div>
                 </div>
-              </div>
-            ))}
-          </>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
+      </section>
 
       {batchOpen && (
         <BatchDownloadModal

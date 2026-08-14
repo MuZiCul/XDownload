@@ -50,13 +50,15 @@ Powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp) + ffmpeg, wrapped in a cle
 - **Resume switch** — optional toggle that auto-resumes interrupted downloads from the breakpoint and hides the pause/start buttons (off by default)
 - **Source badges** — download task & history cards show where each item came from (bookmark / batch / single link), so you can tell at a glance which entry added it
 - **Faster database** — download history & bookmarks use a connection pool + WAL mode: reads run concurrently and never block the download writer
+- **Clean cache** — abandoned partial downloads (untouched for over 7 days) are swept at startup instead of wiping everything on arbitrary dates, so interrupted downloads stay resumable
+- **Split history view** — the active downloads and the history list each scroll independently (30% / 70% split); the history list is virtualized, staying smooth even with thousands of records
 - **i18n** — English & 简体中文, switch instantly without restart
 
 ## Install
 
 Grab the latest installer from [Releases](https://github.com/MuZiCul/XDownload/releases).
 
-- **Windows**: `XDownload_2.9.1_x64-setup.exe` (NSIS) / `.msi`
+- **Windows**: `XDownload_2.9.2_x64-setup.exe` (NSIS) / `.msi`
 
 First launch downloads yt-dlp + ffmpeg automatically — or drop them into `bin/` yourself.
 
