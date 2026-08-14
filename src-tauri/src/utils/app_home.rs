@@ -74,9 +74,4 @@ impl AppHome {
     pub fn ensure_logs_dir() -> std::io::Result<()> {
         std::fs::create_dir_all(Self::logs_dir())
     }
-
-    /// Ensure download_cache/ directory exists
-    pub fn ensure_download_cache_dir() -> std::io::Result<()> {
-        std::fs::create_dir_all(Self::download_cache_dir())
-    }
 }

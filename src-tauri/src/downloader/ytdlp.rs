@@ -290,8 +290,8 @@ impl YtDlpDownloader {
         // The cache dir is keyed by the download config (see `cache_key`), so
         // a re-enqueued / retried / resumed download reuses the previous
         // `.part` and yt-dlp (default `--continue`) resumes from where it
-        // stopped. Partial files are only wiped by the periodic startup
-        // cleanup (`cleanup_download_cache`, on 4/14/24 first launch).
+        // stopped. Partial files are only wiped by the startup stale-cache
+        // cleanup (`cleanup_download_cache`, dirs untouched > 7 days).
         std::fs::create_dir_all(cache_dir).ok();
 
         let mut cmd = self.build_base_command();
@@ -668,47 +668,60 @@ impl YtDlpDownloader {
         }
     }
 
-    /// Remove everything currently staged in the download cache — partial
-    /// downloads, info files, or finished outputs that never got moved.
+    /// 下载缓存保留天数：目录 mtime 超过该天数的缓存条目（`.part` / 分片 / 残留
+    /// 输出）视为废弃，启动时清理。
+    const CACHE_RETENTION_DAYS: i64 = 7;
+
+    /// Remove stale entries from the download cache — partial downloads, info
+    /// files, or finished outputs that never got moved.
     ///
-    /// Called at startup. Because `.part` files now survive across sessions
-    /// (see `cache_key` / `download`), the full wipe only runs on the FIRST
-    /// launch of each day whose date contains "4" — the 4th, 14th and 24th of
-    /// each month. On every other day / later launches the cache is left
-    /// untouched so interrupted downloads can be resumed.
+    /// Called once at startup. Because `.part` files survive across sessions
+    /// (see `cache_key` / `download`) so interrupted downloads can be resumed,
+    /// a full wipe would silently kill every pending task's resume data.
+    /// Instead, only cache dirs whose last-modification time is older than
+    /// [`CACHE_RETENTION_DAYS`] days are removed: a dir untouched for a week
+    /// means its task is abandoned. Live or recently-failed tasks (fresh
+    /// mtime) are never touched. The sweep is idempotent — stale dirs, once
+    /// removed, are gone — so no "once per day" marker is needed.
     pub fn cleanup_download_cache() {
-        use chrono::Datelike;
-        let today = chrono::Local::now().date_naive();
-        let day = format!("{:02}", today.day());
-        if !day.contains('4') {
-            return;
-        }
-        // Only the first launch of that day: remember the date we last cleaned.
-        let marker =
-            crate::utils::app_home::AppHome::config_dir().join("cache_cleanup_date");
-        let date = today.format("%Y-%m-%d").to_string();
-        if std::fs::read_to_string(&marker).ok() == Some(date.clone()) {
-            return;
-        }
-        Self::cleanup_cache_dir(&crate::utils::app_home::AppHome::download_cache_dir());
-        let _ = std::fs::write(&marker, date);
-        tracing::info!("cleaned download cache (date contains '4', first launch)");
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let now = SystemTime::now();
+        let cutoff = now
+            .checked_sub(std::time::Duration::from_secs(
+                Self::CACHE_RETENTION_DAYS as u64 * 86_400,
+            ))
+            .unwrap_or(UNIX_EPOCH);
+        let removed = Self::cleanup_stale_cache(
+            &crate::utils::app_home::AppHome::download_cache_dir(),
+            cutoff,
+        );
+        tracing::info!(
+            "cleaned stale download cache (>{} days): removed {removed} dirs",
+            Self::CACHE_RETENTION_DAYS
+        );
     }
 
-    /// Remove all contents of a cache directory (files and subdirectories),
-    /// keeping the directory itself. Used per-task so concurrent downloads
-    /// never touch each other's staged files.
-    fn cleanup_cache_dir(dir: &std::path::Path) {
-        if let Ok(entries) = std::fs::read_dir(dir) {
+    /// Remove every cache entry whose directory mtime is older than `cutoff`.
+    /// Returns the number of removed entries. Only directories are considered
+    /// (each cache entry is a dir keyed by `cache_key`); stray files are left
+    /// alone.
+    fn cleanup_stale_cache(cache_dir: &std::path::Path, cutoff: std::time::SystemTime) -> usize {
+        let mut removed = 0usize;
+        if let Ok(entries) = std::fs::read_dir(cache_dir) {
             for entry in entries.flatten() {
-                let p = entry.path();
-                if p.is_dir() {
-                    let _ = std::fs::remove_dir_all(&p);
-                } else {
-                    let _ = std::fs::remove_file(&p);
+                let path = entry.path();
+                let Ok(meta) = entry.metadata() else { continue };
+                if !meta.is_dir() {
+                    continue;
+                }
+                // Stale = last modified strictly before the cutoff.
+                let stale = meta.modified().map_or(false, |m| m < cutoff);
+                if stale && std::fs::remove_dir_all(&path).is_ok() {
+                    removed += 1;
                 }
             }
         }
+        removed
     }
 
     fn build_base_command(&self) -> Vec<String> {
@@ -859,5 +872,46 @@ mod tests {
         assert!(!is_valid_rate_limit("abc"));
         assert!(!is_valid_rate_limit("1.2.3M"));
         assert!(!is_valid_rate_limit("1 M"));
+    }
+
+    #[test]
+    fn test_cache_cleanup_removes_only_stale_dirs() {
+        use std::time::{Duration, SystemTime};
+        // 独立临时目录，避免触碰真实 download_cache/。
+        let dir = std::env::temp_dir().join(format!(
+            "xdl_cache_cleanup_test_{}_{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // 两个刚创建的缓存目录 + 一个散落文件（不应被清理）。
+        let fresh_a = dir.join("aaaa0001");
+        let fresh_b = dir.join("aaaa0002");
+        let stray = dir.join("stray.txt");
+        std::fs::create_dir_all(&fresh_a).unwrap();
+        std::fs::create_dir_all(&fresh_b).unwrap();
+        std::fs::write(&stray, "x").unwrap();
+
+        let now = SystemTime::now();
+        // cutoff 在遥远的过去 → 所有目录都算"新"，一个都不删，散落文件也不动。
+        let past = now.checked_sub(Duration::from_secs(10 * 86_400)).unwrap();
+        assert_eq!(YtDlpDownloader::cleanup_stale_cache(&dir, past), 0);
+        assert!(fresh_a.exists());
+        assert!(fresh_b.exists());
+        assert!(stray.exists());
+
+        // cutoff 在遥远的未来 → 所有目录都算"旧"，全删；散落文件保持不动。
+        let future = now.checked_add(Duration::from_secs(10 * 86_400)).unwrap();
+        assert_eq!(YtDlpDownloader::cleanup_stale_cache(&dir, future), 2);
+        assert!(!fresh_a.exists());
+        assert!(!fresh_b.exists());
+        assert!(stray.exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

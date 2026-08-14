@@ -216,9 +216,9 @@ pub fn run() {
     // Apply saved proxy (highest priority — overrides env and system detection)
     services::config::ConfigManager::apply_saved_proxy();
 
-    // Clean the download cache on the first launch of 4/14/24 (date contains
-    // "4"). On other days the cache (.part files) is kept so interrupted
-    // downloads can be resumed across sessions.
+    // Clean stale download cache entries: dirs untouched for > 7 days
+    // (abandoned tasks) are removed. Live `.part` files are kept so
+    // interrupted downloads can be resumed across sessions.
     YtDlpDownloader::cleanup_download_cache();
 
     // Clean old log files (once per day, first launch). Logs accumulate
