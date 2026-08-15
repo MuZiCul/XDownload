@@ -91,6 +91,151 @@ fn insert_paused(st: &mut QueueState, task: QueuedTask, slot: Option<usize>) {
     }
 }
 
+/// Pure queue-state operations, independent of `AppHandle` / downloader /
+/// persistence, so the state machine can be unit-tested directly
+/// (see the `#[cfg(test)]` module at the bottom of this file).
+///
+/// Keep the invariants the caller relies on:
+/// - `running` is a `Vec` (indexed by worker, order = start order)
+/// - `queued` / `paused_tasks` are `VecDeque` (order = download order)
+/// - `paused` gates `pump` (no new tasks start while paused)
+impl QueueState {
+    /// Whether a URL is already queued, running or paused (automatic dedup).
+    fn contains_url(&self, url: &str) -> bool {
+        self.queued
+            .iter()
+            .chain(self.running.iter())
+            .chain(self.paused_tasks.iter())
+            .any(|t| t.config.url == url)
+    }
+
+    /// Clone the config of a task found in any of the three lists.
+    fn config_of(&self, task_id: &str) -> Option<DownloadConfig> {
+        self.queued
+            .iter()
+            .chain(self.paused_tasks.iter())
+            .chain(self.running.iter())
+            .find(|t| t.id == task_id)
+            .map(|t| t.config.clone())
+    }
+
+    /// Push a task onto the queue. Returns `false` (and leaves the state
+    /// unchanged) when the URL is already present.
+    fn push_queued(&mut self, task: QueuedTask) -> bool {
+        if self.contains_url(&task.config.url) {
+            return false;
+        }
+        self.queued.push_back(task);
+        true
+    }
+
+    /// Move a queued task to `new_index` (clamped), rewriting every `seq` so
+    /// the frontend order matches. Returns `false` when the task is not queued.
+    fn reorder_queued(&mut self, task_id: &str, new_index: usize) -> bool {
+        let Some(pos) = self.queued.iter().position(|t| t.id == task_id) else {
+            return false;
+        };
+        let task = self.queued.remove(pos).unwrap();
+        let len = self.queued.len();
+        let target = new_index.min(len);
+        self.queued.insert(target, task);
+        for (i, t) in self.queued.iter_mut().enumerate() {
+            t.seq = i as u64;
+        }
+        true
+    }
+
+    /// Move a paused task to `new_index` (clamped), rewriting every `seq`.
+    /// Stale slot records are cleared (the paused order changed). Returns
+    /// `false` when the task is not paused.
+    fn reorder_paused(&mut self, task_id: &str, new_index: usize) -> bool {
+        let Some(pos) = self.paused_tasks.iter().position(|t| t.id == task_id) else {
+            return false;
+        };
+        let task = self.paused_tasks.remove(pos).unwrap();
+        let len = self.paused_tasks.len();
+        let target = new_index.min(len);
+        self.paused_tasks.insert(target, task);
+        for (i, t) in self.paused_tasks.iter_mut().enumerate() {
+            t.seq = i as u64;
+        }
+        self.paused_slots.clear();
+        true
+    }
+
+    /// Pause one task (queued → paused, or running → paused, killing the
+    /// process afterwards is the caller's job). Returns whether anything moved.
+    fn pause_one(&mut self, task_id: &str) -> bool {
+        let slot = self.paused_slots.remove(task_id);
+        if let Some(pos) = self.queued.iter().position(|t| t.id == task_id) {
+            let t = self.queued.remove(pos).unwrap();
+            insert_paused(self, t, slot);
+            true
+        } else if let Some(pos) = self.running.iter().position(|t| t.id == task_id) {
+            let t = self.running.remove(pos);
+            insert_paused(self, t, slot);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Resume one paused task back onto the queue (`resume = true`, and the
+    /// queue leaves paused mode so `pump` starts it). Returns whether the task
+    /// was found.
+    fn resume_one(&mut self, task_id: &str) -> bool {
+        let Some(pos) = self.paused_tasks.iter().position(|t| t.id == task_id) else {
+            return false;
+        };
+        let mut t = self.paused_tasks.remove(pos).unwrap();
+        // 记住离开位置，再次暂停时可插回原位而不是跑到末尾。
+        self.paused_slots.insert(task_id.to_string(), pos);
+        t.resume = true;
+        // 恢复单个任务即解除全局暂停模式，否则 pump 不会启动它。
+        self.paused = false;
+        self.queued.push_back(t);
+        true
+    }
+
+    /// Atomically move every queued + running task into the paused list
+    /// (running first — the display order), marking the queue paused.
+    /// Returns the id of every task that was paused (running + queued);
+    /// the caller cancels their processes outside the lock (queued tasks
+    /// have no process, so that cancel is a harmless no-op).
+    fn pause_all(&mut self) -> Vec<String> {
+        self.paused = true;
+        // 全部暂停重建暂停区，旧 slot 记录失效。
+        self.paused_slots.clear();
+        // running 在前、queued 在后 —— 与 status() 返回的展示顺序一致。
+        let running: Vec<QueuedTask> = self.running.drain(..).collect();
+        let queued: Vec<QueuedTask> = self.queued.drain(..).collect();
+        let ids: Vec<String> = running.iter().chain(queued.iter()).map(|t| t.id.clone()).collect();
+        self.paused_tasks.extend(running);
+        self.paused_tasks.extend(queued);
+        ids
+    }
+
+    /// Resume every paused task back onto the queue in their current order
+    /// (`pause_all` already preserved the pre-pause order). O(n) — `drain`
+    /// replaces the old per-id `position()+remove` (O(n²)).
+    fn resume_all(&mut self) {
+        self.paused = false;
+        self.paused_slots.clear();
+        let paused: Vec<QueuedTask> = self.paused_tasks.drain(..).collect();
+        for mut t in paused {
+            t.resume = true;
+            self.queued.push_back(t);
+        }
+    }
+
+    /// Remove a task from the running list. Returns whether it was present.
+    fn remove_running(&mut self, task_id: &str) -> bool {
+        let before = self.running.len();
+        self.running.retain(|t| t.id != task_id);
+        self.running.len() != before
+    }
+}
+
 #[derive(Clone)]
 pub struct DownloadQueue {
     app: AppHandle,
@@ -133,16 +278,7 @@ impl DownloadQueue {
         let id = seq.to_string();
         {
             let mut st = self.state.lock().unwrap();
-            let dup = st
-                .queued
-                .iter()
-                .chain(st.running.iter())
-                .chain(st.paused_tasks.iter())
-                .any(|t| t.config.url == url);
-            if dup {
-                return Err("链接已在队列中".to_string());
-            }
-            st.queued.push_back(QueuedTask {
+            if !st.push_queued(QueuedTask {
                 id: id.clone(),
                 seq,
                 config,
@@ -151,7 +287,9 @@ impl DownloadQueue {
                 info: info.clone(),
                 status: "queued".to_string(),
                 source,
-            });
+            }) {
+                return Err("链接已在队列中".to_string());
+            }
         }
         let _ = self.app.emit(
             "download-queued",
@@ -311,7 +449,7 @@ impl DownloadQueue {
                 self.pump();
                 return;
             }
-            st.running.retain(|t| t.id != id);
+            st.remove_running(&id);
             // 该任务已被 pause_task 同步移入暂停列表（kill 后走到这里）：
             // 保留 cache 供续传，直接结束，不写历史、不 emit finished。
             if st.paused_tasks.iter().any(|t| t.id == id) {
@@ -473,18 +611,12 @@ impl DownloadQueue {
         let config: Option<DownloadConfig> = {
             let mut st = self.state.lock().unwrap();
             // running 任务不在 queued/paused 里，需要一起找才能拿到 config。
-            let cfg = st
-                .queued
-                .iter()
-                .chain(st.paused_tasks.iter())
-                .chain(st.running.iter())
-                .find(|t| t.id == task_id)
-                .map(|t| t.config.clone());
+            let cfg = st.config_of(task_id);
             st.queued.retain(|t| t.id != task_id);
             st.paused_tasks.retain(|t| t.id != task_id);
             // running 也要立即移除，否则重新添加同 URL 会被「链接已在队列中」
             // 拒绝（worker 异步退场前任务一直残留在 running 列表）。
-            st.running.retain(|t| t.id != task_id);
+            st.remove_running(task_id);
             cfg
         };
         self.downloader.cancel_task(task_id);
@@ -514,42 +646,12 @@ impl DownloadQueue {
     ///   position so the frontend's ordering matches.
     pub fn reorder_queue(&self, task_id: &str, new_index: usize) -> bool {
         let mut st = self.state.lock().unwrap();
-
-        // Which list holds the task? Queued first (the common case).
-        let target_is_queued = st.queued.iter().any(|t| t.id == task_id);
-        if !target_is_queued && !st.paused_tasks.iter().any(|t| t.id == task_id) {
-            return false;
+        if st.reorder_queued(task_id, new_index) || st.reorder_paused(task_id, new_index) {
+            drop(st);
+            self.persist();
+            return true;
         }
-
-        if target_is_queued {
-            let pos = st.queued.iter().position(|t| t.id == task_id).unwrap();
-            let task = st.queued.remove(pos).unwrap();
-            let len = st.queued.len();
-            let target = new_index.min(len);
-            st.queued.insert(target, task);
-            for (i, t) in st.queued.iter_mut().enumerate() {
-                t.seq = i as u64;
-            }
-        } else {
-            let pos = st
-                .paused_tasks
-                .iter()
-                .position(|t| t.id == task_id)
-                .unwrap();
-            let task = st.paused_tasks.remove(pos).unwrap();
-            let len = st.paused_tasks.len();
-            let target = new_index.min(len);
-            st.paused_tasks.insert(target, task);
-            for (i, t) in st.paused_tasks.iter_mut().enumerate() {
-                t.seq = i as u64;
-            }
-            // 手动重排后位置已变，旧 slot 记录失效。
-            st.paused_slots.clear();
-        }
-
-        drop(st);
-        self.persist();
-        true
+        false
     }
 
     /// Cancel ALL active tasks: drop every queued / paused task and terminate
@@ -587,22 +689,10 @@ impl DownloadQueue {
     ///   finishes and, finding the task already in the paused list, ends
     ///   quietly (no finished event / history).
     pub fn pause_task(&self, task_id: &str) {
-        let mut moved = false;
-        {
+        let moved = {
             let mut st = self.state.lock().unwrap();
-            // 该任务之前暂停过（被单启过）：恢复时记录了它离开暂停区的位置，
-            // 重新暂停时插回原位附近，而不是追加到末尾。
-            let slot = st.paused_slots.remove(task_id);
-            if let Some(pos) = st.queued.iter().position(|t| t.id == task_id) {
-                let t = st.queued.remove(pos).unwrap();
-                insert_paused(&mut st, t, slot);
-                moved = true;
-            } else if let Some(pos) = st.running.iter().position(|t| t.id == task_id) {
-                let t = st.running.remove(pos); // Vec::remove 直接返回元素
-                insert_paused(&mut st, t, slot);
-                moved = true;
-            }
-        }
+            st.pause_one(task_id)
+        };
         if moved {
             self.downloader.cancel_task(task_id);
             self.persist();
@@ -614,15 +704,7 @@ impl DownloadQueue {
     pub fn resume_task(&self, task_id: &str) {
         {
             let mut st = self.state.lock().unwrap();
-            if let Some(pos) = st.paused_tasks.iter().position(|t| t.id == task_id) {
-                let mut t = st.paused_tasks.remove(pos).unwrap();
-                // 记住离开位置，再次暂停时可插回原位而不是跑到末尾。
-                st.paused_slots.insert(task_id.to_string(), pos);
-                t.resume = true;
-                // 恢复单个任务即解除全局暂停模式，否则 pump 不会启动它。
-                st.paused = false;
-                st.queued.push_back(t);
-            }
+            st.resume_one(task_id);
         }
         self.persist();
         self.pump();
@@ -639,16 +721,7 @@ impl DownloadQueue {
     pub fn pause_all(&self) {
         let running_ids: Vec<String> = {
             let mut st = self.state.lock().unwrap();
-            st.paused = true;
-            // 全部暂停重建暂停区，旧 slot 记录失效。
-            st.paused_slots.clear();
-            // running 在前、queued 在后 —— 与 status() 返回的展示顺序一致。
-            let running: Vec<QueuedTask> = st.running.drain(..).collect();
-            let queued: Vec<QueuedTask> = st.queued.drain(..).collect();
-            let ids: Vec<String> = running.iter().chain(queued.iter()).map(|t| t.id.clone()).collect();
-            st.paused_tasks.extend(running);
-            st.paused_tasks.extend(queued);
-            ids
+            st.pause_all()
         };
         // 锁外 kill 所有原 running 进程（cancel_task 内部处理 pid 清理）。
         for id in &running_ids {
@@ -665,23 +738,9 @@ impl DownloadQueue {
     /// to what the user saw before pausing; the frontend renders the queue in
     /// backend order, so display and download order both stay stable.
     pub fn resume_all(&self) {
-        // 先收集 id 释放借用，再逐一移出（避免 drain 与 push_back 双重可变借用）。
-        let ids: Vec<String> = {
-            let st = self.state.lock().unwrap();
-            st.paused_tasks.iter().map(|t| t.id.clone()).collect()
-        };
         {
             let mut st = self.state.lock().unwrap();
-            st.paused = false; // 清全局暂停标志，确保 pump 能启动
-            // 全部恢复后暂停区清空，slot 记录不再有意义。
-            st.paused_slots.clear();
-            for id in ids {
-                if let Some(pos) = st.paused_tasks.iter().position(|t| t.id == id) {
-                    let mut t = st.paused_tasks.remove(pos).unwrap();
-                    t.resume = true;
-                    st.queued.push_back(t);
-                }
-            }
+            st.resume_all();
         }
         self.persist();
         self.pump();
@@ -859,13 +918,7 @@ impl DownloadQueue {
             let mut st = self.state.lock().unwrap();
             for t in tasks {
                 note_restored_id(&t.id);
-                let dup = st
-                    .queued
-                    .iter()
-                    .chain(st.running.iter())
-                    .chain(st.paused_tasks.iter())
-                    .any(|x| x.config.url == t.config.url);
-                if dup {
+                if st.contains_url(&t.config.url) {
                     skipped += 1;
                     continue;
                 }
@@ -907,5 +960,161 @@ impl DownloadQueue {
             skipped
         );
         self.pump();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn task(id: &str, url: &str) -> QueuedTask {
+        QueuedTask {
+            id: id.to_string(),
+            seq: 0,
+            config: DownloadConfig {
+                url: url.to_string(),
+                ..DownloadConfig::default()
+            },
+            title: None,
+            resume: false,
+            info: None,
+            status: "queued".to_string(),
+            source: 0,
+        }
+    }
+
+    fn ids(st: &QueueState) -> Vec<String> {
+        st.queued
+            .iter()
+            .map(|t| t.id.clone())
+            .chain(st.running.iter().map(|t| t.id.clone()))
+            .chain(st.paused_tasks.iter().map(|t| t.id.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn enqueue_dedup_rejects_duplicate_urls() {
+        let mut st = QueueState::default();
+        assert!(st.push_queued(task("1", "https://x.com/a")));
+        // 同 URL 第二次入队被拒，且不影响现有任务。
+        assert!(!st.push_queued(task("2", "https://x.com/a")));
+        assert_eq!(st.queued.len(), 1);
+        // 不同 URL 正常入队。
+        assert!(st.push_queued(task("3", "https://x.com/b")));
+        assert_eq!(st.queued.len(), 2);
+    }
+
+    #[test]
+    fn contains_url_searches_all_three_lists() {
+        let mut st = QueueState::default();
+        st.push_queued(task("1", "https://x.com/q"));
+        st.running.push(task("2", "https://x.com/r"));
+        st.paused_tasks.push_back(task("3", "https://x.com/p"));
+        assert!(st.contains_url("https://x.com/q"));
+        assert!(st.contains_url("https://x.com/r"));
+        assert!(st.contains_url("https://x.com/p"));
+        assert!(!st.contains_url("https://x.com/unknown"));
+    }
+
+    #[test]
+    fn reorder_queued_rewrites_seq() {
+        let mut st = QueueState::default();
+        st.push_queued(task("1", "https://x.com/a"));
+        st.push_queued(task("2", "https://x.com/b"));
+        st.push_queued(task("3", "https://x.com/c"));
+        // 把 c 移到队首。
+        assert!(st.reorder_queued("3", 0));
+        assert_eq!(ids(&st), vec!["3", "1", "2"]);
+        assert_eq!(st.queued[0].seq, 0);
+        assert_eq!(st.queued[1].seq, 1);
+        assert_eq!(st.queued[2].seq, 2);
+        // 不存在的任务返回 false。
+        assert!(!st.reorder_queued("99", 0));
+    }
+
+    #[test]
+    fn reorder_paused_clears_slots() {
+        let mut st = QueueState::default();
+        st.paused_tasks.push_back(task("1", "https://x.com/a"));
+        st.paused_tasks.push_back(task("2", "https://x.com/b"));
+        st.paused_slots.insert("1".to_string(), 3);
+        assert!(st.reorder_paused("2", 0));
+        assert_eq!(ids(&st), vec!["2", "1"]);
+        assert!(st.paused_slots.is_empty());
+    }
+
+    #[test]
+    fn pause_and_resume_single_task_preserves_order() {
+        let mut st = QueueState::default();
+        st.push_queued(task("1", "https://x.com/a"));
+        st.push_queued(task("2", "https://x.com/b"));
+        st.push_queued(task("3", "https://x.com/c"));
+        // 暂停中间的任务 2 → 移到暂停列表。
+        assert!(st.pause_one("2"));
+        assert_eq!(st.queued.len(), 2);
+        assert_eq!(st.paused_tasks.len(), 1);
+        assert_eq!(ids(&st), vec!["1", "3", "2"]);
+        // 恢复它 → 回到队列末尾，且记录 slot 供下次插回。
+        assert!(st.resume_one("2"));
+        assert_eq!(st.queued.len(), 3);
+        assert_eq!(st.paused_tasks.len(), 0);
+        assert_eq!(st.queued.back().unwrap().id, "2");
+        assert_eq!(st.paused_slots.get("2"), Some(&0));
+        // 再次暂停 → 插回原 slot（队首附近），而不是末尾。
+        assert!(st.pause_one("2"));
+        assert_eq!(st.paused_tasks.front().unwrap().id, "2");
+        assert_eq!(st.queued.iter().map(|t| t.id.clone()).collect::<Vec<_>>(), vec!["1", "3"]);
+        // 不存在的任务返回 false。
+        assert!(!st.pause_one("99"));
+        assert!(!st.resume_one("99"));
+    }
+
+    #[test]
+    fn pause_all_moves_running_then_queued() {
+        let mut st = QueueState::default();
+        st.running.push(task("1", "https://x.com/r1"));
+        st.push_queued(task("2", "https://x.com/q1"));
+        st.push_queued(task("3", "https://x.com/q2"));
+        let all_paused_ids = st.pause_all();
+        // pause_all 返回全部被暂停任务的 id（running + queued，调用方对
+        // 每个 id 调 cancel_task；queued 任务无进程，cancel 为无害 no-op）。
+        assert_eq!(all_paused_ids, vec!["1", "2", "3"]);
+        // running 在前、queued 在后 —— 与 status() 展示顺序一致。
+        assert_eq!(ids(&st), vec!["1", "2", "3"]);
+        assert!(st.paused);
+        assert!(st.queued.is_empty() && st.running.is_empty());
+    }
+
+    #[test]
+    fn resume_all_restores_exact_order_after_pause_all() {
+        let mut st = QueueState::default();
+        st.running.push(task("1", "https://x.com/r1"));
+        st.push_queued(task("2", "https://x.com/q1"));
+        st.push_queued(task("3", "https://x.com/q2"));
+        let _ = st.pause_all();
+        st.resume_all();
+        // 全停 → 全开 后顺序保持不变（paused_tasks 顺序 = 暂停前展示顺序）。
+        assert_eq!(ids(&st), vec!["1", "2", "3"]);
+        assert!(!st.paused);
+        assert!(st.paused_tasks.is_empty());
+        assert!(st.queued.iter().all(|t| t.resume));
+        // 非空时再次全停/全开：新加入的 running 任务按设计排在最前
+        // （pause_all 把 running 放 paused_tasks 开头），顺序仍稳定。
+        st.running.push(task("4", "https://x.com/r4"));
+        let _ = st.pause_all();
+        st.resume_all();
+        assert_eq!(ids(&st), vec!["4", "1", "2", "3"]);
+    }
+
+    #[test]
+    fn remove_running_only_removes_matching_id() {
+        let mut st = QueueState::default();
+        st.running.push(task("1", "https://x.com/r1"));
+        st.running.push(task("2", "https://x.com/r2"));
+        assert!(st.remove_running("1"));
+        assert_eq!(st.running.len(), 1);
+        assert_eq!(st.running[0].id, "2");
+        assert!(!st.remove_running("99"));
+        assert_eq!(st.running.len(), 1);
     }
 }
