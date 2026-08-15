@@ -14,7 +14,9 @@ export default defineConfig({
     },
   },
   test: {
+    // 纯函数测试用 node 环境；组件测试（.test.tsx）用 jsdom 环境。
     environment: "node",
-    include: ["src/**/*.test.ts"],
+    environmentMatchGlobs: [["src/**/*.test.tsx", "jsdom"]],
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
   },
 });

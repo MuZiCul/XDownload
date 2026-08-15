@@ -1,0 +1,16 @@
+{
+  // Markdown lint config for XDownload.
+  // Only enables rules relevant to version-info / release documents.
+  // Long-line (MD013) and fenced-code-language (MD040) rules are disabled
+  // because they produce false positives on Chinese docs.
+  // Directory exclusions are handled via CLI "#dir" args in the skill,
+  // not here (config "ignores" does not override CLI globs).
+  "config": {
+    "default": false,
+    "MD001": true,
+    "MD022": true,
+    "MD024": true,
+    "MD025": true,
+    "MD041": true
+  }
+}

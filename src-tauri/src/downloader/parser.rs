@@ -158,4 +158,57 @@ mod tests {
         let f = parse_format(&serde_json::json!({"format_id": "137", "vcodec": "h264"})).unwrap();
         assert_eq!(f.format_id, "137");
     }
+
+    #[test]
+    fn test_parse_handles_missing_optional_fields() {
+        // 最小 JSON：全部可选字段缺失，解析仍成功且字段为默认值。
+        let info = parse_video_json(r#"{"id": "1"}"#).unwrap();
+        assert_eq!(info.id, "1");
+        assert_eq!(info.url, "");
+        assert!(info.title.is_none());
+        assert!(info.description.is_none());
+        assert_eq!(info.duration, 0);
+        assert!(info.thumbnail.is_none());
+        assert!(info.uploader.is_none());
+        assert_eq!(info.view_count, 0);
+        assert_eq!(info.like_count, 0);
+        assert!(info.formats.is_empty());
+    }
+
+    #[test]
+    fn test_parse_duration_numeric_variants() {
+        // 整数、浮点、字符串化数字（yt-dlp 偶发输出字符串 duration）。
+        assert_eq!(parse_video_json(r#"{"id":"1","duration":90}"#).unwrap().duration, 90);
+        assert_eq!(parse_video_json(r#"{"id":"1","duration":65.9}"#).unwrap().duration, 65);
+        assert_eq!(parse_video_json(r#"{"id":"1","duration":"90"}"#).unwrap().duration, 0);
+    }
+
+    #[test]
+    fn test_parse_large_numbers() {
+        // u64 超 i64 范围时 as_i64() 返回 None → 兜底 0；合法 i64（含负值）保留原值。
+        let info = parse_video_json(
+            r#"{"id":"1","view_count":18446744073709551615,"like_count":-5}"#,
+        )
+        .unwrap();
+        assert_eq!(info.view_count, 0);
+        assert_eq!(info.like_count, -5);
+    }
+
+    #[test]
+    fn test_parse_formats_skips_invalid() {
+        // formats 数组内混入无效项（缺 id / 非法值）时，无效项被跳过、有效项保留。
+        let json = r#"{
+            "id": "1",
+            "formats": [
+                {"format_id": "18", "ext": "mp4"},
+                {"format_id": "?"},
+                {"width": 1920},
+                {"format_id": "248", "resolution": "1920x1080"}
+            ]
+        }"#;
+        let info = parse_video_json(json).unwrap();
+        assert_eq!(info.formats.len(), 2, "invalid formats should be skipped");
+        assert_eq!(info.formats[0].format_id, "18");
+        assert_eq!(info.formats[1].format_id, "248");
+    }
 }

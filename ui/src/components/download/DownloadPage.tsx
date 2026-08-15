@@ -16,6 +16,7 @@ import UrlBar from "./UrlBar";
 import VideoInfoCard from "./VideoInfoCard";
 import FormatTable from "./FormatTable";
 import { useDownloadStore, enqueueDownloadGlobal } from "../../lib/downloadStore";
+import { mergeSettingsIntoConfig } from "../../lib/buildConfig";
 import { friendlyErrorMessage } from "../../lib/errorMessages";
 import { useI18n } from "../../lib/i18n";
 import { RefreshCw, ListVideo } from "lucide-react";
@@ -240,12 +241,7 @@ export default function DownloadPage() {
   const buildLatestConfig = async (): Promise<DownloadConfig> => {
     try {
       const s = await loadSettings();
-      return {
-        ...config,
-        output_dir: s.download_dir ?? "downloads",
-        download_rate_limit: s.download_rate_limit ?? null,
-        cookies_from_browser: s.cookies_from_browser ?? null,
-      };
+      return mergeSettingsIntoConfig(config, s);
     } catch {
       return config;
     }
