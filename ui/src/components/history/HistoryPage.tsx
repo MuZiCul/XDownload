@@ -356,8 +356,8 @@ export default function HistoryPage({ onRedownload }: Props) {
 
   return (
     <div className="p-3 max-w-[900px] mx-auto h-full flex flex-col gap-2">
-      {/* ===== 正在下载（30% 高度，内部滚动） ===== */}
-      <section className="h-[30%] flex flex-col min-h-0">
+      {/* ===== 正在下载（40% 高度，内部滚动） ===== */}
+      <section className="h-[40%] flex flex-col min-h-0">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <Loader2 size={15} className="text-blue-500" />
@@ -512,9 +512,11 @@ export default function HistoryPage({ onRedownload }: Props) {
             {t("common.loading")}
           </p>
         ) : items.length === 0 ? (
-          <p className="text-xs text-gray-400 text-center py-6">
-            {t("history.empty")}
-          </p>
+          <div className="flex flex-col items-center justify-center py-10 text-center">
+            <HistoryIcon size={36} className="text-gray-300 mb-3" />
+            <p className="text-sm font-medium text-gray-500">{t("history.empty")}</p>
+            <p className="text-xs text-gray-400 mt-1">{t("history.emptyHint")}</p>
+          </div>
         ) : filteredItems.length === 0 ? (
           <p className="text-xs text-gray-400 text-center py-6">
             {t("history.noMatch")}

@@ -376,6 +376,7 @@ export const en: Record<string, string> = {
   "history.searchPlaceholder": "Search title / author / link...",
   "history.clearAll": "Clear All",
   "history.empty": "No download history",
+  "history.emptyHint": "Paste an X link to start downloading, or sync bookmarks from Settings",
   "history.noMatch": "No matching downloads",
   "history.fileMissing": "File missing",
   "history.failed": "Failed",

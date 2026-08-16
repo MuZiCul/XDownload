@@ -126,8 +126,24 @@ pub fn create_schema(conn: &Connection) -> rusqlite::Result<()> {
          );
          CREATE INDEX IF NOT EXISTS idx_bookmarks_added_at
              ON bookmarks(added_at DESC);",
-    )
-}
+         )?;
+
+         // 幂等迁移：老库（2026-08-13 SQLite 迁移后、source 列加入前创建的
+         // downloads 表）缺少 `source` 列，而查询语句（download_history.rs 的
+         // SELECT_COLUMNS）包含 source → 查询 prepare 失败 → 历史页静默空。
+         // CREATE TABLE IF NOT EXISTS 不会给已存在的表补列，必须显式 ALTER。
+         let has_source = {
+         let mut stmt = conn.prepare(
+             "SELECT COUNT(*) FROM pragma_table_info('downloads') WHERE name = 'source'",
+         )?;
+         stmt.query_row([], |row| row.get::<_, i64>(0))?
+         };
+         if has_source == 0 {
+         conn.execute_batch("ALTER TABLE downloads ADD COLUMN source INTEGER NOT NULL DEFAULT 0;")?;
+         }
+
+         Ok(())
+         }
 
 #[cfg(test)]
 mod tests {
