@@ -287,11 +287,11 @@ impl YtDlpDownloader {
         // so an interrupted download never leaves partial files in the
         // user-visible folder.
         //
-        // The cache dir is keyed by the download config (see `cache_key`), so
-        // a re-enqueued / retried / resumed download reuses the previous
-        // `.part` and yt-dlp (default `--continue`) resumes from where it
-        // stopped. Partial files are only wiped by the startup stale-cache
-        // cleanup (`cleanup_download_cache`, dirs untouched > 7 days).
+        // The cache dir is keyed by the download config (see `cache_key`).
+        // Every download starts from scratch: the previous `.part` / fragments
+        // are wiped first, so paused→resumed, retried and restart-restored
+        // tasks always re-download from the beginning (no resume).
+        let _ = std::fs::remove_dir_all(cache_dir);
         std::fs::create_dir_all(cache_dir).ok();
 
         let mut cmd = self.build_base_command();
@@ -304,6 +304,8 @@ impl YtDlpDownloader {
             std::path::MAIN_SEPARATOR,
             config.output_template
         ));
+        // 禁用断点续传：即使缓存目录有残留 .part，yt-dlp 也从头下载。
+        cmd.push("--no-continue".to_string());
         cmd.push("--socket-timeout".to_string());
         cmd.push(config.socket_timeout.to_string());
         // Per-task download rate limit (--limit-rate). Empty / None = unlimited.
@@ -515,10 +517,12 @@ impl YtDlpDownloader {
         );
 
         if !result.is_success() {
-            // Failure or cancellation — keep the staged `.part` so a retry /
-            // re-enqueue of the same URL resumes instead of starting over.
-            // Partial files never leak into the user-visible folder (they stay
-            // in the cache); the periodic startup cleanup removes them.
+            // Failure or cancellation — the staged `.part` is intentionally
+            // left in the cache dir; the next attempt (retry / resume /
+            // restart-restore) wipes it at the top of `run_download`, so every
+            // download always starts from scratch. Partial files never leak
+            // into the user-visible folder (they stay in the cache); the
+            // periodic startup cleanup removes stale dirs.
             if cancel.load(Ordering::SeqCst) {
                 return Err(anyhow::anyhow!("用户主动取消"));
             }

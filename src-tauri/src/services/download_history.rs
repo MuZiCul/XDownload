@@ -94,8 +94,9 @@ fn status_code(s: DownloadStatus) -> i64 {
 /// frontend always sees the string form via [`source_name`].
 pub mod source {
     pub const SINGLE: i64 = 0; // 单链：下载页单条 URL
-    pub const BATCH: i64 = 1; // 批量：历史页批量 URL / 深链扩展批量
+    pub const BATCH: i64 = 1; // 批量：历史页批量 URL
     pub const BOOKMARK: i64 = 2; // 书签：书签同步 / 书签目录单条下载
+    pub const DEEP: i64 = 3; // 深链：浏览器扩展 xdownload:// 批量
 
     /// Default string form used when deserializing a legacy record.
     pub fn default_name() -> &'static str {
@@ -103,12 +104,13 @@ pub mod source {
     }
 }
 
-/// Convert a stored integer source (0/1/2) to its readable string form.
+/// Convert a stored integer source (0/1/2/3) to its readable string form.
 /// Unknown values fall back to "single" (the legacy default).
 pub fn source_name(code: i64) -> String {
     match code {
         source::BATCH => "batch".to_string(),
         source::BOOKMARK => "bookmark".to_string(),
+        source::DEEP => "deep".to_string(),
         _ => "single".to_string(),
     }
 }
@@ -119,6 +121,7 @@ pub fn source_code(s: &str) -> i64 {
     match s {
         "batch" => source::BATCH,
         "bookmark" => source::BOOKMARK,
+        "deep" => source::DEEP,
         _ => source::SINGLE,
     }
 }

@@ -126,7 +126,7 @@ export default function ConfigButtons({ settings, onApply }: Props) {
   };
 
   const handleQuit = () => {
-    // 交由 App 统一处理退出确认（有任务时弹窗，无任务直接退出）。
+    // 交由 App 统一处理退出确认（无任务也弹窗：最小化到托盘 / 退出）。
     window.dispatchEvent(
       new CustomEvent("quit-requested", { detail: { source: "settings" } })
     );
@@ -170,8 +170,8 @@ export default function ConfigButtons({ settings, onApply }: Props) {
         <button
           className={
             privacyMode
-              ? "btn flex items-center gap-1 text-amber-600 hover:text-amber-700"
-              : "btn flex items-center gap-1"
+              ? "btn flex items-center gap-1 text-amber-600 hover:bg-amber-50 hover:border-amber-200 hover:text-amber-700"
+              : "btn flex items-center gap-1 hover:bg-amber-50 hover:border-amber-200 hover:text-amber-600"
           }
           onClick={() => setPrivacyMode(!privacyMode)}
           title={privacyMode ? t("privacy.disable") : t("privacy.enable")}
@@ -180,7 +180,7 @@ export default function ConfigButtons({ settings, onApply }: Props) {
           {privacyMode ? t("privacy.disable") : t("privacy.enable")}
         </button>
         <button
-          className="btn flex items-center gap-1 text-red-600 hover:text-red-700"
+          className="btn flex items-center gap-1 text-red-600 hover:bg-red-50 hover:border-red-200 hover:text-red-700"
           onClick={handleQuit}
           title={t("config.quitTitle")}
         >

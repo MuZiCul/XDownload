@@ -309,24 +309,36 @@ export function initDownloadStore() {
   });
 
   // 深链（浏览器扩展）批量入队成功：合并提示并跳转到任务页。
+  // 已下载过的链接（duplicates）由后端单独收集，转发全局事件交 App 弹窗
+  // 让用户逐条选择「重新下载 / 取消」。
   listen<any>("deep-link-queued", (event) => {
     const count = Number(event.payload?.count ?? 1);
-    const msg =
-      count > 1
-        ? i18nT("gbar.deepLinkQueuedBatch", { n: count })
-        : i18nT("gbar.deepLinkQueued");
-    toast.success(
-      createElement(
-        "div",
-        { className: "flex items-center gap-1.5 min-w-0 w-full" },
+    const dups = Array.isArray(event.payload?.duplicates)
+      ? (event.payload.duplicates as { url: string; video_id: string | null }[])
+      : [];
+    if (dups.length > 0) {
+      window.dispatchEvent(
+        new CustomEvent("deep-link-duplicates", { detail: dups })
+      );
+    }
+    if (count > 0) {
+      const msg =
+        count > 1
+          ? i18nT("gbar.deepLinkQueuedBatch", { n: count })
+          : i18nT("gbar.deepLinkQueued");
+      toast.success(
         createElement(
-          "span",
-          { className: "truncate min-w-0 text-zinc-700" },
-          msg
-        )
-      ),
-      { id: "deep-link-global" }
-    );
+          "div",
+          { className: "flex items-center gap-1.5 min-w-0 w-full" },
+          createElement(
+            "span",
+            { className: "truncate min-w-0 text-zinc-700" },
+            msg
+          )
+        ),
+        { id: "deep-link-global" }
+      );
+    }
     window.dispatchEvent(new CustomEvent("switch-tab", { detail: "history" }));
   });
 

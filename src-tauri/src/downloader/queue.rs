@@ -14,7 +14,7 @@ use crate::services::config::ConfigManager;
 use crate::services::download_history::DownloadHistory;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 use tracing::{debug, info, warn};
@@ -252,6 +252,10 @@ pub struct DownloadQueue {
     app: AppHandle,
     downloader: Arc<YtDlpDownloader>,
     state: Arc<Mutex<QueueState>>,
+    /// Set while the app is quitting with "save progress": workers that are
+    /// killed along with their child process must end quietly (no failure
+    /// history) because the queue was already persisted and will be restored.
+    exiting: Arc<AtomicBool>,
 }
 
 impl DownloadQueue {
@@ -260,7 +264,16 @@ impl DownloadQueue {
             app,
             downloader,
             state: Arc::new(Mutex::new(QueueState::default())),
+            exiting: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Flag the queue as "exiting with saved progress". Must be called AFTER
+    /// `save_now()` so the persisted status (running/queued/paused) is intact,
+    /// and BEFORE killing child processes — workers then end without recording
+    /// a fake failure in the download history.
+    pub fn prepare_exit(&self) {
+        self.exiting.store(true, Ordering::SeqCst);
     }
 
     /// Enqueue a download. Returns the task id, or an error when the URL is
@@ -478,6 +491,13 @@ impl DownloadQueue {
             .as_deref()
             .is_some_and(|e| e.contains("用户主动取消"));
 
+        // 保存进度退出：queue.json 已保存任务状态（running→恢复续传），
+        // 这里不写历史、不 emit finished —— 被 kill 的 worker 必须静默结束，
+        // 避免给「正在下载的任务」留下一条虚假的失败记录。
+        if self.exiting.load(Ordering::SeqCst) {
+            return;
+        }
+
         // 写历史时优先使用 fetch 到的卡片信息（task.info，信息获取阶段由前端
         // 回写持久化），缺失时回退到入队时的 config 快照。批量任务入队时
         // config 元数据为空，若不合并 task.info，下载完成的历史卡片会没有
@@ -644,6 +664,9 @@ impl DownloadQueue {
             self.downloader.cleanup_task_cache(&cfg);
         }
         self.persist();
+        // 删除可能释放了并发槽位（删除 running 任务）——立即 pump 让等待中的
+        // 任务开始下载，避免队列停滞。
+        self.pump();
     }
 
     /// Remove all queued (not yet started) tasks. Running tasks finish.
@@ -700,27 +723,34 @@ impl DownloadQueue {
             self.downloader.cleanup_task_cache(&cfg);
         }
         self.persist();
+        // 兜底 pump：删除释放槽位后如有残留排队任务立即启动。
+        self.pump();
     }
 
     /// Pause a single task (synchronous):
     /// - queued task → moved to the paused list (never started).
     /// - running task → moved to the paused list immediately and its process
-    ///   killed; the cache directory (.part) is kept for resume. The worker
-    ///   finishes and, finding the task already in the paused list, ends
-    ///   quietly (no finished event / history).
+    ///   killed; the cache directory is then removed so no partial `.part` /
+    ///   staged fragments accumulate. The worker finishes and, finding the
+    ///   task already in the paused list, ends quietly (no finished event /
+    ///   history). Downloads always restart from scratch (resume disabled).
     pub fn pause_task(&self, task_id: &str) {
-        let moved = {
+        let (moved, config) = {
             let mut st = self.state.lock().unwrap();
-            st.pause_one(task_id)
+            let cfg = st.config_of(task_id);
+            (st.pause_one(task_id), cfg)
         };
         if moved {
             self.downloader.cancel_task(task_id);
+            if let Some(cfg) = config {
+                self.downloader.cleanup_task_cache(&cfg);
+            }
             self.persist();
         }
     }
 
-    /// Resume a paused task: move it back to the queue with `resume = true`
-    /// (cache is kept, so yt-dlp resumes from the .part file).
+    /// Resume a paused task: move it back to the queue with `resume = true`.
+    /// The cache was wiped on pause, so the next run restarts from scratch.
     pub fn resume_task(&self, task_id: &str) {
         {
             let mut st = self.state.lock().unwrap();
@@ -739,13 +769,23 @@ impl DownloadQueue {
     /// `paused_tasks` in this same order, so "pause all → resume all" leaves
     /// the queue (and the download order) unchanged.
     pub fn pause_all(&self) {
-        let running_ids: Vec<String> = {
+        let (running_ids, configs): (Vec<String>, Vec<DownloadConfig>) = {
             let mut st = self.state.lock().unwrap();
-            st.pause_all()
+            let configs = st
+                .running
+                .iter()
+                .map(|t| t.config.clone())
+                .collect();
+            (st.pause_all(), configs)
         };
-        // 锁外 kill 所有原 running 进程（cancel_task 内部处理 pid 清理）。
+        // 锁外 kill 所有原 running 进程（cancel_task 内部处理 pid 清理），
+        // 并清理其缓存目录：暂停不保留 .part（下载一律从头开始），避免
+        // 碎文件/残留分片在缓存目录中积累。
         for id in &running_ids {
             self.downloader.cancel_task(id);
+        }
+        for cfg in configs {
+            self.downloader.cleanup_task_cache(&cfg);
         }
         self.persist();
     }

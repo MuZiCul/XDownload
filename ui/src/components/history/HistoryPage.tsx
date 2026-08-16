@@ -73,6 +73,11 @@ export default function HistoryPage({ onRedownload }: Props) {
   const { t } = useI18n();
   const privacy = usePrivacyMode();
   const { queueTasks } = useDownloadStore();
+  // 活跃任务数（进行中 + 排队 + 暂停）≥ 2 时任务区与历史区 5/5 分栏，
+  // 否则（0~1 个）3/7 分栏，给历史区更多空间。
+  const activeCount = queueTasks.filter(
+    (t) => t.status === "downloading" || t.status === "queued" || t.status === "paused"
+  ).length;
   // 排队 + 暂停任务可被重排（置顶/上移）。sortableIds 保持显示顺序。
   const sortableIds = queueTasks
     .filter((t) => t.status === "queued" || t.status === "paused")
@@ -81,12 +86,13 @@ export default function HistoryPage({ onRedownload }: Props) {
   const [items, setItems] = useState<DownloadHistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [batchOpen, setBatchOpen] = useState(false);
-  // 断点续传开关（默认关）：开启时隐藏暂停/开始按钮。
-  const [resumeSupport, setResumeSupport] = useState(false);
-  // 历史记录删除确认：null = 未打开，否则为待删记录的 video_id 与文件路径。
+  // 历史记录删除确认：null = 未打开，否则为待删记录的 video_id 与文件信息。
+  // fileExists 标记磁盘文件是否仍存在——失败记录/文件已缺失的记录
+  // 不提供「删除记录和文件」选项，避免误导用户以为有文件可删。
   const [deleteTarget, setDeleteTarget] = useState<{
     videoId: string;
     filePath: string | null;
+    fileExists: boolean;
   } | null>(null);
   // 历史失败卡片展开的错误详情记录 id（null = 全部收起）。
   const [expandedErrId, setExpandedErrId] = useState<string | null>(null);
@@ -203,13 +209,6 @@ export default function HistoryPage({ onRedownload }: Props) {
     load();
   }, []);
 
-  // 断点续传开关：读取设置控制暂停/开始按钮显隐。
-  useEffect(() => {
-    loadSettings()
-      .then((s) => setResumeSupport(s.resume_support ?? false))
-      .catch(() => {});
-  }, []);
-
   // 下载完成板块：任务终态后自动刷新历史（配合 download-finished 移除活跃任务）。
   useEffect(() => {
     // 每次进入页面 / 队列变化时刷新，保证与后端一致。
@@ -256,7 +255,11 @@ export default function HistoryPage({ onRedownload }: Props) {
 
   // 点删除按钮：弹确认窗，询问是否同时删除已下载的文件。
   const handleDelete = (item: DownloadHistoryItem) => {
-    setDeleteTarget({ videoId: item.video_id, filePath: item.file_path ?? null });
+    setDeleteTarget({
+      videoId: item.video_id,
+      filePath: item.file_path ?? null,
+      fileExists: item.file_exists,
+    });
   };
 
   // 「仅删除记录」：不碰磁盘文件。
@@ -356,8 +359,8 @@ export default function HistoryPage({ onRedownload }: Props) {
 
   return (
     <div className="p-3 max-w-[900px] mx-auto h-full flex flex-col gap-2">
-      {/* ===== 正在下载（40% 高度，内部滚动） ===== */}
-      <section className="h-[40%] flex flex-col min-h-0">
+      {/* ===== 正在下载（活跃任务 ≥2 时 50% 高度，否则 30%，内部滚动） ===== */}
+      <section className={`${activeCount >= 2 ? "h-1/2" : "h-[30%]"} flex flex-col min-h-0`}>
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <Loader2 size={15} className="text-blue-500" />
@@ -373,35 +376,24 @@ export default function HistoryPage({ onRedownload }: Props) {
         <div className="flex items-center gap-1.5">
           {queueTasks.length > 0 && (
             <>
-              {resumeSupport ? (
-                <span
-                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold border border-emerald-200 bg-emerald-50 text-emerald-700 rounded-xl"
-                  title={t("tasks.resumeActive")}
+              {queueTasks.some((t) => t.status === "downloading") ? (
+                <button
+                  className="btn px-2.5 py-1 text-xs font-semibold flex items-center gap-1"
+                  onClick={pauseAllGlobal}
+                  title={t("tasks.pauseAll")}
                 >
-                  {t("tasks.resumeActive")}
-                </span>
+                  <Pause size={12} />
+                  {t("tasks.pauseAll")}
+                </button>
               ) : (
-                <>
-                  {queueTasks.some((t) => t.status === "downloading") ? (
-                    <button
-                      className="btn px-2.5 py-1 text-xs font-semibold flex items-center gap-1"
-                      onClick={pauseAllGlobal}
-                      title={t("tasks.pauseAll")}
-                    >
-                      <Pause size={12} />
-                      {t("tasks.pauseAll")}
-                    </button>
-                  ) : (
-                    <button
-                      className="btn px-2.5 py-1 text-xs font-semibold flex items-center gap-1"
-                      onClick={resumeAllGlobal}
-                      title={t("tasks.startAll")}
-                    >
-                      <Play size={12} />
-                      {t("tasks.startAll")}
-                    </button>
-                  )}
-                </>
+                <button
+                  className="btn px-2.5 py-1 text-xs font-semibold flex items-center gap-1"
+                  onClick={resumeAllGlobal}
+                  title={t("tasks.startAll")}
+                >
+                  <Play size={12} />
+                  {t("tasks.startAll")}
+                </button>
               )}
               <button
                 className="btn px-2.5 py-1 text-xs font-semibold flex items-center gap-1 text-red-600"
@@ -434,7 +426,6 @@ export default function HistoryPage({ onRedownload }: Props) {
               <TaskCard
                 key={task.id}
                 task={task}
-                hidePause={resumeSupport}
                 isFirst={firstSortableId === task.id}
                 onMoveUp={() => {
                   // 按任务自身所在列表（暂停区/排队区各自内部）计算索引，
@@ -458,7 +449,7 @@ export default function HistoryPage({ onRedownload }: Props) {
       </div>
       </section>
 
-      {/* ===== 下载完成（剩余 70%，内部滚动 + 虚拟化） ===== */}
+      {/* ===== 下载完成（剩余高度，内部滚动 + 虚拟化） ===== */}
       <section className="flex-1 flex flex-col min-h-0">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
@@ -716,7 +707,7 @@ export default function HistoryPage({ onRedownload }: Props) {
             <p className="text-xs text-zinc-500 mb-2 leading-relaxed">
               {t("history.deleteBody")}
             </p>
-            {deleteTarget.filePath && (
+            {deleteTarget.fileExists && deleteTarget.filePath && (
               <p
                 className="text-[11px] text-zinc-400 mb-3 px-2 py-1.5 bg-zinc-100/70 rounded truncate"
                 title={deleteTarget.filePath}
@@ -737,12 +728,14 @@ export default function HistoryPage({ onRedownload }: Props) {
               >
                 {t("history.deleteRecordOnly")}
               </button>
-              <button
-                className="btn px-2.5 py-1.5 text-xs font-semibold text-red-600"
-                onClick={handleDeleteRecordAndFile}
-              >
-                {t("history.deleteRecordAndFile")}
-              </button>
+              {deleteTarget.fileExists && (
+                <button
+                  className="btn px-2.5 py-1.5 text-xs font-semibold text-red-600"
+                  onClick={handleDeleteRecordAndFile}
+                >
+                  {t("history.deleteRecordAndFile")}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -811,7 +804,6 @@ function getRecentBucket(
 function TaskCard({
   task,
   isFirst,
-  hidePause,
   onMoveUp,
   onMoveTop,
   onTitleMenu,
@@ -819,8 +811,6 @@ function TaskCard({
   task: DownloadTask;
   /** 该任务是否为可排序列表（queued+paused）中的第一个。 */
   isFirst?: boolean;
-  /** 断点续传开启时隐藏暂停/继续按钮。 */
-  hidePause?: boolean;
   onMoveUp?: () => void;
   onMoveTop?: () => void;
   onTitleMenu: (
@@ -994,32 +984,31 @@ function TaskCard({
                 </button>
               </>
             )}
-            {!hidePause &&
-              (task.infoFailed ? (
-                <button
-                  className="p-1 rounded hover:bg-zinc-100 text-zinc-400 hover:text-emerald-600"
-                  onClick={() => refetchTaskInfoGlobal(task.id)}
-                  title={t("tasks.retryInfo")}
-                >
-                  <RefreshCw size={13} />
-                </button>
-              ) : task.status === "paused" ? (
-                <button
-                  className="p-1 rounded hover:bg-zinc-100 text-zinc-400 hover:text-emerald-600"
-                  onClick={() => resumeQueueTaskGlobal(task.id)}
-                  title={t("batch.resumeTask")}
-                >
-                  <Play size={13} />
-                </button>
-              ) : task.status === "queued" || task.status === "downloading" ? (
-                <button
-                  className="p-1 rounded hover:bg-zinc-100 text-zinc-400 hover:text-amber-600"
-                  onClick={() => pauseQueueTaskGlobal(task.id)}
-                  title={t("batch.pauseTask")}
-                >
-                  <Pause size={13} />
-                </button>
-              ) : null)}
+            {task.infoFailed ? (
+              <button
+                className="p-1 rounded hover:bg-zinc-100 text-zinc-400 hover:text-emerald-600"
+                onClick={() => refetchTaskInfoGlobal(task.id)}
+                title={t("tasks.retryInfo")}
+              >
+                <RefreshCw size={13} />
+              </button>
+            ) : task.status === "paused" ? (
+              <button
+                className="p-1 rounded hover:bg-zinc-100 text-zinc-400 hover:text-emerald-600"
+                onClick={() => resumeQueueTaskGlobal(task.id)}
+                title={t("batch.resumeTask")}
+              >
+                <Play size={13} />
+              </button>
+            ) : task.status === "queued" || task.status === "downloading" ? (
+              <button
+                className="p-1 rounded hover:bg-zinc-100 text-zinc-400 hover:text-amber-600"
+                onClick={() => pauseQueueTaskGlobal(task.id)}
+                title={t("batch.pauseTask")}
+              >
+                <Pause size={13} />
+              </button>
+            ) : null}
             <button
               className="p-1 rounded hover:bg-zinc-100 text-zinc-400 hover:text-zinc-600"
               onClick={() => removeQueueTaskGlobal(task.id)}
@@ -1062,18 +1051,20 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** 任务来源徽标：书签 / 批量 / 单链。无来源或未知来源时返回 null。 */
+/** 任务来源徽标：书签 / 批量 / 深链 / 单链。无来源或未知来源时返回 null。 */
 function SourceBadge({ source }: { source: string | undefined | null }) {
   const { t } = useI18n();
   const key = taskSourceKey(source);
   if (!key) return null;
-  // 按来源配色：书签=紫、批量=青、单链=灰。
+  // 按来源配色：书签=紫、批量=青、深链=橙、单链=灰。
   const cls =
     source === TaskSource.Bookmark
       ? "text-purple-600 bg-purple-50 border-purple-200"
       : source === TaskSource.Batch
         ? "text-cyan-700 bg-cyan-50 border-cyan-200"
-        : "text-zinc-500 bg-zinc-50 border-zinc-200";
+        : source === TaskSource.Deep
+          ? "text-orange-600 bg-orange-50 border-orange-200"
+          : "text-zinc-500 bg-zinc-50 border-zinc-200";
   return (
     <span
       className={`inline-flex items-center text-[10px] font-medium border rounded-md px-1.5 py-0.5 shrink-0 ${cls}`}

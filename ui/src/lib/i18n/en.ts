@@ -96,7 +96,6 @@ export const en: Record<string, string> = {
   "tasks.emptyActive": "No active downloads",
   "tasks.pauseAll": "Pause All",
   "tasks.startAll": "Start All",
-  "tasks.resumeActive": "Resume support active",
   "tasks.deleteAll": "Delete All",
   "tasks.fetchingInfo": "Fetching info",
   "tasks.waitingInfo": "Waiting for info",
@@ -113,6 +112,7 @@ export const en: Record<string, string> = {
   "tasks.source.single": "Single",
   "tasks.source.batch": "Batch",
   "tasks.source.bookmark": "Bookmark",
+  "tasks.source.deep": "Deep link",
   "queue.added": "Added to the task queue",
   "batch.dupTitle": "Some links were already downloaded",
   "batch.dupBody": "Choose what to do with each already-downloaded link:",
@@ -158,8 +158,11 @@ export const en: Record<string, string> = {
   "common.quitFail": "Quit failed: {err}",
   "quit.title": "Exit confirmation",
   "quit.body": "Tasks are still running (queued / downloading / paused). Save progress before exiting?",
+  "quit.bodySimple": "Exit the app? Unfinished tasks will keep their progress.",
   "quit.saveAndExit": "Save progress & exit",
-  "quit.exitWithoutSave": "Exit without saving",
+  "quit.exitWithoutSave": "Exit",
+  "quit.exit": "Exit",
+  "quit.minimizeToTray": "Minimize to tray",
   "common.close": "Close",
 
   // ===== Directory setting =====
@@ -295,13 +298,12 @@ export const en: Record<string, string> = {
   "multitask.retry": "Retry count",
   "multitask.persist": "Persist queue",
   "multitask.rateLimit": "Rate limit",
-  "multitask.resumeSupport": "Resume support",
   "multitask.unlimited": "Unlimited",
   "multitask.custom": "Custom",
   "multitask.invalidRate": "Invalid rate limit. Use e.g. 1M / 2.5M / 500K",
   "multitask.saved": "Multi-task settings saved",
   "multitask.hint":
-    "Concurrent downloads: tasks running at once (1-3).\nRetry count: 0 = no retry.\nPersist queue: restores unfinished tasks on next launch.\nRate limit: per-task download speed (1M~100M), e.g. 1M / 500K.\nResume support: hides the pause/resume buttons and resumes interrupted/failed downloads automatically (off by default).",
+    "Concurrent downloads: tasks running at once (1-3).\nRetry count: 0 = no retry.\nPersist queue: restores unfinished tasks on next launch.\nRate limit: per-task download speed (1M~100M), e.g. 1M / 500K.",
 
   // ===== Bookmarks setting =====
   "bookmarks.title": "Bookmarks",

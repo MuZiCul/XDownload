@@ -144,8 +144,4 @@ pub struct AppSettings {
     /// None = 不传参（yt-dlp 默认 10）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hls_fragment_retries: Option<u8>,
-    /// 断点续传开关（默认关）。开启时任务面板隐藏暂停/开始按钮，
-    /// 下载中断/失败后会自动从断点继续。None 视为关闭（旧配置兼容）。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub resume_support: Option<bool>,
 }

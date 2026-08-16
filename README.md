@@ -32,7 +32,7 @@ Powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp) + ffmpeg, wrapped in a cle
 - **Smart best quality** — always downloads the highest quality video + audio (merged automatically), no format picking needed
 - **Global progress** — live progress bar in the status bar with speed & ETA, visible on every tab; state survives tab switches
 - **Staged progress** — separated video / audio streams show "video" then "audio" stages, with an indeterminate running bar while ffmpeg merges
-- **Queue control** — reorder tasks (pin to top / move up), pause & resume a single task or all at once (combined pause/start button), and unfinished downloads resume where they left off (partial files are kept)
+- **Queue control** — reorder tasks (pin to top / move up), pause & resume a single task or all at once (combined pause/start button); every (re)start downloads from scratch so partial files never corrupt a merge
 - **Speed control** — per-task download rate limit, plus configurable HLS fragment concurrency & retries to dramatically speed up X's fragmented audio/video streams
 - **Multi-media tweets** — downloads every video / image in a multi-media tweet
 - **Atomic downloads** — files only appear in your download folder after a successful (merged) finish; interrupted / cancelled downloads leave no partial files behind
@@ -49,18 +49,19 @@ Powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp) + ffmpeg, wrapped in a cle
 - **Privacy mode** — mask video titles with `***` and blur covers with a frosted-glass overlay; toggle from settings, the status bar, or the tray, and it persists across restarts
 - **Log viewer** — open a live, auto-refreshing log viewer (dark theme, level coloring, per-date tabs) in the browser right from the settings page
 - **Batch deep-links** — rapid-fire clicks on several X posts get merged into one batch (deduped, concurrent info fetch) and show a single toast instead of N
-- **Resume switch** — optional toggle that auto-resumes interrupted downloads from the breakpoint and hides the pause/start buttons (off by default)
-- **Source badges** — download task & history cards show where each item came from (bookmark / batch / single link), so you can tell at a glance which entry added it
+- **Deep-link dedup** — deep-linked videos that were already downloaded ask for confirmation (re-download / skip) instead of silently adding a duplicate task
+- **Exit dialog** — closing the window always asks: minimize to tray or really quit (the tray quit and the settings quit follow the same logic; when tasks are active and not auto-saved, you choose whether to save progress first)
+- **Source badges** — download task & history cards show where each item came from (bookmark / batch / deep link / single link), so you can tell at a glance which entry added it
 - **Faster database** — download history & bookmarks use a connection pool + WAL mode: reads run concurrently and never block the download writer
-- **Clean cache** — abandoned partial downloads (untouched for over 7 days) are swept at startup instead of wiping everything on arbitrary dates, so interrupted downloads stay resumable
-- **Split history view** — the active downloads and the history list each scroll independently (30% / 70% split); the history list is virtualized, staying smooth even with thousands of records
+- **Clean cache** — abandoned partial downloads (untouched for over 7 days) are swept at startup, and paused/cancelled tasks wipe their staging cache right away, so no fragment litter ever accumulates
+- **Split history view** — the active downloads and the history list each scroll independently (50/50 with 2+ active tasks, 30/70 otherwise); the history list is virtualized, staying smooth even with thousands of records
 - **i18n** — English & 简体中文, switch instantly without restart
 
 ## Install
 
 Grab the latest installer from [Releases](https://github.com/MuZiCul/XDownload/releases).
 
-- **Windows**: `XDownload_2.9.4_x64-setup.exe` (NSIS) / `.msi`
+- **Windows**: `XDownload_2.9.5_x64-setup.exe` (NSIS) / `.msi`
 
 First launch downloads yt-dlp + ffmpeg automatically — or drop them into `bin/` yourself.
 

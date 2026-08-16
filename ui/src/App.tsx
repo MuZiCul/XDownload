@@ -9,10 +9,14 @@ import HistoryPage from "./components/history/HistoryPage";
 import AboutPage from "./components/about/AboutPage";
 import DisclaimerPage from "./components/about/DisclaimerPage";
 import { CONTENT } from "./lib/disclaimerContent";
-import { initDownloadStore } from "./lib/downloadStore";
+import { initDownloadStore, enqueueDownloadGlobal, buildBatchConfig } from "./lib/downloadStore";
 import { initBookmarkSync } from "./lib/bookmarkSync";
 import BookmarkSyncModal from "./components/settings/BookmarkSyncModal";
+import DuplicateDownloadModal, {
+  type DuplicateItem,
+} from "./components/common/DuplicateDownloadModal";
 import type { DownloadHistoryItem } from "./lib/types";
+import { TaskSource } from "./lib/types";
 import { initI18n, useI18n } from "./lib/i18n";
 import {
   acceptDisclaimer,
@@ -39,7 +43,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getPrivacyMode, setPrivacyMode, initPrivacyMode } from "./lib/privacyMode";
-import { ArrowUpRight, Download, Loader2, Save, Power, Trash2, X } from "lucide-react";
+import { ArrowUpRight, Download, Loader2, Save, Power, Minimize2, Trash2, X } from "lucide-react";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -178,11 +182,19 @@ function App() {
   // ---- 退出确认流程 ----
   // 后端在以下场景 emit quit-requested：窗口 X（source=close）、托盘退出
   // （source=tray）；设置页退出按钮 dispatch 同事件（source=settings）。
-  // 有活跃任务 → 弹确认框（保存进度并退出 / 直接退出 / 取消）；
-  // 无任务 → X 场景隐藏到托盘，其余直接退出。
+  // 弹窗按钮按条件简化：
+  //   simple=true（无任务，或队列持久化开启=任务已自动保存）
+  //     → 只显示「最小化到托盘」「退出」，不询问保存进度；
+  //   simple=false（有任务且队列持久化关闭）
+  //     → 显示完整按钮（保存进度并退出 / 直接退出 / 最小化到托盘 / 取消）。
   const [quitDialog, setQuitDialog] = useState<{
     source: "close" | "tray" | "settings";
+    simple: boolean;
   } | null>(null);
+
+  // 深链（浏览器扩展）已下载查重：待用户逐条选择「重新下载 / 取消」的链接。
+  // 弹窗被强制处理完所有条目后自动卸载（与批量下载的 dup 弹窗行为一致）。
+  const [deepDups, setDeepDups] = useState<DuplicateItem[]>([]);
 
   useEffect(() => {
     const onBackend = (e: { payload?: { source?: string } }) => {
@@ -195,40 +207,66 @@ function App() {
     };
     const unlisten = listen<any>("quit-requested", onBackend);
     window.addEventListener("quit-requested", onCustom);
+    // 深链已下载查重：后端 process_deep_link_batch 收集重复链接 → downloadStore
+    // 转发 deep-link-duplicates → 这里弹窗让用户逐条选择重新下载/取消。
+    const onDeepDups = (e: Event) => {
+      const dups = (e as CustomEvent)?.detail;
+      if (Array.isArray(dups) && dups.length > 0) {
+        setDeepDups(dups);
+      }
+    };
+    window.addEventListener("deep-link-duplicates", onDeepDups);
     return () => {
       unlisten.then((fn) => fn());
       window.removeEventListener("quit-requested", onCustom);
+      window.removeEventListener("deep-link-duplicates", onDeepDups);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleQuitRequest = (source: "close" | "tray" | "settings") => {
-    hasActiveTasks()
-      .then((active) => {
-        if (active) {
-          setQuitDialog({ source });
-        } else {
-          if (source === "close") {
-            // 无任务点 X → 隐藏到托盘（保持后台运行）。
-            getCurrentWindow().hide().catch(() => {});
-          } else {
-            quitApp(false);
-          }
-        }
+    // 无任务或队列持久化开启（任务已自动保存）→ 精简弹窗（close/settings：
+    // 最小化/退出；tray：仅退出），不询问保存进度；仅「有任务且队列持久化
+    // 关闭」才显示完整按钮。
+    Promise.all([hasActiveTasks(), loadSettings().catch(() => null)])
+      .then(([active, s]) => {
+        const simple = !active || !!s?.queue_persist;
+        setQuitDialog({ source, simple });
       })
       .catch(() => {
-        // 查询失败按无任务处理：X 隐藏，其余退出。
-        if (source === "close") {
-          getCurrentWindow().hide().catch(() => {});
-        } else {
-          quitApp(false);
-        }
+        // 查询失败按精简处理：仍有退出/最小化选项，不给用户制造障碍。
+        setQuitDialog({ source, simple: true });
       });
   };
 
   const doQuit = (saveProgress: boolean) => {
     setQuitDialog(null);
     quitApp(saveProgress);
+  };
+
+  // 最小化到托盘：不退出应用，隐藏主窗口，下载任务继续在后台运行。
+  const doHideToTray = () => {
+    setQuitDialog(null);
+    getCurrentWindow().hide().catch(() => {});
+  };
+
+  // 深链 dup 弹窗「重新下载」：立即入队（autoStart，来源=深链）后移除该项。
+  const handleDeepDupRedownload = async (item: DuplicateItem) => {
+    const s = await loadSettings().catch(() => null);
+    try {
+      await enqueueDownloadGlobal(buildBatchConfig(item.url, item.video_id, s), {
+        autoStart: true,
+        source: TaskSource.Deep,
+      });
+      setDeepDups((prev) => prev.filter((x) => x.url !== item.url));
+    } catch (err: any) {
+      toast.warning(String(err?.message ?? err));
+    }
+  };
+
+  // 深链 dup 弹窗「取消」：直接移除，不入队。
+  const handleDeepDupCancel = (item: DuplicateItem) => {
+    setDeepDups((prev) => prev.filter((x) => x.url !== item.url));
   };
 
   // Load the persisted UI language.
@@ -897,7 +935,8 @@ function App() {
         </div>
       )}
 
-      {/* 退出确认弹窗（有活跃任务时） */}
+      {/* 退出确认弹窗（simple=无任务/队列持久化已开；完整=有任务且未自动保存）。
+          托盘退出不提供「最小化到托盘」（托盘退出意图即真退出）。 */}
       {quitDialog && (
         <div className="dialog-overlay">
           <div className="dialog-content" onClick={(e) => e.stopPropagation()}>
@@ -905,38 +944,91 @@ function App() {
               {t("quit.title")}
             </h3>
             <p className="text-xs text-zinc-500 mb-4 leading-relaxed">
-              {t("quit.body")}
+              {quitDialog.simple ? t("quit.bodySimple") : t("quit.body")}
             </p>
             <div className="flex flex-col gap-1.5">
-              <button
-                className="btn btn-primary w-full text-sm flex items-center justify-center gap-2 py-2.5"
-                onClick={() => doQuit(true)}
-              >
-                <Save size={15} />
-                {t("quit.saveAndExit")}
-              </button>
-              <button
-                className="btn w-full text-sm flex items-center justify-center gap-2 py-2.5"
-                onClick={() => doQuit(false)}
-              >
-                <Power size={15} />
-                {t("quit.exitWithoutSave")}
-              </button>
-              <button
-                className="btn w-full text-sm py-2.5"
-                onClick={() => {
-                  setQuitDialog(null);
-                  // X 场景取消 → 隐藏到托盘；托盘/设置取消 → 无动作。
-                  if (quitDialog.source === "close") {
-                    getCurrentWindow().hide().catch(() => {});
-                  }
-                }}
-              >
-                {t("common.cancel")}
-              </button>
+              {quitDialog.simple ? (
+                <>
+                  {/* 精简模式：无任务 / 队列持久化已开（任务自动保存）——
+                      不询问保存进度。close/settings：最小化+退出；tray：退出。 */}
+                  {quitDialog.source !== "tray" && (
+                    <button
+                      className="btn w-full text-sm flex items-center justify-center gap-2 py-2.5"
+                      onClick={doHideToTray}
+                    >
+                      <Minimize2 size={15} />
+                      {t("quit.minimizeToTray")}
+                    </button>
+                  )}
+                  <button
+                    className="btn btn-primary w-full text-sm flex items-center justify-center gap-2 py-2.5"
+                    onClick={() => doQuit(false)}
+                  >
+                    <Power size={15} />
+                    {t("quit.exit")}
+                  </button>
+                  {quitDialog.source === "tray" && (
+                    <button
+                      className="btn w-full text-sm py-2.5"
+                      onClick={() => setQuitDialog(null)}
+                    >
+                      {t("common.cancel")}
+                    </button>
+                  )}
+                </>
+              ) : (
+                <>
+                  {/* 完整模式：有任务且队列持久化关闭 → 由用户决定是否保存进度。 */}
+                  <button
+                    className="btn btn-primary w-full text-sm flex items-center justify-center gap-2 py-2.5"
+                    onClick={() => doQuit(true)}
+                  >
+                    <Save size={15} />
+                    {t("quit.saveAndExit")}
+                  </button>
+                  <button
+                    className="btn w-full text-sm flex items-center justify-center gap-2 py-2.5"
+                    onClick={() => doQuit(false)}
+                  >
+                    <Power size={15} />
+                    {t("quit.exitWithoutSave")}
+                  </button>
+                  {quitDialog.source !== "tray" && (
+                    <button
+                      className="btn w-full text-sm flex items-center justify-center gap-2 py-2.5"
+                      onClick={doHideToTray}
+                    >
+                      <Minimize2 size={15} />
+                      {t("quit.minimizeToTray")}
+                    </button>
+                  )}
+                  <button
+                    className="btn w-full text-sm py-2.5"
+                    onClick={() => {
+                      setQuitDialog(null);
+                      // X 场景取消 → 隐藏到托盘；托盘/设置取消 → 无动作。
+                      if (quitDialog.source === "close") {
+                        getCurrentWindow().hide().catch(() => {});
+                      }
+                    }}
+                  >
+                    {t("common.cancel")}
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
+      )}
+
+      {/* 深链已下载确认弹窗：浏览器扩展发来的链接已下载过，交用户逐条选择
+          重新下载/取消；全部处理完（列表清空）后自动卸载。 */}
+      {deepDups.length > 0 && (
+        <DuplicateDownloadModal
+          items={deepDups}
+          onRedownload={handleDeepDupRedownload}
+          onCancel={handleDeepDupCancel}
+        />
       )}
     </QueryClientProvider>
   );

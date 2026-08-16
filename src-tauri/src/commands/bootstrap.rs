@@ -222,7 +222,11 @@ pub fn quit_app(app: tauri::AppHandle, save_progress: bool) {
     );
     if save_progress {
         if let Some(state) = app.try_state::<crate::commands::download::DownloaderState>() {
+            // 先持久化当前队列（running/queued/paused 状态原样保存，重启后
+            // 按状态恢复），再标记「退出中」——此后被 kill 的 worker 会静默
+            // 结束，不会给正在下载的任务留下虚假的失败历史记录。
             state.queue.save_now();
+            state.queue.prepare_exit();
         }
     }
     crate::utils::process::kill_all_children();

@@ -38,7 +38,7 @@ body {
 .section-card {
   @apply border border-zinc-200/80 rounded-xl p-4 mb-3 bg-white
          shadow-[1px_2px_6px_rgba(0,0,0,0.12)] transition-shadow
-         hover:shadow-[2px_3px_10px_rgba(59,130,246,0.35)];
+         hover:shadow-[2px_3px_10px_rgba(0,0,0,0.18)];
 }
 
 .section-title {
@@ -48,8 +48,9 @@ body {
 /* Buttons */
 .btn {
   @apply font-sans text-xs px-3.5 py-1.5 border border-zinc-300 rounded-xl bg-white cursor-pointer whitespace-nowrap
-         font-medium hover:bg-zinc-50 hover:border-zinc-400 active:scale-[0.98]
-         transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/40;
+         font-medium text-zinc-700 hover:bg-zinc-100 hover:border-zinc-400 hover:text-zinc-900
+         active:scale-[0.98] transition-all duration-150
+         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400/40;
 }
 .btn:disabled {
   @apply opacity-40 scale-100 cursor-not-allowed;
