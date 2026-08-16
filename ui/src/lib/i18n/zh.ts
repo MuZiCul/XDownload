@@ -95,7 +95,6 @@ export const zh: Record<string, string> = {
   "tasks.emptyActive": "暂无正在下载的任务",
   "tasks.pauseAll": "全部暂停",
   "tasks.startAll": "全部开始",
-  "tasks.resumeActive": "断点续传正在支持",
   "tasks.deleteAll": "全部删除",
   "tasks.fetchingInfo": "正在获取信息",
   "tasks.waitingInfo": "等待获取信息",
@@ -112,6 +111,7 @@ export const zh: Record<string, string> = {
   "tasks.source.single": "单链",
   "tasks.source.batch": "批量",
   "tasks.source.bookmark": "书签",
+  "tasks.source.deep": "深链",
   "queue.added": "已加入任务队列",
   "batch.dupTitle": "部分链接已下载",
   "batch.dupBody": "以下链接已下载过，请逐条选择处理方式：",
@@ -157,8 +157,11 @@ export const zh: Record<string, string> = {
   "common.quitFail": "退出失败: {err}",
   "quit.title": "退出确认",
   "quit.body": "有任务正在执行（排队/下载中/暂停）。是否保存当前进度后退出？",
+  "quit.bodySimple": "确定要退出应用吗？未完成的任务会保留进度。",
   "quit.saveAndExit": "保存进度并退出",
-  "quit.exitWithoutSave": "直接退出（不保存进度）",
+  "quit.exitWithoutSave": "直接退出",
+  "quit.exit": "退出",
+  "quit.minimizeToTray": "最小化到托盘",
   "common.close": "关闭",
 
   // ===== Directory setting =====
@@ -288,13 +291,12 @@ export const zh: Record<string, string> = {
   "multitask.retry": "失败重试次数",
   "multitask.persist": "队列持久化",
   "multitask.rateLimit": "下载限速",
-  "multitask.resumeSupport": "断点续传",
   "multitask.unlimited": "不限速",
   "multitask.custom": "自定义",
   "multitask.invalidRate": "限速格式无效，请输入如 1M / 2.5M / 500K",
   "multitask.saved": "多任务设置已保存",
   "multitask.hint":
-    "并发下载数：同时下载的任务数（1-3）。\n失败重试次数：0 表示不重试。\n队列持久化：开启后重启应用会恢复未完成任务。\n下载限速：每个任务的限速值（1M~100M），格式如 1M / 500K。\n断点续传：开启后任务面板隐藏暂停/开始按钮，下载中断/失败会自动从断点继续（默认关闭）",
+    "并发下载数：同时下载的任务数（1-3）。\n失败重试次数：0 表示不重试。\n队列持久化：开启后重启应用会恢复未完成任务。\n下载限速：每个任务的限速值（1M~100M），格式如 1M / 500K。",
 
   // ===== Bookmarks setting =====
   "bookmarks.title": "书签管理",

@@ -105,8 +105,6 @@ export interface AppSettings {
   hls_concurrent_fragments?: number;
   /** HLS/DASH 分片失败重试次数（yt-dlp --fragment-retries）。 */
   hls_fragment_retries?: number;
-  /** 断点续传开关（默认关）：开启时任务面板隐藏暂停/开始按钮。 */
-  resume_support?: boolean;
 }
 
 // --- Bookmarks sync (manual) ---
@@ -234,6 +232,7 @@ export const TaskSource = {
   Single: "single",
   Batch: "batch",
   Bookmark: "bookmark",
+  Deep: "deep",
 } as const;
 
 export type TaskSourceValue = (typeof TaskSource)[keyof typeof TaskSource];
@@ -245,6 +244,8 @@ export function taskSourceKey(source: string | undefined | null): string | null 
       return "tasks.source.batch";
     case TaskSource.Bookmark:
       return "tasks.source.bookmark";
+    case TaskSource.Deep:
+      return "tasks.source.deep";
     case TaskSource.Single:
     case undefined:
     case null:

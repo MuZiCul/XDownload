@@ -410,33 +410,20 @@ pub fn run() {
                 }
             }
 
-            // Clicking the window close button hides the app to the tray. When
-            // tasks are active, the frontend is asked to confirm (save progress
-            // dialog); otherwise the window hides directly — decided here in the
-            // backend so the behavior never depends on frontend event delivery.
+            // Clicking the window close button asks the frontend to show the
+            // exit-confirmation dialog: it always decides between "minimize to
+            // tray" and "really quit" (even when no task is running), so we
+            // never hide the window directly here.
             #[cfg(windows)]
             if let Some(win) = app.get_webview_window("main") {
                 let handle = app.handle().clone();
                 win.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
-                        // Only capture the Send-able AppHandle in the callback.
-                        let has_active = handle
-                            .try_state::<crate::commands::download::DownloaderState>()
-                            .map(|s| s.queue.has_active())
-                            .unwrap_or(false);
-                        if has_active {
-                            let _ = handle.emit(
-                                "quit-requested",
-                                serde_json::json!({ "source": "close" }),
-                            );
-                        } else {
-                            // Hide via the app handle (WebviewWindow is !Send,
-                            // so it cannot be moved into this callback).
-                            if let Some(main) = handle.get_webview_window("main") {
-                                let _ = main.hide();
-                            }
-                        }
+                        let _ = handle.emit(
+                            "quit-requested",
+                            serde_json::json!({ "source": "close" }),
+                        );
                     }
                 });
             }
@@ -527,7 +514,24 @@ async fn process_deep_link_batch(handle: &tauri::AppHandle, targets: &[String]) 
     .await;
 
     let mut added = 0usize;
+    let mut duplicates: Vec<serde_json::Value> = Vec::new();
     for (target, video_id, title, info) in results {
+        // 已下载查重：历史记录存在且文件仍在磁盘上 → 不直接入队，
+        // 收集后交由前端弹窗让用户选择「重新下载 / 取消」。
+        if let Some(id) = video_id.as_deref() {
+            let downloaded = crate::services::download_history::DownloadHistory::get(id)
+                .and_then(|rec| rec.file_path)
+                .map(|p| std::path::Path::new(&p).exists())
+                .unwrap_or(false);
+            if downloaded {
+                duplicates.push(serde_json::json!({
+                    "url": target,
+                    "video_id": id,
+                }));
+                tracing::info!("deep-link: already downloaded, pending user choice: {}", target);
+                continue;
+            }
+        }
         let config = DownloadConfig {
             url: target.clone(),
             video_id,
@@ -554,13 +558,13 @@ async fn process_deep_link_batch(handle: &tauri::AppHandle, targets: &[String]) 
                 .download_rate_limit
                 .clone(),
         };
-        // 深链（浏览器扩展）批量入队 → 标记为「批量」来源。
+        // 深链（浏览器扩展）批量入队 → 标记为「深链」来源（独立于批量/书签）。
         match queue.enqueue(
             config,
             title,
             true,
             info,
-            crate::services::download_history::source::BATCH,
+            crate::services::download_history::source::DEEP,
         ) {
             Ok(id) => {
                 added += 1;
@@ -574,12 +578,17 @@ async fn process_deep_link_batch(handle: &tauri::AppHandle, targets: &[String]) 
             }
         }
     }
-    if added > 0 {
-        // 专用事件：告知前端「已从浏览器获得 N 个下载任务」（合并提示）。
-        // 普通入队的 download-queued 不区分来源，这里单独发一个事件，
-        // 前端据此弹出 toast 并跳转到任务页。
-        let _ = handle.emit("deep-link-queued", serde_json::json!({ "count": added }));
-    }
+    // 专用事件：告知前端「已从浏览器获得 N 个下载任务」（合并提示）。
+    // 普通入队的 download-queued 不区分来源，这里单独发一个事件，
+    // 前端据此弹出 toast 并跳转到任务页。duplicates 为已下载过、
+    // 等待用户选择是否重新下载的链接（count 只计新入队数）。
+    let _ = handle.emit(
+        "deep-link-queued",
+        serde_json::json!({
+            "count": added,
+            "duplicates": duplicates,
+        }),
+    );
 }
 
 /// Parse a deep-link URL of the form `xdownload://add?url=<percent-encoded>`.

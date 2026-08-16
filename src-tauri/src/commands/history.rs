@@ -48,6 +48,7 @@ pub fn list_download_history() -> Vec<serde_json::Value> {
                 "status": rec.status,
                 "error": rec.error,
                 "attempts": rec.attempts,
+                "source": rec.source,
             })
         })
         .collect()
