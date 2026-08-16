@@ -91,6 +91,17 @@ fn insert_paused(st: &mut QueueState, task: QueuedTask, slot: Option<usize>) {
     }
 }
 
+/// Extract the video id from fetched info (`fetchVideoInfo` result has `id`).
+/// Used to backfill a missing `config.video_id` so the download history record
+/// can be written even when the enqueue path could not parse one from the URL
+/// (batch / bookmarks rely on a `/status/<id>` regex).
+fn extract_video_id_from_info(info: &Option<serde_json::Value>) -> Option<String> {
+    info.as_ref()
+        .and_then(|v| v.get("id"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
 /// Pure queue-state operations, independent of `AppHandle` / downloader /
 /// persistence, so the state machine can be unit-tested directly
 /// (see the `#[cfg(test)]` module at the bottom of this file).
@@ -538,6 +549,15 @@ impl DownloadQueue {
             meta.as_ref().and_then(|m| m.like_count).unwrap_or(0)
         };
 
+        // 兜底：video_id 仍为空时，从任务卡片信息（fetchVideoInfo 回写的
+        // info，含 id）提取。批量/书签路径入队时 video_id 可能为空（URL
+        // 正则不匹配），信息获取回写后这里补上，保证历史记录能写入。
+        if task.config.video_id.is_none() {
+            if let Some(vid) = extract_video_id_from_info(&task.info) {
+                task.config.video_id = Some(vid);
+            }
+        }
+
         // Record history (only real outcomes; user-cancelled tasks are not
         // written to history).
         if !cancelled {
@@ -821,12 +841,29 @@ impl DownloadQueue {
         {
             let mut st = self.state.lock().unwrap();
             let mut pending = Some(info);
+            // info 里带 yt-dlp 的 id 时，顺手补全缺失的 config.video_id——
+            // 历史记录以 video_id 为键（queue.rs run_worker record 分支），
+            // 批量/书签路径的 video_id 依赖 URL 正则提取，正则不匹配时下载
+            // 成功但不会写入历史。这里用信息获取回填的 id 兜底，保证所有
+            // 入口都能记录历史。
+            let info_id = pending
+                .as_ref()
+                .and_then(|o| extract_video_id_from_info(o));
             if let Some(t) = st.queued.iter_mut().find(|t| t.id == id) {
                 t.info = pending.take().flatten();
+                if let Some(vid) = info_id.filter(|_| t.config.video_id.is_none()) {
+                    t.config.video_id = Some(vid);
+                }
             } else if let Some(t) = st.running.iter_mut().find(|t| t.id == id) {
                 t.info = pending.take().flatten();
+                if let Some(vid) = info_id.filter(|_| t.config.video_id.is_none()) {
+                    t.config.video_id = Some(vid);
+                }
             } else if let Some(t) = st.paused_tasks.iter_mut().find(|t| t.id == id) {
                 t.info = pending.take().flatten();
+                if let Some(vid) = info_id.filter(|_| t.config.video_id.is_none()) {
+                    t.config.video_id = Some(vid);
+                }
             }
         }
         self.persist();
@@ -1116,5 +1153,31 @@ mod tests {
         assert_eq!(st.running[0].id, "2");
         assert!(!st.remove_running("99"));
         assert_eq!(st.running.len(), 1);
+    }
+
+    #[test]
+    fn extract_video_id_from_info_handles_all_shapes() {
+        // info 含 id → 提取成功。
+        let info = Some(serde_json::json!({
+            "id": "1234567890123456789",
+            "title": "t",
+            "url": "https://x.com/u/status/1234567890123456789",
+        }));
+        assert_eq!(
+            extract_video_id_from_info(&info).as_deref(),
+            Some("1234567890123456789")
+        );
+
+        // 非字符串 id → 返回 None。
+        let num_id = Some(serde_json::json!({"id": 1234567890123456789i64}));
+        assert_eq!(extract_video_id_from_info(&num_id), None);
+
+        // info 为 None / 空对象 / 无 id → 返回 None。
+        assert_eq!(extract_video_id_from_info(&None), None);
+        assert_eq!(extract_video_id_from_info(&Some(serde_json::json!({}))), None);
+        assert_eq!(
+            extract_video_id_from_info(&Some(serde_json::json!({"title": "x"}))),
+            None
+        );
     }
 }

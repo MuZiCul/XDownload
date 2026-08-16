@@ -368,6 +368,7 @@ export const zh: Record<string, string> = {
   "history.searchPlaceholder": "搜索标题/作者/链接…",
   "history.clearAll": "清空全部",
   "history.empty": "暂无下载历史",
+  "history.emptyHint": "粘贴 X 链接即可开始下载，或从设置页同步书签",
   "history.noMatch": "没有匹配的下载记录",
   "history.fileMissing": "文件不存在",
   "history.failed": "下载失败",
