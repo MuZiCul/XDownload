@@ -133,6 +133,9 @@ pub struct AppSettings {
     /// 隐私模式（标题遮挡 + 封面毛玻璃）。None 视为关闭（旧配置兼容）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub privacy_mode: Option<bool>,
+    /// 工具（yt-dlp/ffmpeg）下载默认走代理。None 视为关闭（直连优先，失败切代理）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools_use_proxy: Option<bool>,
     /// 下载限速（yt-dlp --limit-rate），如 "1M"、"25M"。None = 不限速。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub download_rate_limit: Option<String>,

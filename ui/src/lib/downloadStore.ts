@@ -264,7 +264,7 @@ export function initDownloadStore() {
     if (!id) return;
     const pct = parseFloat(String(p.percent ?? "").replace("%", "")) || 0;
     patchTask(id, {
-      status: "downloading",
+      status: p.status === "moving" ? "moving" : "downloading",
       percent: Math.min(Math.max(pct, 0), 100),
       speed: p.speed ?? "",
       stage: p.stage ?? "",

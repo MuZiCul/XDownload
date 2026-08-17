@@ -2,10 +2,10 @@
 //!
 //! Independent from the single-download path (download page): tasks enqueued
 //! here run concurrently up to the configured concurrency. Staging directories
-//! live in `download_cache/{cache_key}/` (keyed by URL + format — see
-//! `YtDlpDownloader::cache_key`), so retried / re-enqueued / resumed tasks
-//! resume from the previous `.part` file. Retries, dedup and cancellation are
-//! handled here.
+//! live in `download_cache/{task_id}/` — every download instance gets its own
+//! directory keyed by the unique task id, so concurrent / paused / restarted
+//! tasks never share cache files (downloads always restart from scratch, no
+//! resume). Retries, dedup and cancellation are handled here.
 
 use crate::downloader::ytdlp::YtDlpDownloader;
 use crate::models::config::DownloadConfig;
@@ -468,11 +468,14 @@ impl DownloadQueue {
         // Remove from the running list.
         {
             let mut st = self.state.lock().unwrap();
-            // 竞态防护：若该任务已被 resume 并由新 worker 接管（running 中
-            // 存在 resume=true 的同 id 任务），旧 worker 不删除新实例、不写
-            // 历史、不 emit finished，静默结束（避免 UI 卡片被移除后又因新
-            // worker 加回的闪烁，也避免重复事件）。
-            if st.running.iter().any(|t| t.id == id && t.resume) {
+            // 竞态防护：resume 恢复的任务可能同时存在「旧 worker（resume=false，
+            // 暂停前启动，进程已被 kill）」与「新 worker（resume=true，接管下载）」。
+            // 只有新 worker 负责收尾：resume=false 的旧 worker 发现 running / queued
+            // 中已有 resume=true 的同 id 任务时静默结束（不写历史、不 emit finished、
+            // 不删除新实例，避免 UI 卡片移除后又被新 worker 加回的闪烁）。
+            let taken_over = st.running.iter().any(|t| t.id == id && t.resume)
+                || st.queued.iter().any(|t| t.id == id && t.resume);
+            if taken_over && !task.resume {
                 drop(st);
                 self.persist();
                 self.pump();
@@ -480,15 +483,20 @@ impl DownloadQueue {
             }
             st.remove_running(&id);
             // 该任务已被 pause_task 同步移入暂停列表（kill 后走到这里）：
-            // 保留 cache 供续传，直接结束，不写历史、不 emit finished。
+            // 若下载已实际完成（暂停晚于下载结束、文件已移动成功）→ 从暂停
+            // 列表移除并正常收尾（写历史 + emit finished），避免"文件已在下载
+            // 目录却永远卡住"；真正被暂停（未完成）才静默等待 resume。
             if st.paused_tasks.iter().any(|t| t.id == id) {
-                let _ = self
-                    .app
-                    .emit("download-paused", serde_json::json!({ "task_id": id }));
-                drop(st);
-                self.persist();
-                self.pump();
-                return;
+                if saved_paths.is_empty() {
+                    let _ = self
+                        .app
+                        .emit("download-paused", serde_json::json!({ "task_id": id }));
+                    drop(st);
+                    self.persist();
+                    self.pump();
+                    return;
+                }
+                st.paused_tasks.retain(|t| t.id != id);
             }
         }
 
@@ -666,7 +674,8 @@ impl DownloadQueue {
         };
         self.downloader.cancel_task(task_id);
         if let Some(cfg) = config {
-            self.downloader.cleanup_task_cache(&cfg);
+            // 缓存目录 = {output_dir}/.xdl_cache/{task_id}，与其他任务隔离。
+            self.downloader.cleanup_task_cache(&cfg, task_id);
         }
         self.persist();
         // 删除可能释放了并发槽位（删除 running 任务）——立即 pump 让等待中的
@@ -707,27 +716,27 @@ impl DownloadQueue {
     /// Cancel ALL active tasks: drop every queued / paused task and terminate
     /// every running process. Finished downloads (history) are untouched.
     pub fn cancel_all(&self) {
-        let (running_ids, configs): (Vec<String>, Vec<DownloadConfig>) = {
+        let (running_ids, tasks): (Vec<String>, Vec<(DownloadConfig, String)>) = {
             let mut st = self.state.lock().unwrap();
-            let configs = st
+            let tasks = st
                 .queued
                 .iter()
                 .chain(st.paused_tasks.iter())
                 .chain(st.running.iter())
-                .map(|t| t.config.clone())
+                .map(|t| (t.config.clone(), t.id.clone()))
                 .collect();
             let running_ids = st.running.iter().map(|t| t.id.clone()).collect();
             st.queued.clear();
             st.paused_tasks.clear();
             st.paused_slots.clear();
-            (running_ids, configs)
+            (running_ids, tasks)
         };
         for id in running_ids {
             self.downloader.cancel_task(&id);
         }
-        // 全部删除：逐个清理任务缓存。
-        for cfg in configs {
-            self.downloader.cleanup_task_cache(&cfg);
+        // 全部删除：逐个清理任务缓存（目录不存在时 no-op）。
+        for (cfg, id) in tasks {
+            self.downloader.cleanup_task_cache(&cfg, &id);
         }
         self.persist();
         // 兜底 pump：删除释放槽位后如有残留排队任务立即启动。
@@ -750,7 +759,8 @@ impl DownloadQueue {
         if moved {
             self.downloader.cancel_task(task_id);
             if let Some(cfg) = config {
-                self.downloader.cleanup_task_cache(&cfg);
+                // 暂停删除该任务缓存（{output_dir}/.xdl_cache/{task_id}，隔离）。
+                self.downloader.cleanup_task_cache(&cfg, task_id);
             }
             self.persist();
         }
@@ -780,21 +790,15 @@ impl DownloadQueue {
     pub fn pause_all(&self) {
         let (running_ids, configs): (Vec<String>, Vec<DownloadConfig>) = {
             let mut st = self.state.lock().unwrap();
-            let configs = st
-                .running
-                .iter()
-                .map(|t| t.config.clone())
-                .collect();
+            let configs = st.running.iter().map(|t| t.config.clone()).collect();
             (st.pause_all(), configs)
         };
         // 锁外 kill 所有原 running 进程（cancel_task 内部处理 pid 清理），
-        // 并清理其缓存目录：暂停不保留 .part（下载一律从头开始），避免
-        // 碎文件/残留分片在缓存目录中积累。
-        for id in &running_ids {
+        // 并清理其缓存目录（{output_dir}/.xdl_cache/{task_id}，与任何其他
+        // 任务隔离）：暂停不保留 .part（下载一律从头开始），避免碎文件残留。
+        for (id, cfg) in running_ids.iter().zip(configs.iter()) {
             self.downloader.cancel_task(id);
-        }
-        for cfg in configs {
-            self.downloader.cleanup_task_cache(&cfg);
+            self.downloader.cleanup_task_cache(cfg, id);
         }
         self.persist();
         // 全部暂停后无活跃任务 → 同步防休眠状态。

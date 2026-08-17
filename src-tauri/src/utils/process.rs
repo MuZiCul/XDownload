@@ -258,8 +258,17 @@ async fn execute_inner(
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
 
-    let mut child = cmd.spawn()
-        .with_context(|| format!("failed to spawn: {:?}", args))?;
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(
+                "[XDownload] process spawn failed: cmd={:?} error={}",
+                args.first().unwrap_or(&""),
+                e
+            );
+            return Err(e).with_context(|| format!("failed to spawn: {:?}", args));
+        }
+    };
 
     let child_pid = child.id();
     register_child_pid(child_pid);
@@ -333,6 +342,12 @@ async fn execute_inner(
             Ok(Err(e)) => Err(e),
             Err(_) => {
                 // Timed out, kill the process
+                tracing::warn!(
+                    "[XDownload] process timed out after {}s: cmd={:?} pid={:?}",
+                    secs,
+                    args.first().unwrap_or(&""),
+                    child_pid
+                );
                 let _ = child.kill().await;
                 let _ = child.wait().await;
                 Err(std::io::Error::other(anyhow::anyhow!("command timed out after {}s", secs)))
@@ -349,6 +364,23 @@ async fn execute_inner(
 
     let stdout_lines = stdout_handle.await.unwrap_or_else(|_| Vec::new());
     let stderr_lines = stderr_handle.await.unwrap_or_default();
+
+    // 非 0 退出码：记录命令与 stderr 末尾摘要，便于定位外部工具失败原因。
+    if exit_code != 0 {
+        let stderr_tail = stderr_lines
+            .iter()
+            .rev()
+            .take(3)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" | ");
+        tracing::warn!(
+            "[XDownload] process exit_code={} cmd={:?} stderr_tail={}",
+            exit_code,
+            args.first().unwrap_or(&""),
+            stderr_tail
+        );
+    }
 
     Ok(CommandResult {
         exit_code,

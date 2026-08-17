@@ -107,6 +107,8 @@ export interface AppSettings {
   hls_fragment_retries?: number;
   /** 下载时防止系统休眠（Windows）。 */
   keep_awake?: boolean;
+  /** 工具（yt-dlp/ffmpeg）下载默认走代理（需已配置代理才可用）。 */
+  tools_use_proxy?: boolean;
 }
 
 // --- Bookmarks sync (manual) ---

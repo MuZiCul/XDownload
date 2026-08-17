@@ -938,7 +938,8 @@ function App() {
       {/* 退出确认弹窗（simple=无任务/队列持久化已开；完整=有任务且未自动保存）。
           托盘退出不提供「最小化到托盘」（托盘退出意图即真退出）。 */}
       {quitDialog && (
-        <div className="dialog-overlay">
+        // 点击遮罩（弹窗外）取消退出：关闭弹窗、窗口保持原样（不最小化）。
+        <div className="dialog-overlay" onClick={() => setQuitDialog(null)}>
           <div className="dialog-content" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-sm font-semibold text-zinc-900 mb-2">
               {t("quit.title")}
@@ -1002,18 +1003,7 @@ function App() {
                       {t("quit.minimizeToTray")}
                     </button>
                   )}
-                  <button
-                    className="btn w-full text-sm py-2.5"
-                    onClick={() => {
-                      setQuitDialog(null);
-                      // X 场景取消 → 隐藏到托盘；托盘/设置取消 → 无动作。
-                      if (quitDialog.source === "close") {
-                        getCurrentWindow().hide().catch(() => {});
-                      }
-                    }}
-                  >
-                    {t("common.cancel")}
-                  </button>
+                  {/* 取消：点击弹窗外部遮罩即取消退出（不最小化）。 */}
                 </>
               )}
             </div>

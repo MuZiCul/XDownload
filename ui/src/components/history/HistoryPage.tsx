@@ -843,6 +843,12 @@ function TaskCard({
             {t("batch.downloading")}
           </span>
         );
+      case "moving":
+        return (
+          <span className="text-[10px] text-sky-600 bg-sky-50 border border-sky-200 rounded-md px-1.5 py-0.5 shrink-0">
+            {t("gbar.stageMoving")}
+          </span>
+        );
       case "paused":
         return (
           <span className="text-[10px] text-amber-600 bg-amber-50 border border-amber-200 rounded-md px-1.5 py-0.5 shrink-0">
@@ -913,19 +919,21 @@ function TaskCard({
           <SourceBadge source={task.source} />
           {statusBadge()}
           {/* 进度条 + 阶段 + 速度：跟在徽标后面，不独占一行 */}
-          {task.status === "downloading" && (
+          {(task.status === "downloading" || task.status === "moving") && (
             <div className="flex items-center gap-2 min-w-0">
               <span className="text-[10px] text-zinc-500 shrink-0 whitespace-nowrap">
-                {task.stage === "merge"
-                  ? t("gbar.stageMerge")
-                  : task.stage === "audio"
-                    ? t("gbar.stageAudio")
-                    : task.stage === "video"
-                      ? t("gbar.stageVideo")
-                      : t("gbar.progressLabel")}
+                {task.status === "moving"
+                  ? t("gbar.stageMoving")
+                  : task.stage === "merge"
+                    ? t("gbar.stageMerge")
+                    : task.stage === "audio"
+                      ? t("gbar.stageAudio")
+                      : task.stage === "video"
+                        ? t("gbar.stageVideo")
+                        : t("gbar.progressLabel")}
               </span>
-              {task.stage === "merge" ? (
-                /* 合并/后期处理：仅不确定进度循环条 */
+              {task.status === "moving" || task.stage === "merge" ? (
+                /* 移动 / 合并后期处理：均无确定百分比，仅显示不确定进度循环条 */
                 <div className="relative w-40 h-1.5 bg-zinc-100 rounded-full overflow-hidden shrink-0">
                   <div
                     className="absolute inset-y-0 w-2/5 rounded-full animate-progress-run"

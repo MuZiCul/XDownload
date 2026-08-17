@@ -100,6 +100,12 @@ pub fn set_privacy_mode(enabled: bool) -> Result<(), String> {
     ConfigManager::save_privacy_mode(enabled).map_err(|e| e.to_string())
 }
 
+/// 即时持久化「工具下载默认走代理」开关状态。
+#[tauri::command]
+pub fn set_tools_use_proxy(enabled: bool) -> Result<(), String> {
+    ConfigManager::save_tools_use_proxy(enabled).map_err(|e| e.to_string())
+}
+
 /// Get whether the user has accepted the disclaimer on first launch.
 /// Returns `false` when the field is missing (never accepted / old config).
 #[tauri::command]

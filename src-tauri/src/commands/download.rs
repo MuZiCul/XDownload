@@ -147,6 +147,14 @@ pub async fn fetch_video_info(
 
     attach_download_status(&mut info);
 
+    tracing::info!(
+        "[XDownload] fetch_video_info ok: url={} id={} title={:?} media_count={}",
+        url,
+        info.id,
+        info.title,
+        info.media_count
+    );
+
     Ok(info)
 }
 
@@ -170,6 +178,11 @@ pub fn check_video_downloaded(video_id: String) -> serde_json::Value {
                 .as_ref()
                 .map(|p| std::path::Path::new(p).exists())
                 .unwrap_or(false);
+            tracing::info!(
+                "[XDownload] check_video_downloaded: video_id={} downloaded={}",
+                video_id,
+                exists
+            );
             serde_json::json!({
                 "downloaded": exists,
                 "downloaded_at": rec.downloaded_at,
@@ -204,6 +217,12 @@ pub fn enqueue_download(
     }
     // 缺省按「单链」处理（兼容旧调用方/旧前端）。字符串 → 数值由后端判断。
     let source = crate::services::download_history::source_code(source.as_deref().unwrap_or(""));
+    tracing::info!(
+        "[XDownload] enqueue_download: url={} auto_start={} source={}",
+        config.url,
+        auto_start,
+        crate::services::download_history::source_name(source)
+    );
     state.queue.enqueue(config, title, auto_start, info, source)
 }
 

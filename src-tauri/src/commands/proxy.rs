@@ -13,7 +13,20 @@ pub async fn test_proxy(
     // the runtime proxy state and does NOT persist anything — applying and
     // saving the proxy are handled explicitly by the frontend (save flow).
     let port_u16 = port.min(65535) as u16;
+    tracing::info!(
+        "[XDownload] test_proxy: host={} port={} scheme={}",
+        host,
+        port_u16,
+        scheme
+    );
     let result = ProxyConfig::test_proxy_config(&host, port_u16, &scheme).await;
+    tracing::info!(
+        "[XDownload] test_proxy result: success={} http_status={} elapsed_ms={} message={}",
+        result.success,
+        result.http_status,
+        result.elapsed_ms,
+        result.message
+    );
 
     Ok(serde_json::json!({
         "success": result.success,

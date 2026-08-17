@@ -8,6 +8,10 @@ use std::time::Duration;
 /// Global cancel flag for bootstrap downloads.
 static CANCEL_FLAG: AtomicBool = AtomicBool::new(false);
 
+/// 流式下载空闲超时（秒）：连续超过该时长未收到任何数据视为卡死。
+/// 只拦截"完全没数据"的僵死连接；持续有数据（哪怕极慢）不超时。
+const IDLE_READ_TIMEOUT: u64 = 60;
+
 /// Signal cancellation of the current bootstrap download.
 pub fn cancel_download() {
     CANCEL_FLAG.store(true, Ordering::SeqCst);
@@ -30,17 +34,20 @@ const YTDLP_URLS: &[&str] = &[
     "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe",
 ];
 
-/// ffmpeg download sources (direct then mirror).
+/// ffmpeg download sources.
+/// 仅使用 GitHub（BtbN 官方认可的 Windows 构建，GitHub CDN 通常比官网快）。
+/// 资产名 `ffmpeg-master-latest-win64-gpl.zip` 由自动构建 workflow 固定命名，
+/// 每次构建覆盖同名资产，不随版本号变化。
 const FFMPEG_URLS: &[&str] = &[
-    // gyan.dev/ffmpeg-release-essentials.zip always redirects to the latest release build
-    "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip",
+    "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip",
 ];
 
 impl Bootstrap {
     /// Build a direct (no-proxy) client with a fast-failing connect timeout
     /// (8s) so a blocked local network fails quickly before falling back to
-    /// the configured proxy. The overall timeout stays generous for large
-    /// downloads (ffmpeg zip etc.).
+    /// the configured proxy. No overall request timeout is set — stalled
+    /// reads are handled per-chunk in `download_to_file` (idle timeout), so a
+    /// slow-but-progressing download is never cut off.
     fn build_direct_client() -> Result<reqwest::Client> {
         // 版本号单一数据源 = Cargo.toml（CARGO_PKG_VERSION 编译期注入）。
         let ua = format!(
@@ -50,7 +57,6 @@ impl Bootstrap {
         reqwest::Client::builder()
             .no_proxy()
             .connect_timeout(Duration::from_secs(8))
-            .timeout(Duration::from_secs(180))
             .user_agent(ua)
             .build()
             .context("failed to build direct HTTP client")
@@ -68,7 +74,6 @@ impl Bootstrap {
         );
         reqwest::Client::builder()
             .proxy(proxy)
-            .timeout(Duration::from_secs(180))
             .user_agent(ua)
             .build()
             .map(Some)
@@ -77,26 +82,67 @@ impl Bootstrap {
 
     /// Download a file from `url` to `dest` with progress reporting.
     ///
-    /// Strategy: try the local network **direct** first (fast-failing connect
-    /// timeout), then fall back to the configured proxy when the direct
-    /// attempt fails. Without a configured proxy only the direct attempt runs.
+    /// Strategy (when `force_mode` is `None`): try the local network **direct**
+    /// first (fast-failing connect timeout), then fall back to the configured
+    /// proxy when the direct attempt fails. Without a configured proxy only the
+    /// direct attempt runs.
+    ///
+    /// `force_mode` overrides the strategy:
+    /// - `Some("proxy")`: only use the configured proxy; fail fast when no
+    ///   proxy is configured (UI disables the switch before this can happen).
+    /// - `Some("direct")`: only use the direct connection.
+    /// - `None`: automatic (direct first, proxy fallback).
+    ///
+    /// `mode_cb` is invoked with `"direct"` / `"proxy"` each time the active
+    /// network path changes, so the UI can show the current mode in real time.
     pub async fn download_with_fallback(
         url: &str,
         dest: &Path,
         progress_cb: &impl Fn(u32),
+        mode_cb: &impl Fn(&str),
+        force_mode: Option<&str>,
     ) -> Result<()> {
+        match force_mode {
+            Some("proxy") => {
+                // 强制代理：直接走代理，不再尝试直连。
+                let Some(proxy_client) = Self::build_proxy_client()? else {
+                    return Err(anyhow::anyhow!("未配置代理，无法使用代理下载: {}", url));
+                };
+                mode_cb("proxy");
+                return Self::download_to_file(&proxy_client, url, dest, progress_cb)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("代理下载失败: {}: {}", url, e));
+            }
+            Some("direct") => {
+                let direct = Self::build_direct_client()?;
+                mode_cb("direct");
+                return Self::download_to_file(&direct, url, dest, progress_cb).await;
+            }
+            _ => {}
+        }
+
+        // 自动：直连优先，失败切代理。
         let direct = Self::build_direct_client()?;
+        mode_cb("direct");
         match Self::download_to_file(&direct, url, dest, progress_cb).await {
             Ok(()) => return Ok(()),
             Err(direct_err) => {
+                // 用户取消 → 直接透传，不再尝试代理（避免多余的代理请求，
+                // 也保证前端能识别"下载已取消"而静默关闭而非弹下载失败）。
+                if is_cancelled() {
+                    return Err(direct_err);
+                }
                 tracing::warn!(
                     "direct download failed ({}), trying configured proxy",
                     url
                 );
                 if let Some(proxy_client) = Self::build_proxy_client()? {
+                    mode_cb("proxy");
                     return Self::download_to_file(&proxy_client, url, dest, progress_cb)
                         .await
-                        .with_context(|| format!("直连与代理下载均失败: {}", url));
+                        .map_err(|e| {
+                            anyhow::anyhow!("直连与代理下载均失败: {}: {}", url, e)
+                        });
                 }
                 Err(direct_err)
             }
@@ -107,7 +153,17 @@ impl Bootstrap {
 
     /// Download yt-dlp.exe into bin/ with progress reporting.
     /// Tries each source URL in turn. Returns the path to the downloaded binary.
-    pub async fn download_ytdlp(progress_cb: impl Fn(u32)) -> Result<PathBuf> {
+    ///
+    /// `mode_cb` receives `"direct"` / `"proxy"` when the active network path
+    /// changes (see `download_with_fallback`).
+    ///
+    /// `force_mode` — `Some("proxy")`/`Some("direct")` force the download path,
+    /// `None` keeps the automatic direct-then-proxy fallback.
+    pub async fn download_ytdlp(
+        progress_cb: impl Fn(u32),
+        mode_cb: &impl Fn(&str),
+        force_mode: Option<&str>,
+    ) -> Result<PathBuf> {
         reset_cancel();
         let bin_dir = AppHome::bin_dir();
         std::fs::create_dir_all(&bin_dir)
@@ -125,7 +181,7 @@ impl Bootstrap {
                 tracing::info!("switching to mirror source {} for yt-dlp", i + 1);
             }
 
-            match Self::download_with_fallback(url, &dest, &progress_cb).await {
+            match Self::download_with_fallback(url, &dest, &progress_cb, mode_cb, force_mode).await {
                 Ok(_) => {
                     // Set executable on Unix
                     #[cfg(unix)]
@@ -177,9 +233,17 @@ impl Bootstrap {
     ///
     /// `on_extracting` is called once before zip extraction begins (so the UI can
     /// switch from "downloading" to "extracting" display).
+    ///
+    /// `mode_cb` receives `"direct"` / `"proxy"` when the active network path
+    /// changes (see `download_with_fallback`).
+    ///
+    /// `force_mode` — `Some("proxy")`/`Some("direct")` force the download path,
+    /// `None` keeps the automatic direct-then-proxy fallback.
     pub async fn download_ffmpeg(
         progress_cb: impl Fn(u32),
         on_extracting: impl FnOnce(),
+        mode_cb: &impl Fn(&str),
+        force_mode: Option<&str>,
     ) -> Result<PathBuf> {
         reset_cancel();
         let bin_dir = AppHome::bin_dir();
@@ -195,7 +259,9 @@ impl Bootstrap {
                 tracing::info!("switching to mirror source {} for ffmpeg", i + 1);
             }
 
-            match Self::download_with_fallback(url, &temp_zip, &progress_cb).await {
+            match Self::download_with_fallback(url, &temp_zip, &progress_cb, mode_cb, force_mode)
+                .await
+            {
                 Ok(_) => {
                     if let Some(cb) = on_extracting.take() {
                         cb();
@@ -265,6 +331,21 @@ fn extract_ffmpeg(zip_path: &Path, dest_dir: &Path) -> Result<PathBuf> {
             std::io::copy(&mut entry, &mut out)
                 .with_context(|| format!("failed to extract {}", file_name))?;
 
+            // 恢复 zip 内原始修改时间作为文件 mtime：BtbN master 构建 zip 内
+            // 文件时间戳 ≈ 构建打包时刻（≈ GitHub 的 published_at），这样更新
+            // 检测的"本地构建时间"基准语义正确，不会因"下载时刻"与"构建时刻"
+            // 不同而持续误报更新。
+            // zip::DateTime → SystemTime。zip 2.x 推荐 `TryFrom<zip::DateTime>
+            // for time::OffsetDateTime`，但 time crate 是 tauri 的间接依赖、
+            // 无法直接命名目标类型，故用弃用的 `to_time()`（功能相同）。
+            #[allow(deprecated)]
+            if let Some(odt) = entry.last_modified().and_then(|dt| dt.to_time().ok()) {
+                use std::fs::FileTimes;
+                let ts: std::time::SystemTime = odt.into();
+                let times = FileTimes::new().set_modified(ts);
+                let _ = out.set_times(times);
+            }
+
             // Track ffmpeg.exe path for the return value
             if file_name.eq_ignore_ascii_case("ffmpeg.exe") {
                 ffmpeg_path = Some(dest);
@@ -294,8 +375,6 @@ fn extract_ffmpeg(zip_path: &Path, dest_dir: &Path) -> Result<PathBuf> {
         dest: &Path,
         progress_cb: &impl Fn(u32),
     ) -> Result<()> {
-        use tokio::io::AsyncWriteExt;
-
         let response = client
             .get(url)
             .send()
@@ -311,41 +390,66 @@ fn extract_ffmpeg(zip_path: &Path, dest_dir: &Path) -> Result<PathBuf> {
 
         // Stream the response chunk by chunk, reporting progress
         let tmp = dest.with_extension("tmp");
-        let mut file = tokio::fs::File::create(&tmp)
-            .await
-            .context("failed to create output file")?;
+        // 清理上次可能残留的 tmp（幂等）。
+        let _ = std::fs::remove_file(&tmp);
 
-        let mut downloaded: u64 = 0;
-        let mut last_pct: u32 = 0;
-        let mut stream = response.bytes_stream();
-
-        use futures_util::StreamExt;
-        while let Some(chunk) = stream.next().await {
-            // Check cancel flag between chunks
-            if is_cancelled() {
-                drop(file);
-                let _ = std::fs::remove_file(&tmp);
-                return Err(anyhow!("下载已取消"));
-            }
-
-            let chunk = chunk.context("failed to read response chunk")?;
-            file.write_all(&chunk)
+        // 内部下载块：任何失败路径（超时 / chunk 读取 / 写入 / 取消 / flush）
+        // 都会返回 Err；外层统一删除 tmp，避免残留半成品文件。
+        let download_result = async {
+            use tokio::io::AsyncWriteExt;
+            let mut file = tokio::fs::File::create(&tmp)
                 .await
-                .context("failed to write chunk to file")?;
-            downloaded += chunk.len() as u64;
+                .context("failed to create output file")?;
 
-            if total > 0 {
-                let pct = ((downloaded as f64 / total as f64) * 100.0) as u32;
-                let pct = pct.min(99); // reserve 100 for completion
-                if pct > last_pct {
-                    last_pct = pct;
-                    progress_cb(pct);
+            let mut downloaded: u64 = 0;
+            let mut last_pct: u32 = 0;
+            let mut stream = response.bytes_stream();
+
+            use futures_util::StreamExt;
+            loop {
+                // 空闲超时：取代客户端整体 180s 总超时。持续有数据不超时，
+                // 只有超过 IDLE_READ_TIMEOUT 秒未收到任何数据才判卡死。
+                let next_chunk =
+                    tokio::time::timeout(Duration::from_secs(IDLE_READ_TIMEOUT), stream.next())
+                        .await
+                        .map_err(|_| {
+                            anyhow!(
+                                "下载超时：{IDLE_READ_TIMEOUT} 秒未收到数据，请检查网络后重试"
+                            )
+                        })?;
+                let Some(chunk) = next_chunk else { break };
+                // Check cancel flag between chunks
+                if is_cancelled() {
+                    return Err(anyhow!("下载已取消"));
+                }
+
+                let chunk = chunk.context("failed to read response chunk")?;
+                file.write_all(&chunk)
+                    .await
+                    .context("failed to write chunk to file")?;
+                downloaded += chunk.len() as u64;
+
+                if total > 0 {
+                    let pct = ((downloaded as f64 / total as f64) * 100.0) as u32;
+                    let pct = pct.min(99); // reserve 100 for completion
+                    if pct > last_pct {
+                        last_pct = pct;
+                        progress_cb(pct);
+                    }
                 }
             }
-        }
 
-        file.flush().await.context("failed to flush output file")?;
-        drop(file);
+            file.flush().await.context("failed to flush output file")?;
+            drop(file);
+            Ok(())
+        }
+        .await;
+
+        if let Err(e) = download_result {
+            // 失败统一清理 tmp（覆盖超时/读错/写错/取消/flush 全部路径）。
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
 
         // Atomic rename from tmp → final destination
         std::fs::rename(&tmp, dest)

@@ -24,7 +24,7 @@ function notify() {
   listeners.forEach((fn) => fn());
 }
 
-async function checkAll(): Promise<{
+async function checkAll(forceFfRefresh = false): Promise<{
   yt: ToolStatus;
   ff: ToolStatus;
   ytUp: YtdlpUpdateResult | null;
@@ -38,7 +38,8 @@ async function checkAll(): Promise<{
   const ff = await checkFfmpeg();
   const [ytUp, ffUp] = await Promise.all([
     checkYtdlpUpdate(yt.version ?? undefined).catch(() => null),
-    checkFfmpegUpdate().catch(() => null),
+    // 启动/自动检查走 24h 缓存；用户手动点「检查更新」时 forceFfRefresh=true 强制联网刷新。
+    checkFfmpegUpdate(forceFfRefresh ? true : undefined).catch(() => null),
   ]);
   return { yt, ff, ytUp, ffUp };
 }
@@ -73,14 +74,14 @@ export function useToolStatus() {
     };
   }, []);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (forceFfRefresh = false) => {
     // Force re-check (e.g. after downloading / pressing "check update").
     // NOTE: keep the cached values untouched until the new data arrives, so
     // the UI keeps showing the previous status while the check is in flight
     // instead of flickering to "not installed" (which happens when the cache
     // is cleared first and the fallback `{ available: false }` is rendered).
     pendingPromise = null;
-    const res = await checkAll();
+    const res = await checkAll(forceFfRefresh);
     cachedYtStatus = res.yt;
     cachedFfStatus = res.ff;
     cachedYtUpdate = res.ytUp;

@@ -41,7 +41,7 @@ Powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp) + ffmpeg, wrapped in a cle
 - **System notifications** — get notified when a download finishes or fails, even when minimized to tray
 - **Proxy support** — HTTP or SOCKS5, with automatic system proxy detection
 - **Cookies** — import from your browser to access restricted content
-- **Built-in tools** — download yt-dlp + ffmpeg right from the settings page
+- **Built-in tools** — download yt-dlp + ffmpeg right from the settings page, with live direct/proxy mode display, a "download via proxy" toggle (disabled until a proxy is configured), a slow-download reminder with a manual-download fallback link, and a retryable error dialog
 - **Update alerts** — startup checks for new versions of XDownload / yt-dlp / ffmpeg
 - **Bookmarks sync** — manual one-click sync of your X bookmarks with a preview dialog: every video bookmark (downloaded or not, color-coded) with per-item checkboxes for batch or single enqueue; already-downloaded ones can be re-downloaded. The download history acts as the cursor, so skipped/deleted tasks show up again on the next sync
 - **Bookmark catalogue** — every synced bookmark (video and non-video) is persisted locally in SQLite; browse them offline in a modal and download / re-download any of them
@@ -62,7 +62,7 @@ Powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp) + ffmpeg, wrapped in a cle
 
 Grab the latest installer from [Releases](https://github.com/MuZiCul/XDownload/releases).
 
-- **Windows**: `XDownload_2.9.6_x64-setup.exe` (NSIS) / `.msi`
+- **Windows**: `XDownload_2.9.7_x64-setup.exe` (NSIS) / `.msi`
 
 First launch downloads yt-dlp + ffmpeg automatically — or drop them into `bin/` yourself.
 

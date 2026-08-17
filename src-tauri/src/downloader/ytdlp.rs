@@ -177,38 +177,16 @@ impl YtDlpDownloader {
         }
     }
 
-    /// Stable per-download cache directory name derived from the download
-    /// config. Keyed by URL + format + output options, so a re-enqueued
-    /// download (same URL & format) resolves to the SAME directory as a
-    /// previous attempt and yt-dlp resumes from its `.part` file instead of
-    /// starting over. Changing the format / output template starts a fresh
-    /// staging area (never mixing partial files of different formats).
-    fn cache_key(config: &DownloadConfig) -> String {
-        use sha2::{Digest, Sha256};
-        let mut h = Sha256::new();
-        h.update(config.url.as_bytes());
-        h.update([0u8]);
-        h.update(config.format_id.as_bytes());
-        h.update([0u8]);
-        h.update(config.output_template.as_bytes());
-        h.update([0u8]);
-        h.update([if config.extract_audio { 1 } else { 0 }]);
-        h.update(config.max_height.to_le_bytes());
-        if let Some(items) = &config.playlist_items {
-            h.update([0u8]);
-            h.update(items.as_bytes());
-        }
-        let digest = h.finalize();
-        digest.iter().take(8).map(|b| format!("{b:02x}")).collect()
-    }
-
     /// Download a video as a queue task. Returns every successfully moved
     /// file path (from `--print-to-file after_move:filepath`) — a multi-media
     /// tweet yields several files; an empty vec if the process failed without
     /// producing stderr output.
     ///
-    /// Files are staged in `download_cache/{cache_key}/` (see `cache_key`),
-    /// and each task is cancelled independently via `cancel_task`.
+    /// Files are staged in `download_cache/{task_id}/` — every download
+    /// instance gets its own directory keyed by the queue task id, so
+    /// concurrent / paused / restarted tasks NEVER share cache files. This is
+    /// deliberate: downloads always restart from scratch (resume disabled),
+    /// and deleting an old task's cache can never touch a new download.
     pub async fn download(
         &self,
         task_id: &str,
@@ -223,8 +201,11 @@ impl YtDlpDownloader {
             .unwrap()
             .insert(task_id.to_string(), flag.clone());
 
-        let cache_dir =
-            crate::utils::app_home::AppHome::download_cache_dir().join(Self::cache_key(config));
+        // 缓存目录 = `{output_dir}/.xdl_cache/{task_id}`（与最终输出同盘）。
+        // 下载完成后 rename 到 output_dir 是原子同盘移动（毫秒级），彻底消除
+        // 跨盘 copy 的慢速/卡死/退出中断问题；下载中退出残留只在隐藏的
+        // .xdl_cache 目录，启动时统一清理，不污染下载根目录。
+        let cache_dir = Self::task_cache_dir(&config.output_dir, task_id);
         let tmp_path =
             std::env::temp_dir().join(format!("xdownload_last_path_{}.txt", task_id));
         let _ = std::fs::remove_file(&tmp_path);
@@ -287,10 +268,9 @@ impl YtDlpDownloader {
         // so an interrupted download never leaves partial files in the
         // user-visible folder.
         //
-        // The cache dir is keyed by the download config (see `cache_key`).
-        // Every download starts from scratch: the previous `.part` / fragments
-        // are wiped first, so paused→resumed, retried and restart-restored
-        // tasks always re-download from the beginning (no resume).
+        // 每次下载都从零开始：先清空自身缓存目录（防御性——task_id 目录首次
+        // 存在时通常为空），pause→resume / 重试 / 重启恢复的任务一律重新下载
+        // （断点续传禁用）。目录按 task_id 命名，与其他任务完全隔离。
         let _ = std::fs::remove_dir_all(cache_dir);
         std::fs::create_dir_all(cache_dir).ok();
 
@@ -533,6 +513,19 @@ impl YtDlpDownloader {
             return Ok(Vec::new());
         }
 
+        // 合并/后期处理已完成，进入文件移动阶段：emit 一次进度事件清空 stage。
+        // yt-dlp 合并结束后不再输出任何进度行，stage 不会自清——否则 UI 会
+        // 一直显示"音视频合并"，而实际已进入跨盘移动大文件的阶段。
+        (progress_cb.lock().unwrap())(DownloadProgress {
+            downloaded_bytes: 0,
+            total_bytes: 0,
+            speed: String::new(),
+            eta: String::new(),
+            percent: "100%".to_string(),
+            status: "moving".to_string(),
+            stage: String::new(),
+        });
+
         // Read the actual saved paths written by --print-to-file. When multiple
         // media entries are downloaded (multi-media tweets) the file contains
         // one path per line, in download order.
@@ -552,8 +545,10 @@ impl YtDlpDownloader {
         // any remaining finished extras (thumbnails, subtitles) are moved too
         // so nothing is lost. Every successfully moved path is returned (a
         // multi-media tweet yields several files). Files that still end in
-        // .part are discarded with the cache wipe afterwards.
-        std::fs::create_dir_all(&config.output_dir).ok();
+        // .part are discarded with the cache wipe afterwards. 缓存与输出同盘，
+        // rename 为原子移动（毫秒级），不再有跨盘 copy 慢速/中断问题。
+        let output_dir_abs = Self::resolve_output_dir(&config.output_dir);
+        std::fs::create_dir_all(&output_dir_abs).ok();
         let mut moved_paths: Vec<String> = Vec::new();
         for p in &saved_paths {
             if let Some(dst) = Self::move_to_download_dir(std::path::Path::new(p), &config.output_dir) {
@@ -587,15 +582,7 @@ impl YtDlpDownloader {
         if src.extension().and_then(|e| e.to_str()) == Some("part") {
             return None;
         }
-        // 相对 output_dir 转绝对路径，历史记录保存绝对路径（供 opener scope 校验）。
-        // 相对路径基于应用根目录解析，而不是进程 cwd：协议拉起应用时 cwd 可能
-        // 是 system32，按 cwd 拼会把文件下载到错误位置。
-        let out = std::path::Path::new(output_dir);
-        let out = if out.is_absolute() {
-            out.to_path_buf()
-        } else {
-            crate::utils::app_home::AppHome::root().join(out)
-        };
+        let out = Self::resolve_output_dir(output_dir);
         let target = out.join(src.file_name().unwrap_or_default());
         let dst = std::path::PathBuf::from(
             crate::services::download_history::DownloadHistory::sanitize_filename(
@@ -619,6 +606,26 @@ impl YtDlpDownloader {
             }
         }
         Some(dst.to_string_lossy().to_string())
+    }
+
+    /// 解析 output_dir 为绝对路径：相对路径基于应用根目录解析，而不是进程
+    /// cwd（协议拉起应用时 cwd 可能为 system32，按 cwd 拼会把文件下载到
+    /// 错误位置）。历史记录始终保存绝对路径（供 opener scope 校验）。
+    fn resolve_output_dir(output_dir: &str) -> std::path::PathBuf {
+        let out = std::path::Path::new(output_dir);
+        if out.is_absolute() {
+            out.to_path_buf()
+        } else {
+            crate::utils::app_home::AppHome::root().join(out)
+        }
+    }
+
+    /// 任务缓存目录：`{output_dir}/.xdl_cache/{task_id}`。与最终输出同盘，
+    /// 完成后 rename 原子移动；下载中残留只留在隐藏缓存目录，启动统一清理。
+    fn task_cache_dir(output_dir: &str, task_id: &str) -> std::path::PathBuf {
+        Self::resolve_output_dir(output_dir)
+            .join(".xdl_cache")
+            .join(task_id)
     }
 
     /// Read and remove the captured metadata for a finished task. Returns
@@ -657,12 +664,13 @@ impl YtDlpDownloader {
     }
 
     /// Delete the cache directory of a single task (partial files, staged
-    /// fragments, info files). Called when the user DELETES a task so its
-    /// `.part` / `.ytdl` leftovers don't accumulate. Pause / resume is
-    /// unaffected — pausing never calls this.
-    pub fn cleanup_task_cache(&self, config: &DownloadConfig) -> bool {
-        let dir = crate::utils::app_home::AppHome::download_cache_dir()
-            .join(Self::cache_key(config));
+    /// fragments, info files). Called when a task is deleted / paused so its
+    /// leftovers don't accumulate. The directory is keyed by `task_id`, which
+    /// no other task ever reuses — a failed delete (still locked by a dying
+    /// process) can never corrupt a running download; the leftover dir is
+    /// simply swept by the next startup wipe.
+    pub fn cleanup_task_cache(&self, config: &DownloadConfig, task_id: &str) -> bool {
+        let dir = Self::task_cache_dir(&config.output_dir, task_id);
         if dir.exists() {
             tracing::info!("cleaning cache for deleted task: {}", dir.display());
             let _ = std::fs::remove_dir_all(&dir);
@@ -672,60 +680,34 @@ impl YtDlpDownloader {
         }
     }
 
-    /// 下载缓存保留天数：目录 mtime 超过该天数的缓存条目（`.part` / 分片 / 残留
-    /// 输出）视为废弃，启动时清理。
-    const CACHE_RETENTION_DAYS: i64 = 7;
-
-    /// Remove stale entries from the download cache — partial downloads, info
-    /// files, or finished outputs that never got moved.
+    /// 清空下载缓存目录（启动时调用一次）。
     ///
-    /// Called once at startup. Because `.part` files survive across sessions
-    /// (see `cache_key` / `download`) so interrupted downloads can be resumed,
-    /// a full wipe would silently kill every pending task's resume data.
-    /// Instead, only cache dirs whose last-modification time is older than
-    /// [`CACHE_RETENTION_DAYS`] days are removed: a dir untouched for a week
-    /// means its task is abandoned. Live or recently-failed tasks (fresh
-    /// mtime) are never touched. The sweep is idempotent — stale dirs, once
-    /// removed, are gone — so no "once per day" marker is needed.
+    /// 缓存目录为 `{output_dir}/.xdl_cache`（下载目录内隐藏目录，与最终输出
+    /// 同盘）。断点续传已禁用，残留只有异常退出/被强杀留下的 `.part` 等，
+    /// 无保留价值；启动清理发生在任何任务开始之前，直接全清。同时顺手清理
+    /// 旧版本遗留的应用目录缓存 `download_cache`（一次性，防历史残留堆积）。
     pub fn cleanup_download_cache() {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let now = SystemTime::now();
-        let cutoff = now
-            .checked_sub(std::time::Duration::from_secs(
-                Self::CACHE_RETENTION_DAYS as u64 * 86_400,
-            ))
-            .unwrap_or(UNIX_EPOCH);
-        let removed = Self::cleanup_stale_cache(
-            &crate::utils::app_home::AppHome::download_cache_dir(),
-            cutoff,
-        );
-        tracing::info!(
-            "cleaned stale download cache (>{} days): removed {removed} dirs",
-            Self::CACHE_RETENTION_DAYS
-        );
+        let output_dir = crate::services::config::ConfigManager::load_download_dir()
+            .unwrap_or_else(|| "downloads".to_string());
+        Self::wipe_cache(&Self::resolve_output_dir(&output_dir).join(".xdl_cache"));
+        // 旧版本缓存目录（应用根目录 download_cache）一次性清理。
+        Self::wipe_cache(&crate::utils::app_home::AppHome::download_cache_dir());
     }
 
-    /// Remove every cache entry whose directory mtime is older than `cutoff`.
-    /// Returns the number of removed entries. Only directories are considered
-    /// (each cache entry is a dir keyed by `cache_key`); stray files are left
-    /// alone.
-    fn cleanup_stale_cache(cache_dir: &std::path::Path, cutoff: std::time::SystemTime) -> usize {
-        let mut removed = 0usize;
-        if let Ok(entries) = std::fs::read_dir(cache_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                let Ok(meta) = entry.metadata() else { continue };
-                if !meta.is_dir() {
-                    continue;
-                }
-                // Stale = last modified strictly before the cutoff.
-                let stale = meta.modified().map_or(false, |m| m < cutoff);
-                if stale && std::fs::remove_dir_all(&path).is_ok() {
-                    removed += 1;
-                }
+    /// 删除缓存目录并重建（目录不存在时跳过）。供启动清理与测试复用。
+    fn wipe_cache(cache_dir: &std::path::Path) {
+        if !cache_dir.exists() {
+            return;
+        }
+        match std::fs::remove_dir_all(cache_dir) {
+            Ok(()) => {
+                tracing::info!("cleaned download cache: {}", cache_dir.display());
+                let _ = std::fs::create_dir_all(cache_dir);
+            }
+            Err(e) => {
+                tracing::warn!("failed to clean download cache {}: {e}", cache_dir.display());
             }
         }
-        removed
     }
 
     fn build_base_command(&self) -> Vec<String> {
@@ -818,49 +800,6 @@ mod tests {
     }
 
     #[test]
-    fn test_cache_key_stable_for_same_config() {
-        let a = cfg("https://x.com/user/status/123");
-        let b = cfg("https://x.com/user/status/123");
-        assert_eq!(YtDlpDownloader::cache_key(&a), YtDlpDownloader::cache_key(&b));
-        // 16 hex chars
-        let key = YtDlpDownloader::cache_key(&a);
-        assert_eq!(key.len(), 16);
-    }
-
-    #[test]
-    fn test_cache_key_differs_for_different_urls_or_formats() {
-        let a = cfg("https://x.com/user/status/1");
-        let b = cfg("https://x.com/user/status/2");
-        assert_ne!(YtDlpDownloader::cache_key(&a), YtDlpDownloader::cache_key(&b));
-
-        let mut same_url_diff_format = cfg("https://x.com/user/status/1");
-        same_url_diff_format.format_id = "137".to_string();
-        assert_ne!(
-            YtDlpDownloader::cache_key(&a),
-            YtDlpDownloader::cache_key(&same_url_diff_format)
-        );
-    }
-
-    #[test]
-    fn test_cache_key_ignores_url_trailing_whitespace_trim() {
-        // enqueue 前会 trim URL；此处验证 trim 后的 URL 与未 trim 产生不同 key
-        // （因为 key 用原始字符串哈希，前端/后端在入队前已统一 trim）。
-        let trimmed = cfg("https://x.com/a");
-        let untrimmed = cfg(" https://x.com/a ");
-        // 两者 key 不同是预期的——入队路径统一 trim 后 key 才稳定。
-        let _ = (YtDlpDownloader::cache_key(&trimmed), YtDlpDownloader::cache_key(&untrimmed));
-    }
-
-    #[test]
-    fn test_cache_key_playlist_items_change_key() {
-        let mut a = cfg("https://x.com/user/status/1");
-        a.playlist_items = Some("1".to_string());
-        let mut b = cfg("https://x.com/user/status/1");
-        b.playlist_items = Some("1,2".to_string());
-        assert_ne!(YtDlpDownloader::cache_key(&a), YtDlpDownloader::cache_key(&b));
-    }
-
-    #[test]
     fn test_is_valid_rate_limit() {
         assert!(is_valid_rate_limit("1M"));
         assert!(is_valid_rate_limit("500K"));
@@ -879,8 +818,8 @@ mod tests {
     }
 
     #[test]
-    fn test_cache_cleanup_removes_only_stale_dirs() {
-        use std::time::{Duration, SystemTime};
+    fn test_cache_cleanup_wipes_everything() {
+        use std::time::SystemTime;
         // 独立临时目录，避免触碰真实 download_cache/。
         let dir = std::env::temp_dir().join(format!(
             "xdl_cache_cleanup_test_{}_{}",
@@ -893,28 +832,22 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
-        // 两个刚创建的缓存目录 + 一个散落文件（不应被清理）。
-        let fresh_a = dir.join("aaaa0001");
-        let fresh_b = dir.join("aaaa0002");
-        let stray = dir.join("stray.txt");
-        std::fs::create_dir_all(&fresh_a).unwrap();
-        std::fs::create_dir_all(&fresh_b).unwrap();
-        std::fs::write(&stray, "x").unwrap();
+        // 缓存子目录（含嵌套残留文件）+ 散落文件 + 元数据文件，全部应被清掉。
+        let task_dir = dir.join("aaaa0001");
+        std::fs::create_dir_all(&task_dir).unwrap();
+        std::fs::write(task_dir.join("video.part"), "partial").unwrap();
+        std::fs::write(dir.join("stray.txt"), "x").unwrap();
+        std::fs::write(dir.join("info.json"), "{}").unwrap();
 
-        let now = SystemTime::now();
-        // cutoff 在遥远的过去 → 所有目录都算"新"，一个都不删，散落文件也不动。
-        let past = now.checked_sub(Duration::from_secs(10 * 86_400)).unwrap();
-        assert_eq!(YtDlpDownloader::cleanup_stale_cache(&dir, past), 0);
-        assert!(fresh_a.exists());
-        assert!(fresh_b.exists());
-        assert!(stray.exists());
+        // 清空后目录被重建且为空（子目录 / 散落文件 / 元数据都不剩）。
+        YtDlpDownloader::wipe_cache(&dir);
+        assert!(dir.exists());
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
 
-        // cutoff 在遥远的未来 → 所有目录都算"旧"，全删；散落文件保持不动。
-        let future = now.checked_add(Duration::from_secs(10 * 86_400)).unwrap();
-        assert_eq!(YtDlpDownloader::cleanup_stale_cache(&dir, future), 2);
-        assert!(!fresh_a.exists());
-        assert!(!fresh_b.exists());
-        assert!(stray.exists());
+        // 目录不存在时是安全的 no-op。
+        let missing = dir.join("missing");
+        YtDlpDownloader::wipe_cache(&missing);
+        assert!(!missing.exists());
 
         let _ = std::fs::remove_dir_all(&dir);
     }

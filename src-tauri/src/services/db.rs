@@ -42,10 +42,14 @@ pub fn db_path() -> PathBuf {
 pub fn open() -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
     let pool = DB_POOL.get_or_init(|| init());
     match pool {
-        Ok(p) => p
-            .get()
-            .map_err(|e| anyhow::anyhow!("failed to borrow database connection: {e}")),
-        Err(e) => Err(anyhow::anyhow!("database not initialized: {e:#}")),
+        Ok(p) => p.get().map_err(|e| {
+            tracing::warn!("[XDownload] db: failed to borrow connection: {e}");
+            anyhow::anyhow!("failed to borrow database connection: {e}")
+        }),
+        Err(e) => {
+            tracing::warn!("[XDownload] db: pool not initialized: {e:#}");
+            Err(anyhow::anyhow!("database not initialized: {e:#}"))
+        }
     }
 }
 
@@ -94,6 +98,7 @@ pub fn create_schema(conn: &Connection) -> rusqlite::Result<()> {
              title         TEXT,
              thumbnail     TEXT,
              url           TEXT,
+             handle        TEXT,
              uploader      TEXT,
              duration      INTEGER NOT NULL DEFAULT 0,
              view_count    INTEGER NOT NULL DEFAULT 0,
@@ -140,6 +145,18 @@ pub fn create_schema(conn: &Connection) -> rusqlite::Result<()> {
          };
          if has_source == 0 {
          conn.execute_batch("ALTER TABLE downloads ADD COLUMN source INTEGER NOT NULL DEFAULT 0;")?;
+         }
+
+         // 幂等迁移：老库（handle 列加入前创建的 downloads 表）缺少 `handle` 列，
+         // 同样需要显式 ALTER（CREATE TABLE IF NOT EXISTS 不会给已存在的表补列）。
+         let has_handle = {
+         let mut stmt = conn.prepare(
+             "SELECT COUNT(*) FROM pragma_table_info('downloads') WHERE name = 'handle'",
+         )?;
+         stmt.query_row([], |row| row.get::<_, i64>(0))?
+         };
+         if has_handle == 0 {
+         conn.execute_batch("ALTER TABLE downloads ADD COLUMN handle TEXT;")?;
          }
 
          Ok(())

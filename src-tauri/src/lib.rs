@@ -216,9 +216,8 @@ pub fn run() {
     // Apply saved proxy (highest priority — overrides env and system detection)
     services::config::ConfigManager::apply_saved_proxy();
 
-    // Clean stale download cache entries: dirs untouched for > 7 days
-    // (abandoned tasks) are removed. Live `.part` files are kept so
-    // interrupted downloads can be resumed across sessions.
+    // 清空下载缓存目录：断点续传已禁用，残留的 .part / 分片无续传价值，
+    // 启动时直接全清（发生在任何任务开始之前，不影响恢复的排队任务）。
     YtDlpDownloader::cleanup_download_cache();
 
     // Clean old log files (once per day, first launch). Logs accumulate
@@ -314,6 +313,7 @@ pub fn run() {
             commands::bootstrap::open_file_path,
             commands::settings::get_privacy_mode,
             commands::settings::set_privacy_mode,
+            commands::settings::set_tools_use_proxy,
             commands::settings::sync_bookmarks_preview,
             commands::settings::confirm_bookmarks_enqueue,
             commands::settings::list_bookmarks,

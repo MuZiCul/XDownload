@@ -45,6 +45,11 @@ pub struct DownloadRecord {
     /// Original video URL, used to re-download from the history page.
     #[serde(default)]
     pub url: Option<String>,
+    /// User handle extracted from the URL (e.g. `yung_dimsum` from
+    /// `https://x.com/yung_dimsum/status/…`), lowercased. Used as a dedup
+    /// dimension / weighting factor (see buddy/download-dedup.md).
+    #[serde(default)]
+    pub handle: Option<String>,
     /// Video metadata shown on the history page (author / duration / views / likes).
     #[serde(default)]
     pub uploader: Option<String>,
@@ -139,6 +144,7 @@ fn record_from_row(row: &Row<'_>) -> rusqlite::Result<DownloadRecord> {
         title: row.get("title")?,
         thumbnail: row.get("thumbnail")?,
         url: row.get("url")?,
+        handle: row.get("handle")?,
         uploader: row.get("uploader")?,
         duration: row.get("duration")?,
         view_count: row.get("view_count")?,
@@ -159,9 +165,32 @@ fn record_from_row(row: &Row<'_>) -> rusqlite::Result<DownloadRecord> {
     })
 }
 
-const SELECT_COLUMNS: &str = "video_id, title, thumbnail, url, uploader, duration, \
+const SELECT_COLUMNS: &str = "video_id, title, thumbnail, url, handle, uploader, duration, \
      view_count, like_count, file_path, file_paths, file_size, downloaded_at, \
      status, error, attempts, source";
+
+/// Extract the user handle from an x.com/twitter.com status URL like
+/// "https://x.com/yung_dimsum/status/2086682917766599064/video/1".
+///
+/// Returns the lowercased handle, or `None` when the URL does not look like a
+/// normal user status link (e.g. x.com system pages such as `x.com/i/…`).
+pub(crate) fn extract_handle(url: &str) -> Option<String> {
+    let re = regex::Regex::new(
+        r"^https?://(?:www\.|mobile\.)?(?:x\.com|twitter\.com)/([A-Za-z0-9_]{1,15})/status/",
+    )
+    .ok()?;
+    let handle = re.captures(url)?.get(1)?.as_str();
+    // x.com 系统内置路径（非用户 handle），一律不提取。
+    const SYSTEM_PATHS: &[&str] = &[
+        "i", "home", "explore", "search", "notifications", "messages",
+        "settings", "intent", "share", "compose", "hashtag",
+    ];
+    let lower = handle.to_ascii_lowercase();
+    if SYSTEM_PATHS.contains(&lower.as_str()) {
+        return None;
+    }
+    Some(lower)
+}
 
 pub struct DownloadHistory;
 
@@ -419,15 +448,18 @@ fn record_in(
     source: i64,
 ) -> rusqlite::Result<()> {
     let file_paths_json = serde_json::to_string(&file_paths).unwrap_or_else(|_| "[]".to_string());
+    // handle 由 url 即时提取（小写），调用方无需感知。
+    let handle = url.as_deref().and_then(extract_handle);
     conn.execute(
         "INSERT INTO downloads
-            (video_id, title, thumbnail, url, uploader, duration, view_count,
-             like_count, file_path, file_paths, file_size, downloaded_at,
-             status, error, attempts, source)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)
+            (video_id, title, thumbnail, url, handle, uploader, duration,
+             view_count, like_count, file_path, file_paths, file_size,
+             downloaded_at, status, error, attempts, source)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)
          ON CONFLICT(video_id) DO UPDATE SET
              title=excluded.title, thumbnail=excluded.thumbnail,
-             url=excluded.url, uploader=excluded.uploader,
+             url=excluded.url, handle=excluded.handle,
+             uploader=excluded.uploader,
              duration=excluded.duration, view_count=excluded.view_count,
              like_count=excluded.like_count, file_path=excluded.file_path,
              file_paths=excluded.file_paths, file_size=excluded.file_size,
@@ -439,6 +471,7 @@ fn record_in(
             title,
             thumbnail,
             url,
+            handle,
             uploader,
             duration,
             view_count,
@@ -537,6 +570,7 @@ mod tests {
             title: Some(format!("title {video_id}")),
             thumbnail: Some(format!("https://example.com/{video_id}.jpg")),
             url: Some(format!("https://x.com/u/status/{video_id}")),
+            handle: Some("u".to_string()),
             uploader: Some("author".to_string()),
             duration: 123,
             view_count: 1000,
@@ -553,6 +587,35 @@ mod tests {
             attempts: 1,
             source: source_name(source::SINGLE),
         }
+    }
+
+    #[test]
+    fn extract_handle_variants() {
+        // 标准 x.com 推文 URL（含 /video/1 尾缀）。
+        assert_eq!(
+            extract_handle("https://x.com/yung_dimsum/status/2086682917766599064/video/1"),
+            Some("yung_dimsum".to_string())
+        );
+        // twitter.com 域名。
+        assert_eq!(
+            extract_handle("https://twitter.com/yung_dimsum/status/123"),
+            Some("yung_dimsum".to_string())
+        );
+        // 子域 + 大写 handle → 小写。
+        assert_eq!(
+            extract_handle("https://mobile.twitter.com/Yung_DimSum/status/123"),
+            Some("yung_dimsum".to_string())
+        );
+        // 带 query 参数。
+        assert_eq!(
+            extract_handle("https://x.com/u/status/123?lang=zh"),
+            Some("u".to_string())
+        );
+        // 系统页面 / 非推文链接 → None。
+        assert_eq!(extract_handle("https://x.com/i/status/123"), None);
+        assert_eq!(extract_handle("https://x.com/home"), None);
+        assert_eq!(extract_handle("https://example.com/yung/status/123"), None);
+        assert_eq!(extract_handle("not a url"), None);
     }
 
     #[test]
@@ -585,6 +648,7 @@ mod tests {
         assert_eq!(got.title, rec.title);
         assert_eq!(got.thumbnail, rec.thumbnail);
         assert_eq!(got.url, rec.url);
+        assert_eq!(got.handle, Some("u".to_string()));
         assert_eq!(got.uploader, rec.uploader);
         assert_eq!(got.duration, 123);
         assert_eq!(got.view_count, 1000);

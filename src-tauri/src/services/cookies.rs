@@ -128,23 +128,34 @@ impl CookieManager {
         for browser in BROWSER_FALLBACK_ORDER {
             if let Some(path) = Self::browser_cookie_path(browser) {
                 if path.exists() {
+                    tracing::info!(
+                        "[XDownload] cookie scan: found browser={} db={}",
+                        browser,
+                        path.display()
+                    );
                     return Some(browser.to_string());
                 }
             }
         }
+        tracing::warn!("[XDownload] cookie scan: no browser cookie DB found");
         None
     }
 
     /// Get a list of all browsers whose cookie DB is present.
     pub fn list_available_browsers() -> Vec<String> {
-        BROWSER_FALLBACK_ORDER
+        let found: Vec<String> = BROWSER_FALLBACK_ORDER
             .iter()
             .filter_map(|b| {
                 Self::browser_cookie_path(b)
                     .filter(|p| p.exists())
                     .map(|_| b.to_string())
             })
-            .collect()
+            .collect();
+        tracing::info!(
+            "[XDownload] cookie list_available_browsers: found {:?}",
+            found
+        );
+        found
     }
 
     /// Detect browsers that are both **installed** on this machine AND
