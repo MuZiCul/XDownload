@@ -105,6 +105,8 @@ export interface AppSettings {
   hls_concurrent_fragments?: number;
   /** HLS/DASH 分片失败重试次数（yt-dlp --fragment-retries）。 */
   hls_fragment_retries?: number;
+  /** 下载时防止系统休眠（Windows）。 */
+  keep_awake?: boolean;
 }
 
 // --- Bookmarks sync (manual) ---

@@ -10,8 +10,14 @@ pub fn load_settings() -> AppSettings {
 
 /// Save settings to the active config file.
 #[tauri::command]
-pub fn save_settings(settings: AppSettings) -> Result<(), String> {
-    ConfigManager::save(&settings).map_err(|e| e.to_string())
+pub fn save_settings(
+    settings: AppSettings,
+    state: tauri::State<'_, crate::commands::download::DownloaderState>,
+) -> Result<(), String> {
+    ConfigManager::save(&settings).map_err(|e| e.to_string())?;
+    // 防休眠开关变化立即生效：sync 内部读取刚落盘的 keep_awake 配置。
+    state.queue.sync_keep_awake();
+    Ok(())
 }
 
 /// Export settings to a custom file path.
@@ -20,11 +26,17 @@ pub fn save_settings_to_path(settings: AppSettings, path: String) -> Result<(), 
     ConfigManager::save_to_path(&settings, &path).map_err(|e| e.to_string())
 }
 
-/// Get the download directory (saved or default).
+/// Get the download directory (saved or default) as an ABSOLUTE path.
+/// Relative / empty / missing configs resolve against the app root
+/// (`<root>/downloads`), so the settings page always shows a real path.
 #[tauri::command]
 pub fn get_download_dir() -> String {
-    ConfigManager::load_download_dir()
-        .unwrap_or_else(|| "downloads".to_string())
+    match ConfigManager::load_download_dir() {
+        Some(d) if !d.is_empty() && std::path::Path::new(&d).is_absolute() => d,
+        _ => crate::utils::app_home::AppHome::downloads_dir()
+            .to_string_lossy()
+            .into_owned(),
+    }
 }
 
 /// Get the active config file path for display.
@@ -190,7 +202,10 @@ pub fn apply_and_persist_settings(
     }
 
     // Persist to active config
-    ConfigManager::save(&settings).map_err(|e| e.to_string())
+    ConfigManager::save(&settings).map_err(|e| e.to_string())?;
+    // 导入的配置可能改变防休眠开关 → 同步运行时状态。
+    state.queue.sync_keep_awake();
+    Ok(())
 }
 
 /// Load the default config (config/default.json), apply to runtime,
@@ -223,6 +238,8 @@ pub fn apply_default_config(
 
     // Persist to active config
     ConfigManager::save(&defaults).map_err(|e| e.to_string())?;
+    // 默认配置可能改变防休眠开关 → 同步运行时状态。
+    state.queue.sync_keep_awake();
 
     Ok(defaults)
 }

@@ -56,12 +56,13 @@ Powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp) + ffmpeg, wrapped in a cle
 - **Clean cache** — abandoned partial downloads (untouched for over 7 days) are swept at startup, and paused/cancelled tasks wipe their staging cache right away, so no fragment litter ever accumulates
 - **Split history view** — the active downloads and the history list each scroll independently (50/50 with 2+ active tasks, 30/70 otherwise); the history list is virtualized, staying smooth even with thousands of records
 - **i18n** — English & 简体中文, switch instantly without restart
+- **Prevent sleep** — optional toggle keeps your system awake while downloads are running (restores normal sleep automatically when the queue empties or you quit)
 
 ## Install
 
 Grab the latest installer from [Releases](https://github.com/MuZiCul/XDownload/releases).
 
-- **Windows**: `XDownload_2.9.5_x64-setup.exe` (NSIS) / `.msi`
+- **Windows**: `XDownload_2.9.6_x64-setup.exe` (NSIS) / `.msi`
 
 First launch downloads yt-dlp + ffmpeg automatically — or drop them into `bin/` yourself.
 

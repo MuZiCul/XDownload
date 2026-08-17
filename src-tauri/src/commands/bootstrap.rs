@@ -229,6 +229,9 @@ pub fn quit_app(app: tauri::AppHandle, save_progress: bool) {
             state.queue.prepare_exit();
         }
     }
+    // 用户主动退出：无论当前是否有任务，一律恢复系统正常休眠（退出后
+    // 防休眠请求不再有意义；重启后由启动时的 sync_keep_awake 重新接管）。
+    crate::utils::keep_awake::disable();
     crate::utils::process::kill_all_children();
     // Destroy the main window first so the WebView2 environment is torn down
     // cleanly — avoids the benign "Failed to unregister class ... 1412" error

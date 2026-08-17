@@ -30,20 +30,23 @@ type Props = {
   concurrency: number;
   retryCount: number;
   queuePersist: boolean;
+  /** 下载时防止系统休眠（Windows）。 */
+  keepAwake: boolean;
   /** yt-dlp --limit-rate 值（如 "1M"）；空串 = 不限速。 */
   rateLimit: string;
   onChange: (
     patch: Partial<
-      Pick<AppSettings, "concurrency" | "retry_count" | "queue_persist" | "download_rate_limit">
+      Pick<AppSettings, "concurrency" | "retry_count" | "queue_persist" | "keep_awake" | "download_rate_limit">
     >
   ) => void;
 };
 
-/** 多任务设置卡片：并发数 / 失败重试 / 队列持久化 / 下载限速（同一卡片，单独保存）。 */
+/** 多任务设置卡片：并发数 / 失败重试 / 队列持久化 / 下载限速 / 下载时防休眠（同一卡片，单独保存）。 */
 export default function MultiTaskSetting({
   concurrency,
   retryCount,
   queuePersist,
+  keepAwake,
   rateLimit,
   onChange,
 }: Props) {
@@ -58,12 +61,14 @@ export default function MultiTaskSetting({
     concurrency,
     retryCount,
     queuePersist,
+    keepAwake,
     rateLimit,
   });
   const changed =
     concurrency !== committed.concurrency ||
     retryCount !== committed.retryCount ||
     queuePersist !== committed.queuePersist ||
+    keepAwake !== committed.keepAwake ||
     rateLimit !== committed.rateLimit;
 
   const handleSave = async () => {
@@ -79,9 +84,10 @@ export default function MultiTaskSetting({
       cfg.concurrency = concurrency;
       cfg.retry_count = retryCount;
       cfg.queue_persist = queuePersist;
+      cfg.keep_awake = keepAwake;
       cfg.download_rate_limit = rateLimit || "";
       await saveSettings(cfg);
-      setCommitted({ concurrency, retryCount, queuePersist, rateLimit });
+      setCommitted({ concurrency, retryCount, queuePersist, keepAwake, rateLimit });
       toast.success(t("multitask.saved"));
     } catch (err: any) {
       toast.error(t("common.saveFail", { err }));
@@ -133,6 +139,20 @@ export default function MultiTaskSetting({
           >
             <span
               className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${queuePersist ? "translate-x-4" : "translate-x-0.5"}`}
+            />
+          </button>
+        </label>
+        <label className="flex items-center gap-2 text-xs text-zinc-600">
+          {t("multitask.keepAwake")}
+          <button
+            type="button"
+            role="switch"
+            aria-checked={keepAwake}
+            onClick={() => onChange({ keep_awake: !keepAwake })}
+            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${keepAwake ? "bg-blue-600" : "bg-zinc-300"}`}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${keepAwake ? "translate-x-4" : "translate-x-0.5"}`}
             />
           </button>
         </label>
