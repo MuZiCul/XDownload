@@ -313,12 +313,31 @@ pub async fn check_ffmpeg() -> serde_json::Value {
 #[tauri::command]
 pub async fn download_ytdlp(app: AppHandle) -> Result<String, String> {
     let app_clone = app.clone();
-    let result = crate::services::bootstrap::Bootstrap::download_ytdlp(move |pct| {
-        let _ = app_clone.emit("bootstrap-progress", serde_json::json!({
-            "tool": "yt-dlp",
-            "percent": pct,
-        }));
-    })
+    let app_mode = app.clone();
+    // 设置页「代理下载」开关开启 → 强制走代理；否则自动（直连优先，失败切代理）。
+    let force_mode = if crate::services::config::ConfigManager::load()
+        .tools_use_proxy
+        .unwrap_or(false)
+    {
+        Some("proxy")
+    } else {
+        None
+    };
+    let result = crate::services::bootstrap::Bootstrap::download_ytdlp(
+        move |pct| {
+            let _ = app_clone.emit("bootstrap-progress", serde_json::json!({
+                "tool": "yt-dlp",
+                "percent": pct,
+            }));
+        },
+        &move |mode: &str| {
+            let _ = app_mode.emit("bootstrap-progress", serde_json::json!({
+                "tool": "yt-dlp",
+                "mode": mode,
+            }));
+        },
+        force_mode,
+    )
     .await;
 
     match result {
@@ -343,6 +362,16 @@ pub async fn download_ytdlp(app: AppHandle) -> Result<String, String> {
 #[tauri::command]
 pub async fn download_ffmpeg(app: AppHandle) -> Result<String, String> {
     let app_clone = app.clone();
+    let app_mode = app.clone();
+    // 设置页「代理下载」开关开启 → 强制走代理；否则自动（直连优先，失败切代理）。
+    let force_mode = if crate::services::config::ConfigManager::load()
+        .tools_use_proxy
+        .unwrap_or(false)
+    {
+        Some("proxy")
+    } else {
+        None
+    };
     let result = crate::services::bootstrap::Bootstrap::download_ffmpeg(
         {
             let app = app.clone();
@@ -361,6 +390,13 @@ pub async fn download_ffmpeg(app: AppHandle) -> Result<String, String> {
                 "stage": "extracting",
             }));
         },
+        &move |mode: &str| {
+            let _ = app_mode.emit("bootstrap-progress", serde_json::json!({
+                "tool": "ffmpeg",
+                "mode": mode,
+            }));
+        },
+        force_mode,
     )
     .await;
 

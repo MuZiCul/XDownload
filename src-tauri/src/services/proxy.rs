@@ -314,12 +314,18 @@ impl ProxyConfig {
     /// success, HTTP status, elapsed_ms, and message.
     pub async fn test_proxy_config(host: &str, port: u16, scheme: &str) -> ProxyTestResult {
         if host.is_empty() || port == 0 {
+            tracing::warn!(
+                "[XDownload] test_proxy_config skipped: proxy not configured (host={} port={})",
+                host,
+                port
+            );
             return ProxyTestResult::new(false, -1, 0, "proxy not configured".to_string());
         }
         let proxy_url = format!("{}://{}:{}", scheme, host, port);
         let proxy = match reqwest::Proxy::all(&proxy_url) {
             Ok(p) => p,
             Err(e) => {
+                tracing::warn!("[XDownload] test_proxy_config invalid proxy url {}: {e}", proxy_url);
                 return ProxyTestResult::new(false, -1, 0, format!("invalid proxy url: {}", e));
             }
         };
@@ -331,6 +337,7 @@ impl ProxyConfig {
         {
             Ok(c) => c,
             Err(e) => {
+                tracing::warn!("[XDownload] test_proxy_config failed to build client: {e}");
                 return ProxyTestResult::new(false, -1, 0, format!("failed to build client: {}", e));
             }
         };
@@ -341,8 +348,19 @@ impl ProxyConfig {
                 let elapsed = start.elapsed().as_millis() as u64;
                 let code = resp.status().as_u16() as i32;
                 if code >= 200 && code < 400 {
+                    tracing::info!(
+                        "[XDownload] test_proxy_config OK: proxy={} status={} elapsed_ms={}",
+                        proxy_url,
+                        code,
+                        elapsed
+                    );
                     ProxyTestResult::new(true, code, elapsed, "proxy OK, x.com reachable".to_string())
                 } else {
+                    tracing::warn!(
+                        "[XDownload] test_proxy_config unexpected status: proxy={} status={}",
+                        proxy_url,
+                        code
+                    );
                     ProxyTestResult::new(
                         false,
                         code,
@@ -363,6 +381,12 @@ impl ProxyConfig {
                 } else {
                     format!("proxy connection failed: {}", msg)
                 };
+                tracing::warn!(
+                    "[XDownload] test_proxy_config failed: proxy={} elapsed_ms={} reason={}",
+                    proxy_url,
+                    elapsed,
+                    message
+                );
                 ProxyTestResult::new(false, -1, elapsed, message)
             }
         }

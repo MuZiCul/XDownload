@@ -227,6 +227,16 @@ impl ConfigManager {
         })
     }
 
+    // ==================== Tools Proxy ====================
+
+    /// 工具（yt-dlp/ffmpeg）下载默认走代理开关（即时持久化）。
+    pub fn save_tools_use_proxy(enabled: bool) -> Result<()> {
+        info!("saving tools_use_proxy: {}", enabled);
+        Self::merge_and_save(|cfg| {
+            cfg.tools_use_proxy = Some(enabled);
+        })
+    }
+
     pub fn load_privacy_mode() -> bool {
         Self::load().privacy_mode.unwrap_or(false)
     }

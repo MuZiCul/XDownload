@@ -6,6 +6,11 @@ struct GithubRelease {
     tag_name: String,
     html_url: String,
     assets: Vec<GithubAsset>,
+    /// Release 发布时间（ISO 8601 UTC，如 `2026-08-16T09:30:00Z`）。
+    /// BtbN master 每次自动构建都会重新发布并刷新该时间，用于时间对比
+    /// 检测"是否有新构建"（该场景 tag 恒为 `latest`，无版本号可比）。
+    #[serde(default)]
+    published_at: Option<String>,
 }
 
 /// A release asset (e.g. the NSIS/MSI installer).
@@ -236,13 +241,15 @@ pub async fn check_ytdlp_update(local_version: Option<String>) -> serde_json::Va
 /// Check if a newer version of ffmpeg is available.
 ///
 /// 1. Run `ffmpeg -version` to get the local version
-/// 2. Fetch latest release version from gyan.dev (our download source)
-/// 3. Semver-compare and return result
+/// 2. Compare against the latest BtbN master build published on GitHub
+///    (download source). Both `N-` (BtbN master) and legacy numeric
+///    builds are handled by `check_ffmpeg_master_update`, which compares
+///    the remote release time against the local ffmpeg.exe mtime.
 ///
-/// Uses the same gyan.dev endpoint that Chocolatey and ffmpeg-sidecar use:
-///   GET https://www.gyan.dev/ffmpeg/builds/release-version → "7.1"
+/// `force_refresh`（前端「检查更新」按钮主动点击时传 true）会绕过远端
+/// 发布时间缓存，强制请求 GitHub 并刷新本地缓存。
 #[tauri::command]
-pub async fn check_ffmpeg_update() -> serde_json::Value {
+pub async fn check_ffmpeg_update(force_refresh: Option<bool>) -> serde_json::Value {
     // --- Step 1: check ffmpeg exists ---
     let ffmpeg_path = crate::utils::process::find_ffmpeg();
     if !ffmpeg_path.exists() {
@@ -287,68 +294,216 @@ pub async fn check_ffmpeg_update() -> serde_json::Value {
         });
     };
 
-    // --- Step 3: fetch latest ffmpeg version from gyan.dev ---
-    let client = match update_client() {
-        Ok(c) => c,
-        Err(e) => {
-            return serde_json::json!({
-                "has_update": false,
-                "local_version": local_version,
-                "latest_version": Option::<String>::None,
-                "url": Option::<String>::None,
-                "error": format!("初始化请求失败: {}", e),
-            });
-        }
-    };
+    // 统一走 GitHub（BtbN）检测：基于发布时间 vs 本地 ffmpeg.exe mtime 对比，
+    // 不依赖版本号形态（N- 或数字均可），彻底移除 gyan.dev 依赖。
+    check_ffmpeg_master_update(&local_version, force_refresh.unwrap_or(false)).await
+}
 
-    let resp = match client
-        .get("https://www.gyan.dev/ffmpeg/builds/release-version")
-        .send()
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            return serde_json::json!({
-                "has_update": false,
-                "local_version": local_version,
-                "latest_version": Option::<String>::None,
-                "url": Option::<String>::None,
-                "error": format!("网络请求失败: {}", e),
-            });
-        }
-    };
+/// ffmpeg 更新检测（唯一入口，适用于所有本地 ffmpeg 构建，含旧版数字
+/// 版本）：GitHub 上最新 BtbN master 构建的发布时间（UTC）与本地
+/// `ffmpeg.exe` 文件 mtime（解压时已恢复为 zip 内构建打包时刻）对比，
+/// 远端发布时间更新 → 有新构建。
+///
+/// 数据源优先级：API（`published_at`）→ Web（releases/tag/latest 页面的
+/// `<relative-time datetime>`）。API 未认证限流 60 次/h，故远端发布时间做
+/// **跨进程持久化缓存（24h TTL）**，存 `config/data.db` 的 `config` 表；
+/// 24h 内重复检查（含重启后）直接读缓存不再打 API。`force_refresh` 时
+/// 绕过缓存强制刷新并回写缓存。全部不可达时静默返回"无更新"。
+async fn check_ffmpeg_master_update(local_version: &str, force_refresh: bool) -> serde_json::Value {
+    /// 远端发布时间缓存 TTL：固定 24 小时（BtbN master 每天多次构建）。
+    const CACHE_TTL_SECS: i64 = 24 * 60 * 60;
+    const KEY_PUBLISHED_AT: &str = "ffmpeg_remote_published_at";
+    const KEY_FETCHED_AT: &str = "ffmpeg_remote_fetched_at";
 
-    if !resp.status().is_success() {
-        return serde_json::json!({
+    let no_update = || {
+        serde_json::json!({
             "has_update": false,
             "local_version": local_version,
             "latest_version": Option::<String>::None,
-            "url": Option::<String>::None,
-            "error": format!("gyan.dev 返回 HTTP {}", resp.status().as_u16()),
-        });
-    }
+            "url": "https://github.com/BtbN/FFmpeg-Builds/releases/tag/latest",
+        })
+    };
 
-    let latest = match resp.text().await {
-        Ok(t) => t.trim().to_string(),
-        Err(e) => {
-            return serde_json::json!({
-                "has_update": false,
-                "local_version": local_version,
-                "latest_version": Option::<String>::None,
-                "url": Option::<String>::None,
-                "error": format!("读取响应失败: {}", e),
-            });
+    // 跨进程缓存命中（24h 内）→ 复用远端时间，不再请求网络。
+    // force_refresh 时忽略缓存直接联网刷新。
+    let cached_remote = if !force_refresh {
+        load_ffmpeg_remote_cache(KEY_PUBLISHED_AT, KEY_FETCHED_AT, CACHE_TTL_SECS)
+    } else {
+        tracing::info!("[XDownload] check ffmpeg: force_refresh — bypassing 24h cache");
+        None
+    };
+
+    // 缓存是否来自网络（非命中）：网络来源才在解析成功后回写缓存。
+    let from_network = cached_remote.is_none();
+
+    let remote_at = match cached_remote {
+        Some(ts) => {
+            tracing::info!(
+                "[XDownload] check ffmpeg: 命中 24h 缓存，不联网 (remote_published_at={})",
+                ts
+            );
+            ts
+        }
+        None => {
+            // 数据源 1：GitHub API。
+            let mut remote_ts: Option<String> = None;
+            if let Ok(client) = update_client() {
+                if let Some(release) =
+                    fetch_latest_release_api(&client, "BtbN", "FFmpeg-Builds").await
+                {
+                    if let Some(published) = release.published_at {
+                        remote_ts = Some(published);
+                    }
+                }
+            }
+            // 数据源 2：Web（API 限流/失败时兜底）——解析 releases 页面 HTML。
+            if remote_ts.is_none() {
+                remote_ts = fetch_ffmpeg_latest_published_via_web().await;
+            }
+            let Some(ts) = remote_ts else {
+                return no_update();
+            };
+            ts
         }
     };
 
-    let has_update = cmp_semver(&latest, &local_version) > 0;
+    // 解析失败说明远端返回的不是合法时间戳（API/Web 数据异常）——不落盘坏值，
+    // 避免污染 24h 缓存；直接返回无更新，下次检查重新请求。
+    let Ok(remote) = chrono::DateTime::parse_from_rfc3339(&remote_at) else {
+        tracing::warn!(
+            "[XDownload] check ffmpeg: 远端发布时间格式异常，不更新缓存: {}",
+            remote_at
+        );
+        return no_update();
+    };
 
+    // 仅在拿到合法时间戳后落盘缓存（fetched_at 为当前时刻）。
+    // 网络来源（缓存未命中或强制刷新）才写缓存；缓存命中路径不重复写。
+    if from_network {
+        save_ffmpeg_remote_cache(KEY_PUBLISHED_AT, KEY_FETCHED_AT, &remote_at);
+    }
+    let date = remote.format("%Y-%m-%d").to_string();
+    let remote: std::time::SystemTime = remote.with_timezone(&chrono::Utc).into();
+
+    // 本地基准：ffmpeg.exe 文件 mtime（下载/解压时刻），作为"本地构建时间"。
+    let local = crate::utils::process::find_ffmpeg()
+        .metadata()
+        .ok()
+        .and_then(|m| m.modified().ok());
+    let has_update = matches!(local, Some(local_time) if remote > local_time);
+
+    // 仅在有更新时返回发布时间日期：前端 `latest !== local` 才渲染琥珀色
+    // "最新版本"，无更新时置空以免与绿色"已是最新"状态矛盾。
+    let latest_version = has_update.then(|| date);
     serde_json::json!({
         "has_update": has_update,
         "local_version": local_version,
-        "latest_version": latest,
-        "url": "https://www.gyan.dev/ffmpeg/builds/",
+        "latest_version": latest_version,
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/tag/latest",
     })
+}
+
+/// 读取 ffmpeg 远端发布时间跨进程缓存（`config/data.db` 的 `config` 表）。
+/// 命中条件：published_at 与 fetched_at 都存在，且 `now - fetched_at < ttl`。
+fn load_ffmpeg_remote_cache(
+    key_published: &str,
+    key_fetched: &str,
+    ttl_secs: i64,
+) -> Option<String> {
+    let conn = crate::services::db::open().ok()?;
+    let read = |key: &str| -> Option<String> {
+        conn.query_row(
+            "SELECT value FROM config WHERE key = ?1",
+            rusqlite::params![key],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+    };
+    let fetched_at: i64 = read(key_fetched)?.parse().ok()?;
+    let published_at = read(key_published)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    if now - fetched_at < ttl_secs {
+        Some(published_at)
+    } else {
+        None
+    }
+}
+
+/// 持久化 ffmpeg 远端发布时间缓存（`config/data.db` 的 `config` 表）。
+/// 幂等 upsert；DB 失败时静默忽略（仅失去缓存，下次检查重新请求）。
+fn save_ffmpeg_remote_cache(key_published: &str, key_fetched: &str, published_at: &str) {
+    let Ok(conn) = crate::services::db::open() else {
+        return;
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    for (key, value) in [(key_fetched, now.to_string()), (key_published, published_at.to_string())] {
+        let _ = conn.execute(
+            "INSERT INTO config (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            rusqlite::params![key, value],
+        );
+    }
+}
+
+/// Web fallback：请求 BtbN releases/tag/latest 页面，从 HTML 中提取
+/// `<relative-time datetime="...">`（GitHub SSR 自带）作为最新构建发布时间。
+/// API 限流/不可达时兜底，同样语义（时间对比），无 API 限流。
+async fn fetch_ffmpeg_latest_published_via_web() -> Option<String> {
+    let url = "https://github.com/BtbN/FFmpeg-Builds/releases/tag/latest";
+    tracing::info!("[XDownload] ffmpeg: API 不可用，尝试 Web fallback 获取发布时间 ({url})");
+    let client = match direct_update_client() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("[XDownload] ffmpeg: Web fallback 构建请求客户端失败: {e}");
+            return None;
+        }
+    };
+    let response = match client.get(url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("[XDownload] ffmpeg: Web fallback 请求失败: {e}");
+            return None;
+        }
+    };
+    if !response.status().is_success() {
+        tracing::warn!(
+            "[XDownload] ffmpeg: Web fallback 返回 HTTP {}",
+            response.status().as_u16()
+        );
+        return None;
+    }
+    let html = match response.text().await {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::warn!("[XDownload] ffmpeg: Web fallback 读取响应失败: {e}");
+            return None;
+        }
+    };
+    // 提取第一个 `datetime="..."`（<relative-time datetime="2026-08-16T09:30:00Z">）。
+    let marker = "datetime=\"";
+    let ts = html
+        .find(marker)
+        .map(|start| {
+            let rest = &html[start + marker.len()..];
+            rest[..rest.find('"').unwrap_or(0)].to_string()
+        })
+        .filter(|s| !s.is_empty());
+    match &ts {
+        Some(t) => tracing::info!(
+            "[XDownload] ffmpeg: Web fallback 获取到发布时间 {}",
+            t
+        ),
+        None => tracing::warn!(
+            "[XDownload] ffmpeg: Web fallback 未在页面中找到 <relative-time> 时间戳"
+        ),
+    }
+    ts
 }
 
 /// Public re-export for bootstrap command
@@ -356,15 +511,34 @@ pub fn parse_ffmpeg_version_export(line: &str) -> Option<String> {
     parse_ffmpeg_version(line)
 }
 
-/// Extract "7.1" from "ffmpeg version 7.1-essentials_build-www.gyan.dev Copyright ..."
+/// Extract a displayable version from an `ffmpeg -version` first line.
+///
+/// - 常规 release 构建（如 gyan.dev）：`ffmpeg version 7.1-essentials_build-...` → `7.1`
+/// - BtbN master 每日构建：`ffmpeg version N-118075-g2424a3f01c-20250101 ...` → `N-118075`
 fn parse_ffmpeg_version(line: &str) -> Option<String> {
     let idx = line.find("ffmpeg version ")?;
     let after = &line[idx + 15..]; // skip "ffmpeg version "
-    let version = after.split(['-', ' ', '\t', '\r', '\n']).next()?;
-    if version.is_empty() || !version.starts_with(|c: char| c.is_ascii_digit()) {
+    // 先用空白切出第一个 token（`-` 不能用于切分：BtbN master 的
+    // `N-118075-g...` 与 release 的 `7.1-essentials-...` 都含 `-`）。
+    let token = after.split([' ', '\t', '\r', '\n']).next()?;
+    if token.is_empty() {
         return None;
     }
-    Some(version.to_string())
+    // 常规 release 构建以数字开头（如 "7.1-essentials_build-..."），取 `-` 前缀。
+    if token.starts_with(|c: char| c.is_ascii_digit()) {
+        return Some(token.split('-').next()?.to_string());
+    }
+    // BtbN master 构建：`N-118075-g2424a3f01c-20250101` → `N-118075`。
+    if let Some(rest) = token.strip_prefix("N-") {
+        let git: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        if !git.is_empty() {
+            return Some(format!("N-{git}"));
+        }
+    }
+    None
 }
 
 /// Semver-style comparison: returns positive if a > b, negative if a < b, 0 if equal.
@@ -427,4 +601,52 @@ pub fn cleanup_updater_temp() -> Result<(), String> {
     }
     tracing::info!("cleanup_updater_temp: removed {} temp entrie(s)", removed);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_ffmpeg_version() {
+        // 常规 release 构建（gyan.dev）→ 数字版本。
+        assert_eq!(
+            parse_ffmpeg_version(
+                "ffmpeg version 7.1-essentials_build-www.gyan.dev Copyright (c) 2000-2024"
+            )
+            .as_deref(),
+            Some("7.1")
+        );
+        // BtbN master 每日构建 → N-<git号>。
+        assert_eq!(
+            parse_ffmpeg_version(
+                "ffmpeg version N-118075-g2424a3f01c-20250101 Copyright (c) 2000-2025 the FFmpeg developers"
+            )
+            .as_deref(),
+            Some("N-118075")
+        );
+        // BtbN release 分支（n8.1）→ 数字版本。
+        assert_eq!(
+            parse_ffmpeg_version(
+                "ffmpeg version 8.1 Copyright (c) 2000-2025 the FFmpeg developers"
+            )
+            .as_deref(),
+            Some("8.1")
+        );
+        // 无法识别 → None。
+        assert_eq!(parse_ffmpeg_version("no version here"), None);
+        assert_eq!(
+            parse_ffmpeg_version("ffmpeg version N- Copyright (c) 2000-2025").as_deref(),
+            None
+        );
+    }
+
+    #[test]
+    fn test_cmp_semver() {
+        assert_eq!(cmp_semver("7.1", "7.0"), 1);
+        assert_eq!(cmp_semver("8.1", "7.1"), 1);
+        assert_eq!(cmp_semver("7.1", "7.1"), 0);
+        assert_eq!(cmp_semver("7.0", "7.1"), -1);
+        assert_eq!(cmp_semver("N-118075", "8.1"), -1);
+    }
 }

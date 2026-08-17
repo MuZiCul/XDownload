@@ -1919,6 +1919,7 @@ mod tests {
                 title: None,
                 thumbnail: None,
                 url: None,
+                handle: None,
                 uploader: None,
                 duration: 0,
                 view_count: 0,

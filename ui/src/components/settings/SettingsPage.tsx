@@ -75,7 +75,11 @@ export default function SettingsPage() {
             browser={settings.cookies_from_browser}
             onChange={(b) => setSettings((s) => ({ ...s, cookies_from_browser: b }))}
           />
-          <ToolsSetting />
+          <ToolsSetting
+            key={`tools-${applyKey}`}
+            useProxy={settings.tools_use_proxy ?? false}
+            onChange={(v) => setSettings((s) => ({ ...s, tools_use_proxy: v }))}
+          />
 
           <MultiTaskSetting
             key={`mt-${applyKey}`}

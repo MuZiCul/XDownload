@@ -366,6 +366,11 @@ export async function setPrivacyModePersist(enabled: boolean): Promise<void> {
   return invoke("set_privacy_mode", { enabled });
 }
 
+/** 即时持久化「工具下载默认走代理」开关状态。 */
+export async function setToolsUseProxy(enabled: boolean): Promise<void> {
+  return invoke("set_tools_use_proxy", { enabled });
+}
+
 /** 退出应用。saveProgress=true 时先强制保存队列进度到 queue.json。 */
 export async function quitApp(saveProgress?: boolean): Promise<void> {
   return invoke("quit_app", { saveProgress: saveProgress ?? false });
@@ -420,8 +425,9 @@ export interface FfmpegUpdateResult {
   error?: string;
 }
 
-export async function checkFfmpegUpdate(): Promise<FfmpegUpdateResult> {
-  return invoke("check_ffmpeg_update");
+/** 检测 ffmpeg 更新。`forceRefresh=true` 绕过 24h 缓存强制请求 GitHub（用户手动点「检查更新」时用）。 */
+export async function checkFfmpegUpdate(forceRefresh?: boolean): Promise<FfmpegUpdateResult> {
+  return invoke("check_ffmpeg_update", { forceRefresh });
 }
 
 /** 检测 GitHub 可达性（更新下载前预检）。 */

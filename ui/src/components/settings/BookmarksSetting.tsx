@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 import { listBookmarks, loadSettings } from "../../lib/bindings";
 import {
   enqueueDownloadGlobal,
@@ -48,6 +50,34 @@ export default function BookmarksSetting() {
   };
 
   const closeList = () => setListOpen(false);
+
+  // 「查看书签」弹窗打开期间实时刷新下载状态：书签视频下载完成后后端历史
+  // 已写入，但弹窗打开时是一次快照——监听 download-finished 自动 reload，
+  // 避免用户要等重启/重开弹窗才能看到「已下载」标记。
+  useEffect(() => {
+    if (!listOpen) return;
+    let unlisten: UnlistenFn | null = null;
+    let cancelled = false;
+    (async () => {
+      try {
+        const un = await listen("download-finished", () => {
+          if (!cancelled) loadList();
+        });
+        // listen 是异步的：若弹窗已在注册完成前被关闭，立即注销避免监听器泄漏。
+        if (cancelled) {
+          un();
+          return;
+        }
+        unlisten = un;
+      } catch {
+        // 监听失败不阻塞弹窗使用（下次打开/手动重进仍会刷新）。
+      }
+    })();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [listOpen]);
 
   /** 从书签目录下载/重新下载一个视频（复用批量下载的配置与入队逻辑）。 */
   const handleListDownload = async (item: BookmarksListItem) => {

@@ -13,12 +13,15 @@ use tauri::{AppHandle, Emitter};
 #[tauri::command]
 pub async fn validate_cookies(app: AppHandle, browser: String) -> Result<serde_json::Value, String> {
     if browser.is_empty() || browser == "none" {
+        tracing::warn!("[XDownload] validate_cookies: no browser selected");
         return Err("No browser selected".to_string());
     }
+    tracing::info!("[XDownload] validate_cookies start: browser={}", browser);
 
     // Check yt-dlp exists before attempting cookie extraction
     let ytdlp_path = crate::utils::process::find_ytdlp();
     if !ytdlp_path.exists() {
+        tracing::warn!("[XDownload] validate_cookies: yt-dlp not installed");
         return Err("yt-dlp 未安装，请先在设置页面的 Tools 中下载 yt-dlp".to_string());
     }
 
@@ -30,6 +33,12 @@ pub async fn validate_cookies(app: AppHandle, browser: String) -> Result<serde_j
             t
         }
         Err((msg, code)) => {
+            tracing::warn!(
+                "[XDownload] validate_cookies: cookie extraction failed browser={} error_code={} msg={}",
+                browser,
+                code,
+                msg
+            );
             emit_fail(&app, &browser, code);
             return Ok(serde_json::json!({
                 "success": false,
@@ -44,6 +53,11 @@ pub async fn validate_cookies(app: AppHandle, browser: String) -> Result<serde_j
     match verify_x_auth_token(&auth_token).await {
         Ok(username) => {
             emit_step(&app, 3, &browser);
+            tracing::info!(
+                "[XDownload] validate_cookies success: browser={} username={}",
+                browser,
+                username
+            );
             Ok(serde_json::json!({
                 "success": true,
                 "message": username,
@@ -53,6 +67,12 @@ pub async fn validate_cookies(app: AppHandle, browser: String) -> Result<serde_j
             }))
         }
         Err((msg, code)) => {
+            tracing::warn!(
+                "[XDownload] validate_cookies: token verify failed browser={} error_code={} msg={}",
+                browser,
+                code,
+                msg
+            );
             emit_fail(&app, &browser, code);
             Ok(serde_json::json!({
                 "success": false,
@@ -133,7 +153,13 @@ async fn dump_and_extract_auth_token(
             // cookies may still have been written to the file — check it.
             if cookie_file.exists() {
                 match parse_auth_token(&cookie_file) {
-                    Ok(token) => return Ok(token),
+                    Ok(token) => {
+                        tracing::info!(
+                            "[XDownload] dump cookies: browser={} auth_token extracted",
+                            browser
+                        );
+                        return Ok(token);
+                    }
                     Err(_) => {
                         // Fall through to error handling
                     }
@@ -143,6 +169,11 @@ async fn dump_and_extract_auth_token(
             // No cookie file or no auth_token found
             let stderr = r.stderr_text();
             let lower = stderr.to_lowercase();
+            tracing::warn!(
+                "[XDownload] dump cookies: no auth_token found browser={} stderr={}",
+                browser,
+                stderr.lines().last().unwrap_or("").trim()
+            );
             if lower.contains("could not copy")
                 || (lower.contains("copy") && lower.contains("database"))
             {
@@ -166,6 +197,11 @@ async fn dump_and_extract_auth_token(
         }
         Err(e) => {
             let msg = e.to_string();
+            tracing::warn!(
+                "[XDownload] dump cookies: yt-dlp failed browser={} error={}",
+                browser,
+                msg
+            );
             if msg.contains("timeout") {
                 Err((format!("{} 验证超时", browser), "timeout"))
             } else {
@@ -235,9 +271,17 @@ async fn verify_x_auth_token(auth_token: &str) -> Result<String, (String, &'stat
         })?;
 
     let status = resp.status();
+    tracing::info!(
+        "[XDownload] verify auth_token: x.com/home status={}",
+        status.as_u16()
+    );
 
     // If x.com redirects us, the cookie is invalid
     if status.is_redirection() {
+        tracing::warn!(
+            "[XDownload] verify auth_token: redirect ({}), token invalid/expired",
+            status.as_u16()
+        );
         return Err((
             "auth_token 已过期或无效，请在浏览器中重新登录 x.com".to_string(),
             "token_invalid",
@@ -245,6 +289,10 @@ async fn verify_x_auth_token(auth_token: &str) -> Result<String, (String, &'stat
     }
 
     if !status.is_success() {
+        tracing::warn!(
+            "[XDownload] verify auth_token: x.com error status={}",
+            status.as_u16()
+        );
         return Err((
             format!("x.com 返回错误 (HTTP {})", status.as_u16()),
             "token_invalid",

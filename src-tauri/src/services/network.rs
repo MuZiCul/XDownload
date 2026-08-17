@@ -53,8 +53,18 @@ impl NetworkDetect {
     pub async fn is_overseas() -> bool {
         let client = Self::direct_client(QUICK_TIMEOUT);
         match client.head("https://www.google.com").send().await {
-            Ok(resp) => resp.status().as_u16() > 0,
-            Err(_) => false,
+            Ok(resp) => {
+                let ok = resp.status().as_u16() > 0;
+                tracing::info!(
+                    "[XDownload] network is_overseas: direct google reachable={}",
+                    ok
+                );
+                ok
+            }
+            Err(e) => {
+                tracing::debug!("[XDownload] network is_overseas: direct google failed: {e}");
+                false
+            }
         }
     }
 
@@ -66,6 +76,7 @@ impl NetworkDetect {
             let client = Self::direct_client(QUICK_TIMEOUT);
             if let Ok(resp) = client.head("https://github.com").send().await {
                 if resp.status().as_u16() > 0 {
+                    tracing::info!("[XDownload] network is_github_accessible: direct OK");
                     return true;
                 }
             }
@@ -73,8 +84,18 @@ impl NetworkDetect {
         // Fall back to the configured proxy (if any).
         let client = Self::proxy_client(FULL_TIMEOUT);
         match client.head("https://github.com").send().await {
-            Ok(resp) => resp.status().as_u16() > 0,
-            Err(_) => false,
+            Ok(resp) => {
+                let ok = resp.status().as_u16() > 0;
+                tracing::info!(
+                    "[XDownload] network is_github_accessible: direct failed, proxy ok={}",
+                    ok
+                );
+                ok
+            }
+            Err(e) => {
+                tracing::warn!("[XDownload] network is_github_accessible: direct & proxy failed: {e}");
+                false
+            }
         }
     }
 
@@ -83,8 +104,18 @@ impl NetworkDetect {
     pub async fn is_google_accessible() -> bool {
         let client = Self::proxy_client(QUICK_TIMEOUT);
         match client.head("https://www.google.com").send().await {
-            Ok(resp) => resp.status().as_u16() > 0,
-            Err(_) => false,
+            Ok(resp) => {
+                let ok = resp.status().as_u16() > 0;
+                tracing::info!(
+                    "[XDownload] network is_google_accessible: reachable={}",
+                    ok
+                );
+                ok
+            }
+            Err(e) => {
+                tracing::warn!("[XDownload] network is_google_accessible: failed: {e}");
+                false
+            }
         }
     }
 
@@ -98,6 +129,9 @@ impl NetworkDetect {
             let client = Self::direct_client(QUICK_TIMEOUT);
             if let Ok(resp) = client.head("https://github.com").send().await {
                 if resp.status().as_u16() > 0 {
+                    tracing::info!(
+                        "[XDownload] network check_github_reachability: direct ok"
+                    );
                     return GitHubReachability {
                         direct_ok: true,
                         proxy_configured: false,
@@ -114,6 +148,9 @@ impl NetworkDetect {
             let client = Self::proxy_client(FULL_TIMEOUT);
             if let Ok(resp) = client.head("https://github.com").send().await {
                 if resp.status().as_u16() > 0 {
+                    tracing::info!(
+                        "[XDownload] network check_github_reachability: direct failed, proxy ok"
+                    );
                     return GitHubReachability {
                         direct_ok: false,
                         proxy_configured: true,
@@ -124,6 +161,9 @@ impl NetworkDetect {
             }
         }
 
+        tracing::warn!(
+            "[XDownload] network check_github_reachability: unreachable (direct + proxy failed)"
+        );
         GitHubReachability {
             direct_ok: false,
             proxy_configured,
@@ -137,8 +177,18 @@ impl NetworkDetect {
     pub async fn is_x_accessible() -> bool {
         let client = Self::proxy_client(FULL_TIMEOUT);
         match client.head("https://x.com").send().await {
-            Ok(resp) => resp.status().as_u16() > 0,
-            Err(_) => false,
+            Ok(resp) => {
+                let ok = resp.status().as_u16() > 0;
+                tracing::info!(
+                    "[XDownload] network is_x_accessible: reachable={}",
+                    ok
+                );
+                ok
+            }
+            Err(e) => {
+                tracing::warn!("[XDownload] network is_x_accessible: failed: {e}");
+                false
+            }
         }
     }
 
