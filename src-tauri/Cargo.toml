@@ -1,6 +1,6 @@
 [package]
 name = "xdownload"
-version = "2.9.5"
+version = "2.9.6"
 edition = "2021"
 description = "X/Twitter video downloader based on yt-dlp, rewritten in Rust"
 authors = ["MuZiCul"]
@@ -59,6 +59,7 @@ windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_System_Memory",
     "Win32_System_Console",
+    "Win32_System_Power",
 ] }
 
 [features]

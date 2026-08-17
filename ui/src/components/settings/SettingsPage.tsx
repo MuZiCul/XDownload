@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   loadSettings,
+  getDownloadDir,
 } from "../../lib/bindings";
 import type { AppSettings } from "../../lib/types";
 import DirSetting from "./DirSetting";
@@ -18,6 +19,9 @@ export default function SettingsPage() {
   const { t } = useI18n();
   const [settings, setSettings] = useState<AppSettings>({});
   const [loaded, setLoaded] = useState(false);
+  // 展示用的下载目录（绝对路径）：来自后端 get_download_dir（空/相对配置
+  // 会归一化为 <root>/downloads 的绝对路径）。仅显示层，配置值本身不改写。
+  const [displayDir, setDisplayDir] = useState("");
   // Bump on every "应用配置" to force children with internal state
   // (ProxySetting, CookiesSetting) to unmount+remount from fresh props.
   const [applyKey, setApplyKey] = useState(0);
@@ -30,9 +34,10 @@ export default function SettingsPage() {
   }, []);
 
   useEffect(() => {
-    loadSettings()
-      .then((s) => {
+    Promise.all([loadSettings(), getDownloadDir()])
+      .then(([s, dir]) => {
         setSettings(s);
+        setDisplayDir(dir);
         setLoaded(true);
       })
       .catch(() => setLoaded(true));
@@ -50,8 +55,11 @@ export default function SettingsPage() {
 
           <DirSetting
             key={`dir-${applyKey}`}
-            dir={settings.download_dir ?? "downloads"}
-            onChange={(d) => setSettings((s) => ({ ...s, download_dir: d }))}
+            dir={displayDir || settings.download_dir || "downloads"}
+            onChange={(d) => {
+              setSettings((s) => ({ ...s, download_dir: d }));
+              setDisplayDir(d);
+            }}
           />
           <ProxySetting
             key={`proxy-${applyKey}`}
@@ -74,6 +82,7 @@ export default function SettingsPage() {
             concurrency={settings.concurrency ?? 1}
             retryCount={settings.retry_count ?? 0}
             queuePersist={settings.queue_persist ?? false}
+            keepAwake={settings.keep_awake ?? false}
             rateLimit={settings.download_rate_limit ?? ""}
             onChange={(patch) =>
               setSettings((s) => ({ ...s, ...patch }))

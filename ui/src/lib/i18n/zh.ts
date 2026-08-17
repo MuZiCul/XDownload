@@ -165,12 +165,11 @@ export const zh: Record<string, string> = {
   "common.close": "关闭",
 
   // ===== Directory setting =====
-  "dir.title": "视频保存位置",
-  "dir.browse": "浏览",
-  "dir.open": "打开",
+  "dir.save": "保存",
+  "dir.edit": "修改保存路径",
+  "dir.open": "打开下载目录",
+  "dir.hint": "选择保存下载视频的文件夹",
   "dir.saved": "视频保存位置已保存",
-  "dir.hint":
-    "设置视频下载的保存目录：\n· 相对路径：保存在软件根目录下\n· 绝对路径：也可直接指定完整路径",
 
   // ===== Proxy setting =====
   "proxy.title": "代理",
@@ -291,12 +290,13 @@ export const zh: Record<string, string> = {
   "multitask.retry": "失败重试次数",
   "multitask.persist": "队列持久化",
   "multitask.rateLimit": "下载限速",
+  "multitask.keepAwake": "下载时防休眠",
   "multitask.unlimited": "不限速",
   "multitask.custom": "自定义",
   "multitask.invalidRate": "限速格式无效，请输入如 1M / 2.5M / 500K",
   "multitask.saved": "多任务设置已保存",
   "multitask.hint":
-    "并发下载数：同时下载的任务数（1-3）。\n失败重试次数：0 表示不重试。\n队列持久化：开启后重启应用会恢复未完成任务。\n下载限速：每个任务的限速值（1M~100M），格式如 1M / 500K。",
+    "并发下载数：同时下载的任务数（1-3）。\n失败重试次数：0 表示不重试。\n队列持久化：开启后重启应用会恢复未完成任务。\n下载限速：每个任务的限速值（1M~100M），格式如 1M / 500K。\n下载时防休眠：开启后队列有任务时阻止系统休眠，任务结束自动恢复。",
 
   // ===== Bookmarks setting =====
   "bookmarks.title": "书签管理",

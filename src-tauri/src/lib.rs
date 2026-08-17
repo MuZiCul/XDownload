@@ -351,6 +351,9 @@ pub fn run() {
             // Restore unfinished multi-task downloads when the persist setting
             // is enabled (re-enqueues and starts draining).
             queue.restore_if_enabled();
+            // 启动时同步一次防休眠状态：无任务（或队列文件不存在/为空）时
+            // 确保恢复系统休眠，即使开关开启；有任务且开关开启时启用。
+            queue.sync_keep_awake();
 
             // 书签同步改为手动触发（设置页「同步书签」按钮 → 预览弹窗 →
             // 用户确认后才入队），不再有后台轮询任务。

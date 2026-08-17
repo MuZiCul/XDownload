@@ -365,6 +365,9 @@ impl DownloadQueue {
             // the tokio runtime context — tokio::spawn would panic there.
             tauri::async_runtime::spawn(async move { queue.run_worker(task).await });
         }
+        // 同步「下载时防休眠」：pump 覆盖了入队/启动/任务完成/取消等几乎所有
+        // 状态变化点，据此启用或关闭防休眠（首个任务开始 / 全部任务结束）。
+        self.sync_keep_awake();
     }
 
     /// Start draining the queue (used by batch mode after the user presses
@@ -377,6 +380,8 @@ impl DownloadQueue {
     /// Pause the queue: no new tasks start, currently running tasks finish.
     pub fn pause(&self) {
         self.state.lock().unwrap().paused = true;
+        // 队列级暂停后可能无下载进行（running 空 + queued 残留）→ 同步防休眠。
+        self.sync_keep_awake();
     }
 
     /// Resume a paused queue.
@@ -676,6 +681,8 @@ impl DownloadQueue {
         st.paused_tasks.clear();
         st.paused_slots.clear();
         self.persist();
+        // 清空后可能无活跃任务 → 同步防休眠状态。
+        self.sync_keep_awake();
     }
 
     /// Move a queued OR paused task to a new position within its own list.
@@ -747,6 +754,8 @@ impl DownloadQueue {
             }
             self.persist();
         }
+        // 暂停单任务可能清空活跃队列 → 同步防休眠状态。
+        self.sync_keep_awake();
     }
 
     /// Resume a paused task: move it back to the queue with `resume = true`.
@@ -788,6 +797,8 @@ impl DownloadQueue {
             self.downloader.cleanup_task_cache(&cfg);
         }
         self.persist();
+        // 全部暂停后无活跃任务 → 同步防休眠状态。
+        self.sync_keep_awake();
     }
 
     /// Resume every paused task, restoring exactly the pre-pause order.
@@ -914,6 +925,28 @@ impl DownloadQueue {
     pub fn has_active(&self) -> bool {
         let st = self.state.lock().unwrap();
         !st.queued.is_empty() || !st.running.is_empty() || !st.paused_tasks.is_empty()
+    }
+
+    /// 同步「下载时防休眠」状态（Windows）：开关开启且队列有活跃任务
+    /// （queued 等待中 / running 下载中）时启用系统防休眠，否则关闭；
+    /// 开关关闭时任何状态都不触发。paused 任务不算活跃（暂停时无下载在进行）。
+    /// 幂等——keep_awake 模块内部用 AtomicBool 防止重复调用系统 API。
+    pub(crate) fn sync_keep_awake(&self) {
+        let enabled = ConfigManager::load().keep_awake.unwrap_or(false);
+        if !enabled {
+            crate::utils::keep_awake::disable();
+            return;
+        }
+        let st = self.state.lock().unwrap();
+        // 活跃 = 有下载在进行或即将进行。队列级暂停（st.paused）时 queued
+        // 残留任务但不会启动（pump 被 paused 拦住），不算活跃，应允许休眠。
+        let active = !st.running.is_empty() || (!st.paused && !st.queued.is_empty());
+        drop(st);
+        if active {
+            crate::utils::keep_awake::enable();
+        } else {
+            crate::utils::keep_awake::disable();
+        }
     }
 
     fn persist_now(&self) {

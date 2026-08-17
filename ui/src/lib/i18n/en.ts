@@ -166,12 +166,11 @@ export const en: Record<string, string> = {
   "common.close": "Close",
 
   // ===== Directory setting =====
-  "dir.title": "Download Directory",
-  "dir.browse": "Browse",
-  "dir.open": "Open",
+  "dir.save": "Save",
+  "dir.edit": "Change save folder",
+  "dir.open": "Open download folder",
+  "dir.hint": "Choose the folder where downloaded videos are saved",
   "dir.saved": "Download directory saved",
-  "dir.hint":
-    "Directory where downloaded videos are saved:\n· Relative paths: stored under the app root\n· Absolute paths: supported as well",
 
   // ===== Proxy setting =====
   "proxy.title": "Proxy",
@@ -298,12 +297,13 @@ export const en: Record<string, string> = {
   "multitask.retry": "Retry count",
   "multitask.persist": "Persist queue",
   "multitask.rateLimit": "Rate limit",
+  "multitask.keepAwake": "Prevent sleep while downloading",
   "multitask.unlimited": "Unlimited",
   "multitask.custom": "Custom",
   "multitask.invalidRate": "Invalid rate limit. Use e.g. 1M / 2.5M / 500K",
   "multitask.saved": "Multi-task settings saved",
   "multitask.hint":
-    "Concurrent downloads: tasks running at once (1-3).\nRetry count: 0 = no retry.\nPersist queue: restores unfinished tasks on next launch.\nRate limit: per-task download speed (1M~100M), e.g. 1M / 500K.",
+    "Concurrent downloads: tasks running at once (1-3).\nRetry count: 0 = no retry.\nPersist queue: restores unfinished tasks on next launch.\nRate limit: per-task download speed (1M~100M), e.g. 1M / 500K.\nPrevent sleep: keeps the system awake while tasks are downloading, restored automatically when done.",
 
   // ===== Bookmarks setting =====
   "bookmarks.title": "Bookmarks",

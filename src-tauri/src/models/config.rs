@@ -144,4 +144,9 @@ pub struct AppSettings {
     /// None = 不传参（yt-dlp 默认 10）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hls_fragment_retries: Option<u8>,
+    /// 下载时防止系统休眠（Windows SetThreadExecutionState）。
+    /// None = 关闭（旧配置兼容）。开启后：队列有活跃任务时阻止系统休眠，
+    /// 全部任务结束/暂停后恢复；关闭时任何状态都不触发。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keep_awake: Option<bool>,
 }
