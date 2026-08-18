@@ -55,6 +55,7 @@ export interface DownloadTask {
   status:
     | "queued"
     | "downloading"
+    | "moving"
     | "paused"
     | "completed"
     | "failed"

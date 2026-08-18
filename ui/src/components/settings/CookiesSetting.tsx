@@ -6,9 +6,9 @@ import {
   saveCookieSource,
   loadCookieSource,
   checkYtdlp,
+  getCookiesUsername,
 } from "../../lib/bindings";
 import { toast } from "sonner";
-import { Save } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { useI18n } from "../../lib/i18n";
 import SectionTitle from "./SectionTitle";
@@ -40,7 +40,6 @@ export default function CookiesSetting({ browser, onChange }: Props) {
   const { t } = useI18n();
   const [selected, setSelected] = useState(browser || "none");
   const [validating, setValidating] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [loadedBrowser, setLoadedBrowser] = useState<string | null>(null);
   const [verified, setVerified] = useState(false);
   const [verifiedUsername, setVerifiedUsername] = useState<string | null>(null);
@@ -135,6 +134,19 @@ export default function CookiesSetting({ browser, onChange }: Props) {
         );
         setVerified(true);
         setVerifiedUsername(result.username ?? null);
+        // 验证通过即自动保存来源（与已保存来源相同则跳过）。
+        if (selected !== loadedBrowser) {
+          await saveCookieSource(selected);
+          setLoadedBrowser(selected);
+          setLoadedUsername(result.username ?? null);
+          onChange(selected);
+          toast.success(t("cookies.saved", { browser: selected }));
+          // Notify other pages (e.g. DownloadPage) to reload the latest config.
+          window.dispatchEvent(new CustomEvent("config-applied"));
+        }
+        // 验证成功 → 触发一次静默获取用户名，固化「cookies 指纹 ↔ 用户名」缓存，
+        // 供书签管理等处展示；失败静默（下次启动书签页仍会尝试）。
+        getCookiesUsername().catch(() => {});
       } else {
         const code = result.error_code ?? "unknown";
         toast.error(
@@ -152,25 +164,6 @@ export default function CookiesSetting({ browser, onChange }: Props) {
     } finally {
       (await unlisten)();
       setValidating(false);
-    }
-  };
-
-  const handleSave = async () => {
-    if (selected === "none" || !verified || selected === loadedBrowser) return;
-    setSaving(true);
-    try {
-      await saveCookieSource(selected);
-      setLoadedBrowser(selected);
-      setLoadedUsername(verifiedUsername); // carry verified username to loaded state
-      onChange(selected);
-      toast.success(t("cookies.saved", { browser: selected }));
-
-      // Notify other pages (e.g. DownloadPage) to reload the latest config.
-      window.dispatchEvent(new CustomEvent("config-applied"));
-    } catch (err: any) {
-      toast.error(t("common.saveFail", { err }));
-    } finally {
-      setSaving(false);
     }
   };
 
@@ -233,14 +226,6 @@ export default function CookiesSetting({ browser, onChange }: Props) {
         </select>
         <button className="btn" onClick={handleValidate} disabled={selected === "none" || validating}>
           {validating ? t("cookies.validatingBtn") : t("cookies.validate")}
-        </button>
-        <button
-          className="btn flex items-center gap-1"
-          onClick={handleSave}
-          disabled={!verified || selected === loadedBrowser || saving}
-        >
-          <Save size={13} />
-          {saving ? t("common.saving") : t("cookies.saveAndApply")}
         </button>
       </div>
     </div>

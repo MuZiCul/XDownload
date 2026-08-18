@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import { listBookmarks, loadSettings } from "../../lib/bindings";
+import { listBookmarks, loadSettings, getCookiesUsername } from "../../lib/bindings";
 import {
   enqueueDownloadGlobal,
   buildBatchConfig,
@@ -9,7 +9,7 @@ import {
 import type { BookmarksListItem } from "../../lib/types";
 import { TaskSource } from "../../lib/types";
 import { toast } from "sonner";
-import { RefreshCw, Download, History, X } from "lucide-react";
+import { RefreshCw, Download, History, X, UserRound } from "lucide-react";
 import { useI18n } from "../../lib/i18n";
 import { runBookmarkSync, useBookmarkSync } from "../../lib/bookmarkSync";
 import SectionTitle from "./SectionTitle";
@@ -32,6 +32,50 @@ export default function BookmarksSetting() {
   const [listOpen, setListOpen] = useState(false);
   const [listLoading, setListLoading] = useState(false);
   const [bookmarks, setBookmarks] = useState<BookmarksListItem[]>([]);
+  // 当前 cookie 来源对应的 x.com 用户名（静默获取，失败为 null 不阻塞 UI）。
+  const [cookiesUsername, setCookiesUsername] = useState<string | null>(null);
+  // 手动「获取用户」进行中（后端会重试 3 次、间隔 5s）。
+  const [gettingUser, setGettingUser] = useState(false);
+  // 后端 verify 全失败时固化的占位用户名（表示当前 cookies 无有效用户）。
+  const INVALID_USER = "@None";
+
+  // 挂载 + config-applied（cookies 来源可能变化）时静默获取用户名。
+  useEffect(() => {
+    let cancelled = false;
+    getCookiesUsername().then((name) => {
+      if (!cancelled) setCookiesUsername(name);
+    }).catch(() => {});
+    const onConfigApplied = () => {
+      getCookiesUsername().then((name) => {
+        if (!cancelled) setCookiesUsername(name);
+      }).catch(() => {});
+    };
+    window.addEventListener("config-applied", onConfigApplied);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("config-applied", onConfigApplied);
+    };
+  }, []);
+
+  // 手动获取用户名：force=true 强制 dump+verify（忽略缓存，感知 cookies 内容变化）；
+  // 后端首次失败会自动重试 3 次（间隔 5s）。成功更新 state（解锁同步/查看按钮）；失败保持禁用。
+  const handleGetUser = async () => {
+    setGettingUser(true);
+    try {
+      const name = await getCookiesUsername(true);
+      if (name && name !== INVALID_USER) {
+        setCookiesUsername(name);
+        toast.success(t("bookmarks.userFetched", { username: name }));
+      } else {
+        setCookiesUsername(INVALID_USER);
+        toast.error(t("bookmarks.userFetchFail"));
+      }
+    } catch (err: any) {
+      toast.error(String(err));
+    } finally {
+      setGettingUser(false);
+    }
+  };
 
   const loadList = async () => {
     setListLoading(true);
@@ -97,12 +141,41 @@ export default function BookmarksSetting() {
 
   return (
     <div className="section-card">
-      <SectionTitle title={t("bookmarks.title")} tip={t("bookmarks.hint")} />
+      <SectionTitle
+        title={
+          <>
+            {t("bookmarks.title")}
+            {cookiesUsername && cookiesUsername !== INVALID_USER && (
+              <span className="normal-case font-normal text-[10px] text-green-600 ml-2">
+                ● {t("bookmarks.statusLoggedIn", { user: cookiesUsername })}
+              </span>
+            )}
+            {cookiesUsername === INVALID_USER && (
+              <span className="normal-case font-normal text-[10px] text-red-500 ml-2">
+                ● {t("bookmarks.statusNoUser")}
+              </span>
+            )}
+          </>
+        }
+        tip={t("bookmarks.hint")}
+      />
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
         <button
           className="btn flex items-center gap-1"
+          onClick={handleGetUser}
+          disabled={gettingUser || syncing}
+        >
+          <UserRound size={13} className={gettingUser ? "animate-spin" : ""} />
+          {gettingUser
+            ? t("bookmarks.gettingUser")
+            : cookiesUsername && cookiesUsername !== INVALID_USER
+              ? t("bookmarks.reloadUser")
+              : t("bookmarks.getUser")}
+        </button>
+        <button
+          className="btn flex items-center gap-1"
           onClick={runBookmarkSync}
-          disabled={syncing}
+          disabled={!cookiesUsername || cookiesUsername === INVALID_USER || syncing}
         >
           <RefreshCw size={13} className={syncing ? "animate-spin" : ""} />
           {syncing ? t("bookmarks.syncing") : t("bookmarks.sync")}
@@ -110,7 +183,7 @@ export default function BookmarksSetting() {
         <button
           className="btn flex items-center gap-1"
           onClick={openList}
-          disabled={syncing}
+          disabled={!cookiesUsername || cookiesUsername === INVALID_USER || syncing}
         >
           <History size={13} />
           {t("bookmarks.viewList")}

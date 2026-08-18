@@ -1,6 +1,7 @@
 use crate::models::config::AppSettings;
 use crate::services::config::ConfigManager;
 use tauri::Emitter;
+use tracing::info;
 
 /// Load settings from the active config file (config/settings.json).
 #[tauri::command]
@@ -14,16 +15,23 @@ pub fn save_settings(
     settings: AppSettings,
     state: tauri::State<'_, crate::commands::download::DownloaderState>,
 ) -> Result<(), String> {
+    // 记录开关类字段的变更（队列持久化 / 下载时防休眠），方便排查。
+    let prev = ConfigManager::load();
+    let qp_old = prev.queue_persist.unwrap_or(false);
+    let qp_new = settings.queue_persist.unwrap_or(false);
+    if qp_old != qp_new {
+        info!("saving queue_persist: {} -> {}", qp_old, qp_new);
+    }
+    let ka_old = prev.keep_awake.unwrap_or(false);
+    let ka_new = settings.keep_awake.unwrap_or(false);
+    if ka_old != ka_new {
+        info!("saving keep_awake: {} -> {}", ka_old, ka_new);
+    }
+
     ConfigManager::save(&settings).map_err(|e| e.to_string())?;
     // 防休眠开关变化立即生效：sync 内部读取刚落盘的 keep_awake 配置。
     state.queue.sync_keep_awake();
     Ok(())
-}
-
-/// Export settings to a custom file path.
-#[tauri::command]
-pub fn save_settings_to_path(settings: AppSettings, path: String) -> Result<(), String> {
-    ConfigManager::save_to_path(&settings, &path).map_err(|e| e.to_string())
 }
 
 /// Get the download directory (saved or default) as an ABSOLUTE path.
@@ -37,20 +45,6 @@ pub fn get_download_dir() -> String {
             .to_string_lossy()
             .into_owned(),
     }
-}
-
-/// Get the active config file path for display.
-#[tauri::command]
-pub fn get_config_path() -> String {
-    ConfigManager::active_config_path()
-        .to_string_lossy()
-        .to_string()
-}
-
-/// Apply proxy from active config to runtime (read-only).
-#[tauri::command]
-pub fn apply_saved_proxy() -> bool {
-    ConfigManager::apply_saved_proxy()
 }
 
 /// Load the saved cookie source (browser name) from config.
@@ -169,89 +163,4 @@ pub fn list_bookmarks() -> Vec<crate::services::bookmarks_store::BookmarkRow> {
     crate::services::bookmarks_store::list()
 }
 
-/// Load settings from an arbitrary file path.
-#[tauri::command]
-pub fn load_settings_from_path(path: String) -> Result<AppSettings, String> {
-    let json = std::fs::read_to_string(&path)
-        .map_err(|e| format!("无法读取配置文件: {}", e))?;
-    serde_json::from_str(&json)
-        .map_err(|e| format!("配置文件格式错误: {}", e))
-}
 
-/// Apply settings to runtime AND persist to the active config file.
-/// Used after importing an external config or restoring defaults.
-#[tauri::command]
-pub fn apply_and_persist_settings(
-    settings: AppSettings,
-    state: tauri::State<'_, crate::commands::download::DownloaderState>,
-) -> Result<(), String> {
-    // Apply proxy to runtime
-    if let (Some(ref host), Some(port)) = (&settings.proxy_host, settings.proxy_port) {
-        if !host.is_empty() {
-            let scheme = settings.proxy_scheme.as_deref().unwrap_or("http");
-            crate::services::proxy::ProxyConfig::set_proxy_full(
-                host,
-                port.min(65535) as u16,
-                scheme,
-            );
-        }
-    }
-    // Apply cookies to runtime
-    if let Some(ref browser) = settings.cookies_from_browser {
-        if !browser.is_empty() {
-            state.downloader.set_cookies_from_browser(browser);
-        }
-    }
-    // Apply language to runtime
-    if let Some(ref lang) = settings.lang {
-        crate::services::i18n::I18n::set_lang(lang);
-    }
-
-    // Persist to active config
-    ConfigManager::save(&settings).map_err(|e| e.to_string())?;
-    // 导入的配置可能改变防休眠开关 → 同步运行时状态。
-    state.queue.sync_keep_awake();
-    Ok(())
-}
-
-/// Load the default config (config/default.json), apply to runtime,
-/// and persist to active config.  Used by "应用配置 → 默认目录".
-#[tauri::command]
-pub fn apply_default_config(
-    state: tauri::State<'_, crate::commands::download::DownloaderState>,
-) -> Result<AppSettings, String> {
-    let defaults = ConfigManager::load_default();
-
-    // Apply to runtime
-    if let (Some(ref host), Some(port)) = (&defaults.proxy_host, defaults.proxy_port) {
-        if !host.is_empty() {
-            let scheme = defaults.proxy_scheme.as_deref().unwrap_or("http");
-            crate::services::proxy::ProxyConfig::set_proxy_full(
-                host,
-                port.min(65535) as u16,
-                scheme,
-            );
-        }
-    }
-    if let Some(ref browser) = defaults.cookies_from_browser {
-        if !browser.is_empty() {
-            state.downloader.set_cookies_from_browser(browser);
-        }
-    }
-    if let Some(ref lang) = defaults.lang {
-        crate::services::i18n::I18n::set_lang(lang);
-    }
-
-    // Persist to active config
-    ConfigManager::save(&defaults).map_err(|e| e.to_string())?;
-    // 默认配置可能改变防休眠开关 → 同步运行时状态。
-    state.queue.sync_keep_awake();
-
-    Ok(defaults)
-}
-
-/// Save current settings as the new default config (config/default.json).
-#[tauri::command]
-pub fn save_as_default(settings: AppSettings) -> Result<(), String> {
-    ConfigManager::save_as_default(&settings).map_err(|e| e.to_string())
-}

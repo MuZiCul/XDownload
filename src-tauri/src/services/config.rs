@@ -17,11 +17,6 @@ impl ConfigManager {
         AppHome::config_dir().join("settings.json")
     }
 
-    /// Default config: config/default.json
-    fn default_file() -> PathBuf {
-        AppHome::config_dir().join("default.json")
-    }
-
     /// Ensure the config directory exists.
     fn ensure_dir() -> Result<()> {
         AppHome::ensure_config_dir()
@@ -40,47 +35,6 @@ impl ConfigManager {
     pub fn save(settings: &AppSettings) -> Result<()> {
         Self::ensure_dir()?;
         Self::write_json(&Self::active_file(), settings)
-    }
-
-    /// Save to an arbitrary file path (export).
-    pub fn save_to_path(settings: &AppSettings, path: &str) -> Result<()> {
-        let path_obj = std::path::Path::new(path);
-        if let Some(parent) = path_obj.parent() {
-            std::fs::create_dir_all(parent)
-                .context("failed to create parent directories for custom config path")?;
-        }
-        Self::write_json(path_obj, settings)
-    }
-
-    // ==================== Default Config ====================
-
-    /// Load default configuration.
-    /// If default.json doesn't exist, create it with factory defaults first.
-    pub fn load_default() -> AppSettings {
-        match Self::read_json(&Self::default_file()) {
-            Ok(cfg) => cfg,
-            Err(_) => {
-                // First run — seed default.json with factory defaults
-                let defaults = AppSettings::default();
-                Self::ensure_dir().ok();
-                info!(
-                    "no default config, seeding {} with factory defaults",
-                    Self::default_file().display()
-                );
-                Self::write_json(&Self::default_file(), &defaults).ok();
-                defaults
-            }
-        }
-    }
-
-    /// Save current settings as the new default config.
-    pub fn save_as_default(settings: &AppSettings) -> Result<()> {
-        Self::ensure_dir()?;
-        info!(
-            "saving current settings as default config → {}",
-            Self::default_file().display()
-        );
-        Self::write_json(&Self::default_file(), settings)
     }
 
     // ==================== Helpers ====================
@@ -160,8 +114,14 @@ impl ConfigManager {
     }
 
     /// Load proxy from active config and apply to runtime.
+    ///
+    /// 短路条件：仅当「系统代理已检测且当前处于启用状态」时才不应用 config 里的
+    /// 手动代理——否则（例如系统代理曾被禁用、或用户已切换到手动模式）都会正常
+    /// 应用 config 中的手动代理值。修复"系统代理关闭后重新打开无法恢复"的问题。
     pub fn apply_saved_proxy() -> bool {
-        if crate::services::proxy::ProxyConfig::is_from_system_proxy() {
+        if crate::services::proxy::ProxyConfig::is_from_system_proxy()
+            && crate::services::proxy::ProxyConfig::is_enabled()
+        {
             return false;
         }
         let cfg = Self::load();
@@ -177,6 +137,20 @@ impl ConfigManager {
             }
             _ => false,
         }
+    }
+
+    /// 用户明确选择「手动代理」时强制应用指定值到运行时，并清除系统代理来源标记。
+    /// 与 apply_saved_proxy 的区别：不走 config 读取，直接使用入参 host/port/scheme，
+    /// 且总是覆盖当前状态（含系统代理），确保"系统→手动"切换即时生效。
+    pub fn apply_manual_proxy(host: &str, port: u16, scheme: &str) -> bool {
+        crate::services::proxy::ProxyConfig::set_proxy_full(host, port, scheme);
+        info!(
+            "[XDownload] applied manual proxy: {}://{}:{}",
+            if scheme.is_empty() { "http" } else { scheme },
+            host,
+            port
+        );
+        true
     }
 
     // ==================== Cookies ====================
@@ -260,28 +234,7 @@ impl ConfigManager {
 
     // ==================== Download Dir ====================
 
-    pub fn save_download_dir(dir: &str) -> Result<()> {
-        info!("saving download directory: {}", if dir.is_empty() { "(reset to default)" } else { dir });
-        Self::merge_and_save(|cfg| {
-            if dir.is_empty() {
-                cfg.download_dir = None;
-            } else {
-                cfg.download_dir = Some(dir.to_string());
-            }
-        })
-    }
-
     pub fn load_download_dir() -> Option<String> {
         Self::load().download_dir
-    }
-
-    // ==================== Paths ====================
-
-    pub fn active_config_path() -> PathBuf {
-        Self::active_file()
-    }
-
-    pub fn default_config_path() -> PathBuf {
-        Self::default_file()
     }
 }

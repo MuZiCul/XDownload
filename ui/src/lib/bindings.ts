@@ -196,36 +196,16 @@ export async function listBookmarks(): Promise<BookmarksListItem[]> {
   return invoke("list_bookmarks");
 }
 
-export async function saveSettingsToPath(settings: AppSettings, path: string): Promise<void> {
-  return invoke("save_settings_to_path", { settings, path });
-}
-
-export async function loadSettingsFromPath(path: string): Promise<AppSettings> {
-  return invoke("load_settings_from_path", { path });
-}
-
-export async function applyAndPersistSettings(settings: AppSettings): Promise<void> {
-  return invoke("apply_and_persist_settings", { settings });
-}
-
-export async function applyDefaultConfig(): Promise<AppSettings> {
-  return invoke("apply_default_config");
-}
-
-export async function saveAsDefault(settings: AppSettings): Promise<void> {
-  return invoke("save_as_default", { settings });
-}
-
 export async function getDownloadDir(): Promise<string> {
   return invoke("get_download_dir");
 }
 
-export async function getConfigPath(): Promise<string> {
-  return invoke("get_config_path");
-}
-
-export async function applySavedProxy(): Promise<boolean> {
-  return invoke("apply_saved_proxy");
+export async function applyManualProxy(
+  host: string,
+  port: number,
+  scheme: string
+): Promise<void> {
+  return invoke("apply_manual_proxy", { host, port, scheme });
 }
 
 export async function loadCookieSource(): Promise<string | null> {
@@ -272,6 +252,15 @@ export async function setProxyMode(enabled: boolean): Promise<void> {
 
 export async function validateCookies(browser: string): Promise<CookiesValidationResult> {
   return invoke("validate_cookies", { browser });
+}
+
+/**
+ * 静默获取当前 cookie 来源对应的 x.com 用户名（无配置/失败返回 null，不报错）。
+ * @param force true = 强制重新 dump+verify（忽略缓存，感知 cookies 内容变化）；
+ *              false/缺省 = 走缓存（browser 未变直接返回，0 网络）。
+ */
+export async function getCookiesUsername(force?: boolean): Promise<string | null> {
+  return invoke("get_cookies_username", { force: force ?? false });
 }
 
 export async function scanCookies(): Promise<string | null> {
@@ -324,14 +313,6 @@ export async function getRootDir(): Promise<string> {
 
 export async function openRootDir(): Promise<void> {
   return invoke("open_root_dir");
-}
-
-export async function getConfigDir(): Promise<string> {
-  return invoke("get_config_dir");
-}
-
-export async function openConfigDir(): Promise<void> {
-  return invoke("open_config_dir");
 }
 
 export async function openLogsDir(): Promise<void> {

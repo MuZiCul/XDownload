@@ -88,6 +88,14 @@ impl ProxyConfig {
         state().lock().unwrap().enabled = false;
     }
 
+    /// Re-enable the existing proxy without altering host/port/scheme.
+    /// Used to restore a previously disabled proxy (e.g. after disabling then
+    /// re-enabling system proxy), preserving the from_system_proxy marker.
+    pub fn enable() {
+        let mut s = state().lock().unwrap();
+        s.enabled = true;
+    }
+
     /// Whether a proxy is active.
     pub fn is_enabled() -> bool {
         let s = state().lock().unwrap();

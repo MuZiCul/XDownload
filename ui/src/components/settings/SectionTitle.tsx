@@ -53,9 +53,15 @@ export default function SectionTitle({
                 <X size={16} />
               </button>
             </div>
-            <p className="text-xs text-zinc-600 leading-relaxed whitespace-pre-line">
-              {tip}
-            </p>
+            <div className="text-xs text-zinc-600 leading-relaxed">
+              {(tip ?? "").split("\n").map((line, i) => (
+                // 悬挂缩进：带「·」的条目行用 pl-3 -indent-3（续行对齐到点后文字）；
+                // 总述首行（index 0，无点）不缩进，其软换行续行与首行文字起点对齐。
+                <div key={i} className={i === 0 ? "" : "pl-3 -indent-3"}>
+                  {line}
+                </div>
+              ))}
+            </div>
             <div className="flex justify-end mt-4">
               <button className="btn" onClick={() => setShowTip(false)}>
                 {t("common.close")}

@@ -39,25 +39,6 @@ pub fn open_root_dir(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| format!("failed to open root dir: {}", e))
 }
 
-/// Get the config directory path
-#[tauri::command]
-pub fn get_config_dir() -> String {
-    crate::utils::app_home::AppHome::config_dir()
-        .to_string_lossy()
-        .to_string()
-}
-
-/// Open the config directory (root/config) in the system file manager
-#[tauri::command]
-pub fn open_config_dir(app: tauri::AppHandle) -> Result<(), String> {
-    use tauri_plugin_opener::OpenerExt;
-
-    let dir = crate::utils::app_home::AppHome::config_dir();
-    app.opener()
-        .open_path(dir.to_string_lossy().to_string(), None::<&str>)
-        .map_err(|e| format!("failed to open config dir: {}", e))
-}
-
 /// Open the logs viewer in the default browser.
 ///
 /// Starts a minimal local HTTP server (127.0.0.1, random port) that serves a

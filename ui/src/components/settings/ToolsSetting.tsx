@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useToolStatus } from "../../hooks/useToolStatus";
 import {
   pingGoogle,
@@ -71,24 +71,60 @@ export default function ToolsSetting({
   const [mode, setMode] = useState<"direct" | "proxy" | null>(null);
   // 是否已配置代理（enabled && host && port）。未配置时「代理下载」开关禁用。
   const [proxyReady, setProxyReady] = useState(false);
-
-  // 挂载时探测代理可用性（开关启用条件）。组件通过 key 在设置应用后重挂载，
-  // 因此代理配置变化后会自动刷新。
+  // 最新开关值（供探测回调判断"由开变关"用，避免闭包过期）。
+  const useProxyRef = useRef(useProxy);
   useEffect(() => {
-    let cancelled = false;
-    getProxyStatus()
+    useProxyRef.current = useProxy;
+  }, [useProxy]);
+  // onChange 用 ref 稳定读取：SettingsPage 每次 re-render 都会生成新的内联
+  // onChange，直接依赖会导致 probeProxy 每次变化 → useEffect 反复重挂监听 + 重复探测
+  // （表现为改任意设置项都刷一条 get_proxy_status 日志）。ref 化后 probeProxy
+  // 空依赖稳定，事件监听只挂载一次。
+  const onChangeRef = useRef(onChange);
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+
+  // 探测代理可用性；代理不可用时自动关闭「代理下载」开关（本地 state + 后端持久化），
+  // 确保"代理关闭 → 工具下载开关强制关"在前后端一致。
+  const probeProxy = useCallback(() => {
+    return getProxyStatus()
       .then((s) => {
-        if (!cancelled) {
-          setProxyReady(!!s.enabled && !!s.host && s.port > 0);
+        const ready = !!s.enabled && !!s.host && s.port > 0;
+        setProxyReady(ready);
+        if (!ready && useProxyRef.current) {
+          // 代理已关闭 → 开关自动切回关，并与后端同步。
+          console.info(
+            "[ToolsSetting] proxy unavailable, auto-off tools_use_proxy (enabled=%s host=%s port=%d)",
+            s.enabled,
+            s.host ?? "",
+            s.port ?? 0
+          );
+          onChangeRef.current(false);
+          setToolsUseProxy(false).catch(() => {
+            // 后端保存失败：保持本地关闭（UI 与真实运行状态一致即可），
+            // 下次探测或手动保存仍会重试持久化。
+            console.warn("[ToolsSetting] failed to persist tools_use_proxy=false");
+          });
         }
       })
       .catch(() => {
-        if (!cancelled) setProxyReady(false);
+        setProxyReady(false);
+        if (useProxyRef.current) {
+          console.warn("[ToolsSetting] getProxyStatus failed, auto-off tools_use_proxy");
+          onChangeRef.current(false);
+          setToolsUseProxy(false).catch(() => {});
+        }
       });
-    return () => {
-      cancelled = true;
-    };
   }, []);
+
+  // 挂载时探测 + 监听代理状态变化（ProxySetting 切换 radio / 保存后广播 proxy-changed）。
+  // probeProxy 空依赖稳定 → 本 effect 仅在挂载时执行一次。
+  useEffect(() => {
+    probeProxy();
+    window.addEventListener("proxy-changed", probeProxy);
+    return () => window.removeEventListener("proxy-changed", probeProxy);
+  }, [probeProxy]);
 
   const handleCheckUpdate = async () => {
     if (checking) return;

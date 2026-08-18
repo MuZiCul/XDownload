@@ -151,11 +151,8 @@ export const en: Record<string, string> = {
   "common.cancel": "Cancel",
   "common.loading": "Loading...",
   "common.video": "Video",
-  "common.save": "Save",
-  "common.saving": "Saving...",
   "common.saveFail": "Save failed: {err}",
   "common.openFail": "Open failed: {err}",
-  "common.applyFail": "Apply failed: {err}",
   "common.quitFail": "Quit failed: {err}",
   "quit.title": "Exit confirmation",
   "quit.body": "Tasks are still running (queued / downloading / paused). Save progress before exiting?",
@@ -167,10 +164,10 @@ export const en: Record<string, string> = {
   "common.close": "Close",
 
   // ===== Directory setting =====
-  "dir.save": "Save",
+  "dir.title": "Save Location",
   "dir.edit": "Change save folder",
   "dir.open": "Open download folder",
-  "dir.hint": "Choose the folder where downloaded videos are saved",
+  "dir.tip": "Click the pencil to choose a new folder, or the folder icon to open the current download directory",
   "dir.saved": "Download directory saved",
 
   // ===== Proxy setting =====
@@ -188,19 +185,19 @@ export const en: Record<string, string> = {
   "proxy.noSystem":
     "No system proxy detected. Enable one or use manual proxy.",
   "proxy.hostRequired": "Please enter a proxy host",
+  "proxy.portRequired": "Please enter a valid proxy port",
   "proxy.testPassed": "Proxy OK ({ms}ms)",
   "proxy.testFail": "Proxy test failed: {msg}",
   "proxy.disabledSaved": "Proxy disabled and saved",
   "proxy.savedApplied": "Proxy saved and applied",
   "proxy.hint":
-    "Configure a network proxy to reach restricted networks:\n· None: no proxy\n· Manual: enter address and port\n· Follow system: use the system proxy\nClick \u201CApply\u201D to take effect.",
+    "Configure a network proxy to reach restricted networks:\n· None: no proxy\n· Manual: enter address and port\n· Follow system: use the system proxy\nChanges are saved and applied automatically \u2014 no manual apply needed.",
 
   // ===== Cookies setting =====
   "cookies.browser": "Browser:",
   "cookies.none": "none",
   "cookies.validate": "Validate",
   "cookies.validatingBtn": "Validating...",
-  "cookies.saveAndApply": "Save Source",
   "cookies.statusValidating": "Validating: {browser}",
   "cookies.statusVerified": "Verified: {browser}{user} — save source to apply",
   "cookies.statusLoaded": "Saved source: {browser}{user}",
@@ -227,10 +224,6 @@ export const en: Record<string, string> = {
     "Select the browser Cookies used to access x.com:\n· Changes take effect immediately, no restart needed\n· Bookmark sync and downloads use these Cookies to verify the login state",
 
   // ===== Config buttons =====
-  "config.save": "Save Config",
-  "config.apply": "Apply Config",
-  "config.dir": "Config Dir",
-  "config.dirTitle": "Open the config folder under the root",
   "config.logs": "Logs",
   "config.logsTitle": "Open the log viewer in the browser (live refresh)",
   "config.logsOpened": "Opened the log viewer in the browser",
@@ -238,22 +231,6 @@ export const en: Record<string, string> = {
   "privacy.disable": "Exit Privacy Mode",
   "config.quit": "Quit",
   "config.quitTitle": "Clean up processes and quit",
-  "config.path": "Config: {path}",
-  "config.exported": "Config exported\nPath: {path}",
-  "config.saved": "Config saved\nPath: {path}",
-  "config.imported": "Config imported and persisted\nSource: {path}",
-  "config.restored": "Restored default config\nPath: {path}",
-  "config.dirOpened": "Config directory opened",
-  "config.saveDialogTitle": "Choose Save Location",
-  "config.saveDialogBody":
-    "Default saves to the app config; custom exports elsewhere",
-  "config.saveDefault": "Default Directory (app config)",
-  "config.saveCustom": "Custom Directory (export)",
-  "config.applyDialogTitle": "Choose Config Source",
-  "config.applyDialogBody":
-    "Default restores factory settings; custom imports from file",
-  "config.applyDefault": "Restore Defaults",
-  "config.applyCustom": "Custom Directory (import)",
 
   // ===== Tools setting =====
   "tools.checkFail": "Check failed: {err}",
@@ -283,7 +260,7 @@ export const en: Record<string, string> = {
   "tools.connecting": "Connecting...",
   "tools.downloadingDirect": "Downloading via direct connection",
   "tools.downloadingProxy": "Downloading via proxy",
-  "tools.useProxyLabel": "Proxy download",
+  "tools.useProxyLabel": "Use proxy",
   "tools.proxyDisabledHint": "No proxy configured, proxy download is unavailable",
   "tools.cancelDownload": "Cancel Download",
   "tools.downloadDone": "{tool} downloaded",
@@ -305,20 +282,26 @@ export const en: Record<string, string> = {
 
   // ===== Multi-task setting =====
   "multitask.title": "Multi-task",
-  "multitask.concurrency": "Concurrent downloads",
-  "multitask.retry": "Retry count",
-  "multitask.persist": "Persist queue",
+  "multitask.concurrency": "Concurrency",
+  "multitask.retry": "Retries",
+  "multitask.persist": "Persist",
   "multitask.rateLimit": "Rate limit",
-  "multitask.keepAwake": "Prevent sleep while downloading",
+  "multitask.keepAwake": "Keep awake",
   "multitask.unlimited": "Unlimited",
   "multitask.custom": "Custom",
   "multitask.invalidRate": "Invalid rate limit. Use e.g. 1M / 2.5M / 500K",
-  "multitask.saved": "Multi-task settings saved",
   "multitask.hint":
-    "Concurrent downloads: tasks running at once (1-3).\nRetry count: 0 = no retry.\nPersist queue: restores unfinished tasks on next launch.\nRate limit: per-task download speed (1M~100M), e.g. 1M / 500K.\nPrevent sleep: keeps the system awake while tasks are downloading, restored automatically when done.",
+    "Controls multi-task download behavior:\n· Concurrency: tasks running at once (1-3).\n· Retries: 0 = no retry.\n· Persist: restores unfinished tasks on next launch.\n· Rate limit: per-task download speed (1M~100M), e.g. 1M / 500K.\n· Keep awake: keeps the system awake while tasks are downloading, restored automatically when done.",
 
   // ===== Bookmarks setting =====
   "bookmarks.title": "Bookmarks",
+  "bookmarks.getUser": "Get User",
+  "bookmarks.reloadUser": "Reload User",
+  "bookmarks.gettingUser": "Getting…",
+  "bookmarks.userFetched": "User fetched: @{username}",
+  "bookmarks.statusLoggedIn": "Logged in: @{user}",
+  "bookmarks.statusNoUser": "No user",
+  "bookmarks.userFetchFail": "Failed to fetch user: no Cookies configured or network unavailable",
   "bookmarks.sync": "Sync bookmarks",
   "bookmarks.syncing": "Syncing…",
   "bookmarks.viewList": "View bookmarks",
@@ -351,15 +334,14 @@ export const en: Record<string, string> = {
   "bookmarks.enqueueFail": "Failed to enqueue: {err}",
   "bookmarks.cancel": "Cancel",
   "bookmarks.hint":
-    "Click \u201CSync bookmarks\u201D to fetch X bookmarks and compare with the download history; the dialog lists all video bookmarks (including already-downloaded ones).\nNot-yet-downloaded ones are pre-checked; downloaded ones can be re-checked for re-download.\nItems are only enqueued after you confirm; unconfirmed bookmarks show up again on the next sync.\nYou need to be logged into x.com in your browser and have browser Cookies configured above.",
+    "Sync and manage X bookmarked videos:\n· Click \u201CSync bookmarks\u201D to fetch X bookmarks and compare with the download history; the dialog lists all video bookmarks (including already-downloaded ones).\n· Not-yet-downloaded ones are pre-checked; downloaded ones can be re-checked for re-download.\n· Items are only enqueued after you confirm; unconfirmed bookmarks show up again on the next sync.\n· You need to be logged into x.com in your browser and have browser Cookies configured above.",
 
   // ===== HLS setting =====
   "hls.title": "HLS Download",
-  "hls.concurrent": "Fragment concurrency",
-  "hls.retry": "Fragment retries",
-  "hls.saved": "HLS settings saved",
+  "hls.concurrent": "Concurrency",
+  "hls.retry": "Retries",
   "hls.hint":
-    "Fragment concurrency: parallel fragment downloads for HLS audio/video streams (1-16, default 4). Higher values download faster but may trigger server rate limiting.\nFragment retries: retry count when a single fragment fails (default 10), avoiding whole-task failure from occasional bad fragments.\nPausing/cancelling cannot fully avoid fragment loss; higher concurrency recovers faster.",
+    "Controls HLS fragment download behavior:\n· Concurrency: parallel fragment downloads for HLS audio/video streams (1-16, default 4). Higher values download faster but may trigger server rate limiting.\n· Retries: retry count when a single fragment fails (default 10), avoiding whole-task failure from occasional bad fragments.\n· Pausing/cancelling cannot fully avoid fragment loss; higher concurrency recovers faster.",
 
   // ===== Language setting =====
   "lang.title": "Language",
@@ -367,7 +349,7 @@ export const en: Record<string, string> = {
   "lang.zh": "Chinese",
   "lang.en": "English",
   "lang.hintImmediate":
-    "Takes effect immediately.\nThe language switch applies instantly to the UI without restart.",
+    "Sets the UI display language:\n· Takes effect immediately.\n· The language switch applies instantly to the UI without restart.",
 
   // ===== About page =====
   "about.desc": "Video downloader based on yt-dlp",

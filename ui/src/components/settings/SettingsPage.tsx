@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import {
   loadSettings,
   getDownloadDir,
@@ -22,16 +22,6 @@ export default function SettingsPage() {
   // 展示用的下载目录（绝对路径）：来自后端 get_download_dir（空/相对配置
   // 会归一化为 <root>/downloads 的绝对路径）。仅显示层，配置值本身不改写。
   const [displayDir, setDisplayDir] = useState("");
-  // Bump on every "应用配置" to force children with internal state
-  // (ProxySetting, CookiesSetting) to unmount+remount from fresh props.
-  const [applyKey, setApplyKey] = useState(0);
-
-  // Called by ConfigButtons after applying saved config.
-  const handleApply = useCallback((fresh: AppSettings) => {
-    console.log("[SettingsPage] handleApply, fresh:", JSON.stringify(fresh));
-    setSettings(fresh);
-    setApplyKey((k) => k + 1);
-  }, []);
 
   useEffect(() => {
     Promise.all([loadSettings(), getDownloadDir()])
@@ -51,10 +41,9 @@ export default function SettingsPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          <ConfigButtons settings={settings} onApply={handleApply} />
+          <ConfigButtons />
 
           <DirSetting
-            key={`dir-${applyKey}`}
             dir={displayDir || settings.download_dir || "downloads"}
             onChange={(d) => {
               setSettings((s) => ({ ...s, download_dir: d }));
@@ -62,7 +51,6 @@ export default function SettingsPage() {
             }}
           />
           <ProxySetting
-            key={`proxy-${applyKey}`}
             host={settings.proxy_host}
             port={settings.proxy_port}
             scheme={settings.proxy_scheme}
@@ -71,18 +59,15 @@ export default function SettingsPage() {
             }
           />
           <CookiesSetting
-            key={`cookies-${applyKey}`}
             browser={settings.cookies_from_browser}
             onChange={(b) => setSettings((s) => ({ ...s, cookies_from_browser: b }))}
           />
           <ToolsSetting
-            key={`tools-${applyKey}`}
             useProxy={settings.tools_use_proxy ?? false}
             onChange={(v) => setSettings((s) => ({ ...s, tools_use_proxy: v }))}
           />
 
           <MultiTaskSetting
-            key={`mt-${applyKey}`}
             concurrency={settings.concurrency ?? 1}
             retryCount={settings.retry_count ?? 0}
             queuePersist={settings.queue_persist ?? false}
@@ -93,10 +78,9 @@ export default function SettingsPage() {
             }
           />
 
-          <BookmarksSetting key={`bm-${applyKey}`} />
+          <BookmarksSetting />
 
           <HlsSetting
-            key={`hls-${applyKey}`}
             concurrent={settings.hls_concurrent_fragments ?? 4}
             retries={settings.hls_fragment_retries ?? 10}
             onChange={(patch) =>
@@ -105,7 +89,6 @@ export default function SettingsPage() {
           />
 
           <LanguageSetting
-            key={`lang-${applyKey}`}
             lang={settings.lang ?? "zh"}
             onChange={(l) => setSettings((s) => ({ ...s, lang: l }))}
           />
