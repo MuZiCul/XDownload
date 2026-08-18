@@ -150,11 +150,8 @@ export const zh: Record<string, string> = {
   "common.cancel": "取消",
   "common.loading": "加载中...",
   "common.video": "视频",
-  "common.save": "保存",
-  "common.saving": "保存中...",
   "common.saveFail": "保存失败: {err}",
   "common.openFail": "打开失败: {err}",
-  "common.applyFail": "应用失败: {err}",
   "common.quitFail": "退出失败: {err}",
   "quit.title": "退出确认",
   "quit.body": "有任务正在执行（排队/下载中/暂停）。是否保存当前进度后退出？",
@@ -166,10 +163,10 @@ export const zh: Record<string, string> = {
   "common.close": "关闭",
 
   // ===== Directory setting =====
-  "dir.save": "保存",
+  "dir.title": "保存位置",
   "dir.edit": "修改保存路径",
   "dir.open": "打开下载目录",
-  "dir.hint": "选择保存下载视频的文件夹",
+  "dir.tip": "点击铅笔按钮选择新的保存文件夹，点击文件夹图标打开当前下载目录",
   "dir.saved": "视频保存位置已保存",
 
   // ===== Proxy setting =====
@@ -186,19 +183,19 @@ export const zh: Record<string, string> = {
   "proxy.error": "● 代理异常",
   "proxy.noSystem": "未检测到系统代理，请先开启系统代理或选择手动代理",
   "proxy.hostRequired": "请输入代理主机地址",
+  "proxy.portRequired": "请输入有效的代理端口",
   "proxy.testPassed": "代理测试通过 ({ms}ms)",
   "proxy.testFail": "代理测试失败: {msg}",
   "proxy.disabledSaved": "代理已禁用并保存",
   "proxy.savedApplied": "代理已保存并应用",
   "proxy.hint":
-    "配置网络代理以访问受限网络：\n· 无：不代理\n· 手动：填写地址与端口\n· 跟随系统：使用系统代理设置\n配置后需点击「应用」生效。",
+    "配置网络代理以访问受限网络：\n· 无：不代理\n· 手动：填写地址与端口\n· 跟随系统：使用系统代理设置\n修改后自动保存并立即生效，无需手动应用。",
 
   // ===== Cookies setting =====
   "cookies.browser": "浏览器:",
   "cookies.none": "无",
   "cookies.validate": "验证",
   "cookies.validatingBtn": "验证中...",
-  "cookies.saveAndApply": "保存来源",
   "cookies.statusValidating": "验证中: {browser}",
   "cookies.statusVerified": "已验证: {browser}{user}，保存来源后生效",
   "cookies.statusLoaded": "已保存来源: {browser}{user}",
@@ -224,10 +221,6 @@ export const zh: Record<string, string> = {
     "选择用于访问 x.com 的浏览器 Cookies 来源：\n· 来源变更即时生效，无需重启\n· 书签同步与视频下载会用该 Cookies 验证登录状态",
 
   // ===== Config buttons =====
-  "config.save": "保存配置",
-  "config.apply": "应用配置",
-  "config.dir": "配置目录",
-  "config.dirTitle": "打开根目录下的 config 文件夹",
   "config.logs": "软件日志",
   "config.logsTitle": "在浏览器中打开日志查看器（实时刷新）",
   "config.logsOpened": "已在浏览器中打开日志查看器",
@@ -235,20 +228,6 @@ export const zh: Record<string, string> = {
   "privacy.disable": "退出隐私模式",
   "config.quit": "退出",
   "config.quitTitle": "清理进程并退出应用",
-  "config.path": "配置: {path}",
-  "config.exported": "配置已导出\n路径: {path}",
-  "config.saved": "配置已保存\n路径: {path}",
-  "config.imported": "配置已导入并持久化\n来源: {path}",
-  "config.restored": "已恢复默认配置\n路径: {path}",
-  "config.dirOpened": "已打开配置目录",
-  "config.saveDialogTitle": "选择保存位置",
-  "config.saveDialogBody": "默认目录保存到应用内配置，自定义目录导出到其他位置",
-  "config.saveDefault": "默认目录（应用内配置）",
-  "config.saveCustom": "自定义目录（导出）",
-  "config.applyDialogTitle": "选择配置来源",
-  "config.applyDialogBody": "默认目录恢复出厂设置，自定义目录从外部文件导入",
-  "config.applyDefault": "恢复默认",
-  "config.applyCustom": "自定义目录（导入）",
 
   // ===== Tools setting =====
   "tools.checkFail": "检查失败: {err}",
@@ -276,7 +255,7 @@ export const zh: Record<string, string> = {
   "tools.connecting": "正在连接...",
   "tools.downloadingDirect": "正在通过直连下载",
   "tools.downloadingProxy": "正在通过代理下载",
-  "tools.useProxyLabel": "代理下载",
+  "tools.useProxyLabel": "使用代理",
   "tools.proxyDisabledHint": "未配置代理，无法启用代理下载",
   "tools.cancelDownload": "取消下载",
   "tools.downloadDone": "{tool} 下载完成",
@@ -298,20 +277,26 @@ export const zh: Record<string, string> = {
 
   // ===== Multi-task setting =====
   "multitask.title": "多任务",
-  "multitask.concurrency": "并发下载数",
-  "multitask.retry": "失败重试次数",
-  "multitask.persist": "队列持久化",
-  "multitask.rateLimit": "下载限速",
-  "multitask.keepAwake": "下载时防休眠",
+  "multitask.concurrency": "并发数",
+  "multitask.retry": "重试次数",
+  "multitask.persist": "持久化",
+  "multitask.rateLimit": "限速",
+  "multitask.keepAwake": "防休眠",
   "multitask.unlimited": "不限速",
   "multitask.custom": "自定义",
   "multitask.invalidRate": "限速格式无效，请输入如 1M / 2.5M / 500K",
-  "multitask.saved": "多任务设置已保存",
   "multitask.hint":
-    "并发下载数：同时下载的任务数（1-3）。\n失败重试次数：0 表示不重试。\n队列持久化：开启后重启应用会恢复未完成任务。\n下载限速：每个任务的限速值（1M~100M），格式如 1M / 500K。\n下载时防休眠：开启后队列有任务时阻止系统休眠，任务结束自动恢复。",
+    "控制多任务下载行为：\n· 并发数：同时下载的任务数（1-3）。\n· 重试次数：0 表示不重试。\n· 持久化：开启后重启应用会恢复未完成任务。\n· 限速：每个任务的限速值（1M~100M），格式如 1M / 500K。\n· 防休眠：开启后队列有任务时阻止系统休眠，任务结束自动恢复。",
 
   // ===== Bookmarks setting =====
   "bookmarks.title": "书签管理",
+  "bookmarks.getUser": "获取用户",
+  "bookmarks.reloadUser": "重载用户",
+  "bookmarks.gettingUser": "获取中…",
+  "bookmarks.userFetched": "已获取用户：@{username}",
+  "bookmarks.statusLoggedIn": "已登录用户: @{user}",
+  "bookmarks.statusNoUser": "未获取用户",
+  "bookmarks.userFetchFail": "获取用户失败：未配置 Cookies 或网络不可用",
   "bookmarks.sync": "同步书签",
   "bookmarks.syncing": "同步中…",
   "bookmarks.viewList": "查看书签",
@@ -344,22 +329,21 @@ export const zh: Record<string, string> = {
   "bookmarks.enqueueFail": "加入下载队列失败：{err}",
   "bookmarks.cancel": "取消",
   "bookmarks.hint":
-    "点击「同步书签」拉取 X 书签并与下载历史比对，弹窗展示所有含视频书签（含已下载）。\n默认勾选未下载的，已下载的也可勾选重新下载。\n确认后才加入下载队列；未确认的书签下次同步仍会出现。\n需要先在浏览器中登录 x.com，并在上方配置浏览器 Cookies。",
+    "同步并管理 X 平台的书签视频：\n· 点击「同步书签」拉取 X 书签并与下载历史比对，弹窗展示所有含视频书签（含已下载）。\n· 默认勾选未下载的，已下载的也可勾选重新下载。\n· 确认后才加入下载队列；未确认的书签下次同步仍会出现。\n· 需要先在浏览器中登录 x.com，并在上方配置浏览器 Cookies。",
 
   // ===== HLS setting =====
   "hls.title": "HLS 下载",
-  "hls.concurrent": "分片并发数",
-  "hls.retry": "分片重试次数",
-  "hls.saved": "HLS 设置已保存",
+  "hls.concurrent": "并发数",
+  "hls.retry": "重试次数",
   "hls.hint":
-    "分片并发数：HLS 音视频分离流的并行分片下载数（1-16，默认 4），值越大下载越快，过高易触发服务器限流。\n分片重试次数：单个分片下载失败时的重试次数（默认 10），避免偶发坏分片导致整个任务失败。\n暂停/取消下载无法完全避免分片损失，并发越高补回越快",
+    "控制 HLS 分片下载行为：\n· 并发数：HLS 音视频分离流的并行分片下载数（1-16，默认 4），值越大下载越快，过高易触发服务器限流。\n· 重试次数：单个分片下载失败时的重试次数（默认 10），避免偶发坏分片导致整个任务失败。\n· 暂停/取消下载无法完全避免分片损失，并发越高补回越快",
 
   // ===== Language setting =====
   "lang.title": "语言 / Language",
   "lang.saved": "语言已保存: {lang}",
   "lang.zh": "中文",
   "lang.en": "English",
-  "lang.hintImmediate": "保存后立即生效\n切换语言后无需重启，设置会即时应用到界面。",
+  "lang.hintImmediate": "设置应用界面显示语言：\n· 保存后立即生效\n· 切换语言后无需重启，设置会即时应用到界面。",
 
   // ===== About page =====
   "about.desc": "基于 yt-dlp 的视频下载器",

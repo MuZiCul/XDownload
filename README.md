@@ -39,8 +39,8 @@ Powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp) + ffmpeg, wrapped in a cle
 - **Download history** — cover, author, duration, views, likes, download time; instant search & filter; time-based badges (last 5 minutes → 10 years); delete with confirmation (optionally remove the file from disk too); re-download (re-parses the link), open file location, clear records
 - **In-app updates** — download and install new versions right from the app (direct first, proxy fallback)
 - **System notifications** — get notified when a download finishes or fails, even when minimized to tray
-- **Proxy support** — HTTP or SOCKS5, with automatic system proxy detection
-- **Cookies** — import from your browser to access restricted content
+- **Proxy support** — HTTP or SOCKS5, with automatic system proxy detection; settings are saved & applied instantly (no manual "apply"), the proxy download toggle syncs automatically with the proxy state, and invalid port/host input is rejected at the source
+- **Cookies** — import from your browser to access restricted content; the bookmarks page shows the logged-in user name (fetched once and cached by cookie fingerprint, re-fetched only when the browser source changes)
 - **Built-in tools** — download yt-dlp + ffmpeg right from the settings page, with live direct/proxy mode display, a "download via proxy" toggle (disabled until a proxy is configured), a slow-download reminder with a manual-download fallback link, and a retryable error dialog
 - **Update alerts** — startup checks for new versions of XDownload / yt-dlp / ffmpeg
 - **Bookmarks sync** — manual one-click sync of your X bookmarks with a preview dialog: every video bookmark (downloaded or not, color-coded) with per-item checkboxes for batch or single enqueue; already-downloaded ones can be re-downloaded. The download history acts as the cursor, so skipped/deleted tasks show up again on the next sync
@@ -56,13 +56,14 @@ Powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp) + ffmpeg, wrapped in a cle
 - **Clean cache** — abandoned partial downloads (untouched for over 7 days) are swept at startup, and paused/cancelled tasks wipe their staging cache right away, so no fragment litter ever accumulates
 - **Split history view** — the active downloads and the history list each scroll independently (50/50 with 2+ active tasks, 30/70 otherwise); the history list is virtualized, staying smooth even with thousands of records
 - **i18n** — English & 简体中文, switch instantly without restart
+- **Auto-save settings** — every setting saves & applies the moment you change it (no save/apply buttons); download directory, proxy, cookies, multi-task, HLS, language are all instant
 - **Prevent sleep** — optional toggle keeps your system awake while downloads are running (restores normal sleep automatically when the queue empties or you quit)
 
 ## Install
 
 Grab the latest installer from [Releases](https://github.com/MuZiCul/XDownload/releases).
 
-- **Windows**: `XDownload_2.9.7_x64-setup.exe` (NSIS) / `.msi`
+- **Windows**: `XDownload_2.9.8_x64-setup.exe` (NSIS) / `.msi`
 
 First launch downloads yt-dlp + ffmpeg automatically — or drop them into `bin/` yourself.
 

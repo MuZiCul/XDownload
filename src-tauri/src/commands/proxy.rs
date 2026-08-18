@@ -61,9 +61,30 @@ pub fn get_proxy_status() -> serde_json::Value {
 #[tauri::command]
 pub fn set_proxy_mode(enabled: bool) {
     if enabled {
-        // Re-enable from config
-        crate::services::config::ConfigManager::apply_saved_proxy();
+        // 系统代理曾检测到且仍启用 → 仅重新启用（保留系统来源标记），
+        // 否则走 config 应用手动代理。修复"系统代理关闭后重开无法恢复"。
+        if ProxyConfig::is_from_system_proxy() {
+            ProxyConfig::enable();
+        } else {
+            crate::services::config::ConfigManager::apply_saved_proxy();
+        }
     } else {
         ProxyConfig::disable();
+        // 代理关闭时，「工具（yt-dlp/ffmpeg）下载走代理」开关必须同步关闭并持久化，
+        // 避免后端配置与运行时状态不一致导致后续工具下载报"未配置代理"。
+        if let Err(e) = crate::services::config::ConfigManager::save_tools_use_proxy(false) {
+            tracing::warn!(
+                "[XDownload] set_proxy_mode: failed to persist tools_use_proxy=false: {}",
+                e
+            );
+        }
     }
+}
+
+/// Apply manual proxy values (host/port/scheme) to runtime, overriding any
+/// existing system proxy. Used when the user saves manual proxy mode.
+#[tauri::command]
+pub fn apply_manual_proxy(host: String, port: u16, scheme: String) -> Result<(), String> {
+    crate::services::config::ConfigManager::apply_manual_proxy(&host, port, &scheme);
+    Ok(())
 }

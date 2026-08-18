@@ -74,11 +74,19 @@ jobs:
             # Tag already carries the version number, so omit it from the body.
             # Group commits by type (New/Changed/Fixed/Removed); omit sections without entries.
             # Keep this script pure ASCII so it parses correctly under Windows PowerShell 5.1.
-            $lines = if ($prev) {
-              @(git log "$prev..HEAD" --no-merges --pretty=format:"%s") | Select-Object -First 60
+            # Read commit subjects as UTF-8: force git to write the log to a
+            # temp file (git writes raw UTF-8 bytes, bypassing PowerShell pipe
+            # decoding), then read it back with explicit UTF-8. This avoids
+            # PowerShell decoding git's UTF-8 output as GBK on Windows runners,
+            # which corrupts non-ASCII commit subjects.
+            $logFile = "gitlog.txt"
+            if ($prev) {
+              git log "$prev..HEAD" --no-merges --pretty=format:"%s" --output=$logFile
             } else {
-              @("Initial release")
+              Set-Content -Path $logFile -Value "Initial release" -Encoding ascii
             }
+            $lines = @(Get-Content -Path $logFile -Encoding utf8) | Select-Object -First 60
+            Remove-Item $logFile -ErrorAction SilentlyContinue
             $sections = [ordered]@{
               "New" = @(); "Changed" = @(); "Fixed" = @(); "Removed" = @(); "Other" = @()
             }

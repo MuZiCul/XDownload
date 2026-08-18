@@ -84,6 +84,163 @@ pub async fn validate_cookies(app: AppHandle, browser: String) -> Result<serde_j
     }
 }
 
+/// Get the current x.com username associated with the saved cookie source.
+///
+/// Unlike `validate_cookies`, this is a **silent** lookup used by the UI (e.g.
+/// the bookmarks page header) to display "who is logged in". It:
+/// - Returns `null` when no cookie source is configured, instead of an error.
+/// - Does NOT emit `cookies-progress` events (no spinner expected).
+/// - Logs failures (missing yt-dlp / no auth_token / network) for debugging.
+///
+/// 固化缓存（避免每次重复 dump ~17s）：
+/// - 成功验证后把「browser + sha256(auth_token) 指纹 + 用户名」固化到
+///   `config/data.db` 的 `config` 表。
+/// - `force=false`（默认，挂载/自动触发）：**先查缓存**——若固化的 browser
+///   与当前一致 → 直接返回缓存用户名，**跳过 yt-dlp dump（0 网络，秒回）**。
+/// - `force=true`（用户手动点「获取用户」）：跳过缓存，强制 dump + verify，
+///   感知同浏览器内 cookies 内容变化（重新登录等）。
+/// - 未配置 cookies 来源 → 返回 `null`（不触发任何探测）。
+#[tauri::command]
+pub async fn get_cookies_username(app: AppHandle, force: Option<bool>) -> Option<String> {
+    use sha2::{Digest, Sha256};
+
+    let browser = crate::services::config::ConfigManager::load_cookie_source()?;
+    tracing::info!(
+        "[XDownload] get_cookies_username: browser={} force={}",
+        browser,
+        force.unwrap_or(false)
+    );
+
+    // 非强制（自动触发）且 browser 未变 → 直接用固化用户名，跳过 dump（0 网络）。
+    if !force.unwrap_or(false) {
+        if let Some(cached) = load_cookies_username_cache_by_browser(&browser) {
+            tracing::info!(
+                "[XDownload] get_cookies_username: cache hit by browser (no dump)"
+            );
+            return Some(cached);
+        }
+    }
+
+    // yt-dlp is required to dump browser cookies.
+    let ytdlp_path = crate::utils::process::find_ytdlp();
+    if !ytdlp_path.exists() {
+        tracing::warn!("[XDownload] get_cookies_username: yt-dlp not installed");
+        return None;
+    }
+
+    let auth_token = match dump_and_extract_auth_token(&app, &browser).await {
+        Ok(t) => t,
+        Err((msg, code)) => {
+            tracing::warn!(
+                "[XDownload] get_cookies_username: cookie extraction failed browser={} error_code={} msg={}",
+                browser,
+                code,
+                msg
+            );
+            return None;
+        }
+    };
+
+    // 当前 cookies 指纹（auth_token 的 SHA-256）。
+    let fingerprint = {
+        let mut hasher = Sha256::new();
+        hasher.update(auth_token.as_bytes());
+        hasher.finalize()
+    };
+    let fingerprint_hex = format!("{:x}", fingerprint);
+
+    // verify 可能因网络/代理偶发失败：每 5 秒重试一次，最多 3 次。
+    // 全部失败才返回 null（静默）；任何一次成功即固化并返回。
+    const MAX_ATTEMPTS: usize = 3;
+    const RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+
+    for attempt in 1..=MAX_ATTEMPTS {
+        match verify_x_auth_token(&auth_token).await {
+            Ok(username) => {
+                tracing::info!(
+                    "[XDownload] get_cookies_username: success browser={} username={} (attempt={})",
+                    browser,
+                    username,
+                    attempt
+                );
+                // 固化「browser + 指纹 ↔ 用户名」关联。
+                save_cookies_username_cache(&browser, &fingerprint_hex, &username);
+                return Some(username);
+            }
+            Err((msg, code)) => {
+                tracing::warn!(
+                    "[XDownload] get_cookies_username: token verify failed browser={} error_code={} msg={} (attempt={}/{})",
+                    browser,
+                    code,
+                    msg,
+                    attempt,
+                    MAX_ATTEMPTS
+                );
+                if attempt < MAX_ATTEMPTS {
+                    tokio::time::sleep(RETRY_INTERVAL).await;
+                }
+            }
+        }
+    }
+    tracing::warn!(
+        "[XDownload] get_cookies_username: giving up after {} attempts browser={}",
+        MAX_ATTEMPTS,
+        browser
+    );
+    // verify 全部失败 → 固化「browser ↔ @None」占位（不清空），
+    // 表示当前 cookies 无有效用户。前端把 @None 视为未登录（禁用同步/查看）。
+    // 下次 force=false 命中缓存直接返回 @None，避免反复 dump。
+    save_cookies_username_cache(&browser, &fingerprint_hex, "@None");
+    None
+}
+
+/// 按 browser 读取固化的「cookies ↔ 用户名」缓存。
+/// 仅当固化的 browser 与当前一致时返回用户名；browser 不同/无缓存返回 None。
+/// 用于非强制（自动触发）路径：browser 未变 → 跳过 yt-dlp dump，秒回。
+fn load_cookies_username_cache_by_browser(browser: &str) -> Option<String> {
+    let conn = crate::services::db::open().ok()?;
+    let cached_browser: Option<String> = conn
+        .query_row(
+            "SELECT value FROM config WHERE key = 'cookies_username_browser'",
+            [],
+            |row| row.get(0),
+        )
+        .ok();
+    if cached_browser.as_deref() != Some(browser) {
+        return None;
+    }
+    conn.query_row(
+        "SELECT value FROM config WHERE key = 'cookies_username'",
+        [],
+        |row| row.get(0),
+    )
+    .ok()
+}
+
+/// 固化「browser + 指纹 ↔ 用户名」到 config/data.db（幂等 upsert）。
+fn save_cookies_username_cache(browser: &str, fingerprint: &str, username: &str) {
+    let Ok(conn) = crate::services::db::open() else {
+        return;
+    };
+    for (key, value) in [
+        ("cookies_username_browser", browser.to_string()),
+        ("cookies_username_fingerprint", fingerprint.to_string()),
+        ("cookies_username", username.to_string()),
+    ] {
+        let _ = conn.execute(
+            "INSERT INTO config (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            rusqlite::params![key, value],
+        );
+    }
+    tracing::info!(
+        "[XDownload] cookies username cache persisted: browser={} fingerprint={} username={}",
+        browser,
+        &fingerprint[..fingerprint.len().min(12)],
+        username
+    );
+}
+
 /// Emit a structured progress step (1 = extracting, 2 = verifying, 3 = success).
 fn emit_step(app: &AppHandle, step: u8, browser: &str) {
     let _ = app.emit(

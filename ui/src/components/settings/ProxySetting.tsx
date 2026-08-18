@@ -1,8 +1,8 @@
-import { useState, useEffect } from "react";
-import { testProxy, setProxyMode, getProxyStatus, loadSettings, saveSettings, applySavedProxy } from "../../lib/bindings";
-import type { ProxyStatus, ProxyTestResult, AppSettings } from "../../lib/types";
+import { useState, useEffect, useRef } from "react";
+import { testProxy, setProxyMode, getProxyStatus, applyManualProxy } from "../../lib/bindings";
+import { mutateAndSaveSettings } from "../../lib/settingsPersist";
+import type { ProxyStatus, ProxyTestResult } from "../../lib/types";
 import { toast } from "sonner";
-import { Save } from "lucide-react";
 import { useI18n } from "../../lib/i18n";
 import SectionTitle from "./SectionTitle";
 
@@ -32,8 +32,13 @@ export default function ProxySetting({ host, port, scheme, onChange }: Props) {
   const [sysProxyHost, setSysProxyHost] = useState<string | null>(null);
   const [sysProxyPort, setSysProxyPort] = useState(0);
   const [sysProxyStr, setSysProxyStr] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
   const [testState, setTestState] = useState<"idle" | "testing" | "success" | "error">("idle");
+  // 最新输入值 ref：host/port 输入后若同一次渲染内立刻切换 radio，
+  // 闭包里的 h/p 仍是旧值，用 ref 保证读到最新输入（修复#3）。
+  const hRef = useRef(h);
+  const pRef = useRef(p);
+  hRef.current = h;
+  pRef.current = p;
 
   // Run a connectivity test and cache the outcome (keyed by proxy config).
   const runTest = (
@@ -61,34 +66,19 @@ export default function ProxySetting({ host, port, scheme, onChange }: Props) {
     );
   };
 
-  // Track committed state to enable/disable save button
-  const [committedMode, setCommittedMode] = useState<"none" | "manual" | "system">("none");
-  const [committedHost, setCommittedHost] = useState(host || "127.0.0.1");
-  const [committedPort, setCommittedPort] = useState(port || 7890);
-  const [committedScheme, setCommittedScheme] = useState(scheme || "http");
-
   const effectiveHost = mode === "system" && sysProxyHost ? sysProxyHost : h;
   const effectivePort = mode === "system" && sysProxyPort ? sysProxyPort : p;
-  const changed =
-    mode !== committedMode ||
-    effectiveHost !== committedHost ||
-    effectivePort !== committedPort ||
-    sc !== committedScheme;
 
   useEffect(() => {
     if (host) {
       setMode("manual");
       setH(host);
-      setCommittedMode("manual");
-      setCommittedHost(host);
     }
     if (port) {
       setP(port);
-      setCommittedPort(port);
     }
     if (scheme) {
       setSc(scheme);
-      setCommittedScheme(scheme);
     }
   }, [host, port, scheme]);
 
@@ -103,18 +93,12 @@ export default function ProxySetting({ host, port, scheme, onChange }: Props) {
 
       if (status.enabled && status.from_system) {
         setMode("system");
-        setCommittedMode("system");
-        setCommittedHost(status.host || "");
-        setCommittedPort(status.port || 0);
         onChange(status.host || "", status.port || 0);
       } else if (status.enabled && !status.from_system) {
         setMode("manual");
-        setCommittedMode("manual");
         if (status.host) {
           setH(status.host);
           setP(status.port);
-          setCommittedHost(status.host);
-          setCommittedPort(status.port);
         }
       }
 
@@ -134,24 +118,86 @@ export default function ProxySetting({ host, port, scheme, onChange }: Props) {
     }).catch(() => {});
   }, []);
 
+  // 更改即自动保存：把当前代理写入 settings.json 并应用到运行时。
+  const persistProxy = async (
+    host: string,
+    port: number,
+    targetMode: "none" | "manual" | "system",
+    schemeOverride?: string
+  ) => {
+    const s = schemeOverride ?? sc;
+    // 手动模式统一校验（覆盖 host onBlur / port onBlur / scheme 切换 / radio 切换
+    // 所有入口）：host 非空、端口 > 0，无效则不落盘并提示，避免脏值（如 port=0）写盘。
+    if (targetMode === "manual") {
+      if (!host.trim()) {
+        toast.warning(t("proxy.hostRequired"));
+        return;
+      }
+      if (!port || port <= 0) {
+        toast.warning(t("proxy.portRequired"));
+        return;
+      }
+    }
+    try {
+      // 全局串行「读-改-写」，避免与其它设置卡片的并发保存互相覆盖。
+      await mutateAndSaveSettings((cfg) => {
+        if (targetMode === "none") {
+          cfg.proxy_host = undefined;
+          cfg.proxy_port = undefined;
+          cfg.proxy_scheme = undefined;
+          // 修复#2：切「无」时同步关闭「代理下载」开关，避免读盘时旧值
+          // tools_use_proxy=true 被短暂写回（最终会被 setProxyMode(false)
+          // 覆盖，但多一次脏写且前后端状态短暂不一致）。
+          cfg.tools_use_proxy = false;
+        } else {
+          cfg.proxy_host = host;
+          cfg.proxy_port = port;
+          cfg.proxy_scheme = s;
+        }
+      });
+      if (targetMode === "none") {
+        await setProxyMode(false);
+      } else if (targetMode === "manual") {
+        // 手动代理：强制应用到运行时（覆盖系统代理标记），确保即时生效。
+        await applyManualProxy(host, port, s);
+      } else {
+        // system 模式：setProxyMode(true) 内部对系统代理走"重新启用"
+        // （ProxyConfig::enable() 保留系统来源标记），修复关闭后重开无法恢复。
+        await setProxyMode(true);
+      }
+      // Notify other pages (e.g. DownloadPage) to reload the latest config.
+      window.dispatchEvent(new CustomEvent("config-applied"));
+      // 通知 ToolsSetting 重新探测代理可用性并同步「代理下载」开关。
+      window.dispatchEvent(new CustomEvent("proxy-changed"));
+    } catch (err: any) {
+      toast.error(t("common.saveFail", { err }));
+    }
+  };
+
   const handleModeChange = (newMode: "none" | "manual" | "system") => {
     setMode(newMode);
 
     if (newMode === "none") {
-      setProxyMode(false);
+      // persistProxy 内部会调用 setProxyMode(false) 并同步 tools_use_proxy，
+      // 这里不再重复调用（修复#2 避免两次运行时切换）。
       onChange("", 0);
+      persistProxy("", 0, "none");
     } else if (newMode === "system") {
-      setProxyMode(true);
+      // persistProxy 内部 system 分支会调用 setProxyMode(true)，这里不重复调用。
       if (sysProxyHost) {
         onChange(sysProxyHost, sysProxyPort);
+        persistProxy(sysProxyHost, sysProxyPort, "system");
       } else {
         toast.warning(t("proxy.noSystem"));
       }
     } else {
-      setProxyMode(true);
-      if (h && p) {
-        onChange(h, p);
-      }
+      setProxyMode(true).catch(() => {});
+      // 用 ref 读取最新输入值（修复#3：输入后同一 tick 切换 radio 不再用旧闭包值）。
+      // 校验统一由 persistProxy 负责（host 非空 + 端口有效，无效则提示不保存）。
+      const curH = hRef.current;
+      const curP = pRef.current;
+      onChange(curH, curP);
+      persistProxy(curH, curP, "manual");
     }
   };
 
@@ -170,47 +216,6 @@ export default function ProxySetting({ host, port, scheme, onChange }: Props) {
       }
     } catch (err: any) {
       toast.error(`${err}`);
-    }
-  };
-
-  const handleSave = async () => {
-    setSaving(true);
-    try {
-      const cfg: AppSettings = await loadSettings();
-      if (mode === "none") {
-        cfg.proxy_host = undefined;
-        cfg.proxy_port = undefined;
-        cfg.proxy_scheme = undefined;
-      } else {
-        cfg.proxy_host = effectiveHost;
-        cfg.proxy_port = effectivePort;
-        cfg.proxy_scheme = sc;
-      }
-      await saveSettings(cfg);
-
-      if (mode === "none") {
-        setProxyMode(false);
-        toast.success(t("proxy.disabledSaved"));
-      } else {
-        // Apply the just-saved proxy to runtime explicitly. Testing is a
-        // separate concern (the "测试" button / mount-time check) and is NOT
-        // part of saving, so saving stays fast and never misleads.
-        await applySavedProxy();
-        toast.success(t("proxy.savedApplied"));
-      }
-
-      // Mark as clean
-      setCommittedMode(mode);
-      setCommittedHost(effectiveHost);
-      setCommittedPort(effectivePort);
-      setCommittedScheme(sc);
-
-      // Notify other pages (e.g. DownloadPage) to reload the latest config.
-      window.dispatchEvent(new CustomEvent("config-applied"));
-    } catch (err: any) {
-      toast.error(t("common.saveFail", { err }));
-    } finally {
-      setSaving(false);
     }
   };
 
@@ -252,8 +257,11 @@ export default function ProxySetting({ host, port, scheme, onChange }: Props) {
         <select
           value={sc}
           onChange={(e) => {
-            setSc(e.target.value);
+            const v = e.target.value;
+            setSc(v);
             setTestState("idle");
+            // 更改即自动保存（仅手动模式编辑生效；校验统一由 persistProxy 负责）。
+            if (mode === "manual") persistProxy(hRef.current, pRef.current, "manual", v);
           }}
           disabled={manualDisabled}
           className="text-xs px-1"
@@ -265,7 +273,18 @@ export default function ProxySetting({ host, port, scheme, onChange }: Props) {
         <input
           type="text"
           value={effectiveHost}
-          onChange={(e) => { setH(e.target.value); setTestState("idle"); }}
+          onChange={(e) => {
+            // 轻量过滤（方案 B）：只允许 host 合法字符（字母/数字/. - _），
+            // 拒绝空格与特殊符号，兼容 IP / 域名 / 主机名。
+            const raw = e.target.value;
+            if (!/^[a-zA-Z0-9._-]*$/.test(raw)) return;
+            setH(raw);
+            hRef.current = raw;
+            setTestState("idle");
+          }}
+          onBlur={() => {
+            if (mode === "manual") persistProxy(hRef.current, pRef.current, "manual");
+          }}
           disabled={manualDisabled}
           className="[field-sizing:content]"
         />
@@ -274,25 +293,33 @@ export default function ProxySetting({ host, port, scheme, onChange }: Props) {
           type="text"
           inputMode="numeric"
           pattern="[0-9]*"
-          value={effectivePort}
+          value={effectivePort ? effectivePort : ""}
           onChange={(e) => {
-            const v = e.target.value.replace(/\D/g, "");
-            setP(v ? parseInt(v, 10) : 7890);
+            const raw = e.target.value;
+            // 严格限制：含任何非数字字符直接拒绝该次输入（输入框保持原值），
+            // 只允许数字；端口区间 1~65535，超出也拒绝。
+            if (!/^\d*$/.test(raw)) return;
+            if (raw !== "" && parseInt(raw, 10) > 65535) return;
+            setP(raw ? parseInt(raw, 10) : 0);
+            pRef.current = raw ? parseInt(raw, 10) : 0;
             setTestState("idle");
+          }}
+          onBlur={() => {
+            // 修复#1：允许清空输入；onBlur 时端口为空/0 则提示且不保存，
+            // 有有效端口才自动保存。
+            if (mode !== "manual") return;
+            const curP = pRef.current;
+            if (!curP || curP <= 0) {
+              toast.warning(t("proxy.portRequired"));
+              return;
+            }
+            persistProxy(hRef.current, curP, "manual");
           }}
           disabled={manualDisabled}
           className="[field-sizing:content]"
         />
         <button className="btn text-xs px-2" onClick={handleTest} disabled={mode === "none"}>
           {t("proxy.test")}
-        </button>
-        <button
-          className="btn flex items-center gap-1 text-xs px-2"
-          onClick={handleSave}
-          disabled={saving || !changed}
-        >
-          <Save size={12} />
-          {saving ? "..." : t("common.save")}
         </button>
       </div>
     </div>

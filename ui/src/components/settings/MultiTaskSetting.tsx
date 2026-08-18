@@ -1,8 +1,7 @@
-import { useState } from "react";
-import { saveSettings, loadSettings } from "../../lib/bindings";
+import { useRef, useState } from "react";
+import { mutateAndSaveSettings } from "../../lib/settingsPersist";
 import type { AppSettings } from "../../lib/types";
 import { toast } from "sonner";
-import { Save } from "lucide-react";
 import { useI18n } from "../../lib/i18n";
 import SectionTitle from "./SectionTitle";
 
@@ -41,7 +40,8 @@ type Props = {
   ) => void;
 };
 
-/** 多任务设置卡片：并发数 / 失败重试 / 队列持久化 / 下载限速 / 下载时防休眠（同一卡片，单独保存）。 */
+/** 多任务设置卡片：并发数 / 失败重试 / 队列持久化 / 下载限速 / 下载时防休眠。
+ *  更改即自动保存（全局串行「读-改-写」防跨卡片竞态）。 */
 export default function MultiTaskSetting({
   concurrency,
   retryCount,
@@ -51,49 +51,49 @@ export default function MultiTaskSetting({
   onChange,
 }: Props) {
   const { t } = useI18n();
-  const [saving, setSaving] = useState(false);
   // 下拉框的当前模式：预设档位 or 自定义。独立的模式状态（而非由 rateLimit
   // 值推断），避免"自定义值恰好等于某预设档位"时模式错乱。
   const [mode, setMode] = useState<"preset" | "custom">(() =>
     RATE_LIMIT_PRESETS.some((p) => p.value === rateLimit) ? "preset" : "custom"
   );
-  const [committed, setCommitted] = useState({
-    concurrency,
-    retryCount,
-    queuePersist,
-    keepAwake,
-    rateLimit,
-  });
-  const changed =
-    concurrency !== committed.concurrency ||
-    retryCount !== committed.retryCount ||
-    queuePersist !== committed.queuePersist ||
-    keepAwake !== committed.keepAwake ||
-    rateLimit !== committed.rateLimit;
+  // 最新设置值：初始来自 props，之后每次 onChange 同步合并（不依赖异步 render），
+  // 保证快速连续操作时异步保存回调读到的始终是最新值。
+  const latest = useRef({ concurrency, retryCount, queuePersist, keepAwake, rateLimit, mode });
+  latest.current = { concurrency, retryCount, queuePersist, keepAwake, rateLimit, mode };
 
-  const handleSave = async () => {
-    // 保存前校验自定义限速值（预设档位永远合法）；非法则提示并回滚，不落盘。
-    if (mode === "custom" && rateLimit !== "" && !RATE_LIMIT_RE.test(rateLimit)) {
+  const persist = (
+    patch: Partial<
+      Pick<AppSettings, "concurrency" | "retry_count" | "queue_persist" | "keep_awake" | "download_rate_limit">
+    >,
+    modeOverride?: "preset" | "custom"
+  ) => {
+    // 先把本次变更同步合并进 latest（显式映射：AppSettings 字段名 → ref 内部字段名），
+    // 避免 onChange 异步 render 前的空窗读到旧值。mode 用 modeOverride 覆盖，
+    // 解决"setMode 异步、persist 同步执行"导致的非法值校验失效。
+    Object.assign(latest.current, {
+      concurrency: patch.concurrency ?? latest.current.concurrency,
+      retryCount: patch.retry_count ?? latest.current.retryCount,
+      queuePersist: patch.queue_persist ?? latest.current.queuePersist,
+      keepAwake: patch.keep_awake ?? latest.current.keepAwake,
+      rateLimit: patch.download_rate_limit ?? latest.current.rateLimit,
+      mode: modeOverride ?? latest.current.mode,
+    });
+    const cur = { ...latest.current };
+    // 自定义限速值校验：非法则提示且不落盘该字段（其余字段仍保存），避免脏值进配置。
+    const rateValid = cur.mode !== "custom" || cur.rateLimit === "" || RATE_LIMIT_RE.test(cur.rateLimit);
+    if (!rateValid) {
       toast.error(t("multitask.invalidRate"));
-      onChange({ download_rate_limit: committed.rateLimit });
-      return;
     }
-    setSaving(true);
-    try {
-      const cfg: AppSettings = await loadSettings();
-      cfg.concurrency = concurrency;
-      cfg.retry_count = retryCount;
-      cfg.queue_persist = queuePersist;
-      cfg.keep_awake = keepAwake;
-      cfg.download_rate_limit = rateLimit || "";
-      await saveSettings(cfg);
-      setCommitted({ concurrency, retryCount, queuePersist, keepAwake, rateLimit });
-      toast.success(t("multitask.saved"));
-    } catch (err: any) {
+    // 全局串行「读-改-写」，避免与其它设置卡片的并发保存互相覆盖。
+    mutateAndSaveSettings((cfg) => {
+      cfg.concurrency = cur.concurrency;
+      cfg.retry_count = cur.retryCount;
+      cfg.queue_persist = cur.queuePersist;
+      cfg.keep_awake = cur.keepAwake;
+      if (rateValid) cfg.download_rate_limit = cur.rateLimit || "";
+    }).catch((err: any) => {
       toast.error(t("common.saveFail", { err }));
-    } finally {
-      setSaving(false);
-    }
+    });
   };
 
   return (
@@ -104,7 +104,11 @@ export default function MultiTaskSetting({
           {t("multitask.concurrency")}
           <select
             value={concurrency}
-            onChange={(e) => onChange({ concurrency: Number(e.target.value) })}
+            onChange={(e) => {
+              const patch = { concurrency: Number(e.target.value) };
+              onChange(patch);
+              persist(patch);
+            }}
             className="text-xs"
           >
             {[1, 2, 3].map((n) => (
@@ -118,7 +122,11 @@ export default function MultiTaskSetting({
           {t("multitask.retry")}
           <select
             value={retryCount}
-            onChange={(e) => onChange({ retry_count: Number(e.target.value) })}
+            onChange={(e) => {
+              const patch = { retry_count: Number(e.target.value) };
+              onChange(patch);
+              persist(patch);
+            }}
             className="text-xs"
           >
             {[0, 1, 2, 3, 4, 5].map((n) => (
@@ -134,7 +142,11 @@ export default function MultiTaskSetting({
             type="button"
             role="switch"
             aria-checked={queuePersist}
-            onClick={() => onChange({ queue_persist: !queuePersist })}
+            onClick={() => {
+              const patch = { queue_persist: !queuePersist };
+              onChange(patch);
+              persist(patch);
+            }}
             className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${queuePersist ? "bg-blue-600" : "bg-zinc-300"}`}
           >
             <span
@@ -148,7 +160,11 @@ export default function MultiTaskSetting({
             type="button"
             role="switch"
             aria-checked={keepAwake}
-            onClick={() => onChange({ keep_awake: !keepAwake })}
+            onClick={() => {
+              const patch = { keep_awake: !keepAwake };
+              onChange(patch);
+              persist(patch);
+            }}
             className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${keepAwake ? "bg-blue-600" : "bg-zinc-300"}`}
           >
             <span
@@ -166,11 +182,15 @@ export default function MultiTaskSetting({
                 setMode("custom");
                 // 进入自定义：若无当前值，给一个合法默认让输入框有内容可编辑。
                 if (rateLimit === "" || RATE_LIMIT_PRESETS.some((p) => p.value === rateLimit)) {
-                  onChange({ download_rate_limit: "2M" });
+                  const patch = { download_rate_limit: "2M" };
+                  onChange(patch);
+                  persist(patch, "custom");
                 }
               } else {
                 setMode("preset");
-                onChange({ download_rate_limit: v });
+                const patch = { download_rate_limit: v };
+                onChange(patch);
+                persist(patch, "preset");
               }
             }}
             className="text-xs"
@@ -189,21 +209,15 @@ export default function MultiTaskSetting({
           <input
             type="text"
             value={rateLimit}
-            onChange={(e) =>
-              onChange({ download_rate_limit: sanitizeRateLimitInput(e.target.value) })
-            }
+            onChange={(e) => {
+              const patch = { download_rate_limit: sanitizeRateLimitInput(e.target.value) };
+              onChange(patch);
+              persist(patch, "custom");
+            }}
             placeholder="2M"
             className="text-xs border rounded px-2 py-1 w-20"
           />
         )}
-        <button
-          className="btn flex items-center gap-1"
-          onClick={handleSave}
-          disabled={saving || !changed}
-        >
-          <Save size={13} />
-          {saving ? t("common.saving") : t("common.save")}
-        </button>
       </div>
     </div>
   );
