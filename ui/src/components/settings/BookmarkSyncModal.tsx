@@ -6,6 +6,7 @@ import {
 } from "../../lib/bookmarkSync";
 import { Download, Loader2, X } from "lucide-react";
 import { useI18n } from "../../lib/i18n";
+import { usePrivacyMode } from "../../lib/privacyMode";
 
 /**
  * 书签同步全局模态：覆盖同步 → 确认 → 错误三个阶段。
@@ -65,6 +66,7 @@ function SyncingStep({ step }: { step: string | null }) {
 
 function PreviewStep() {
   const { t } = useI18n();
+  const privacy = usePrivacyMode();
   const { preview } = useBookmarkSync();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirming, setConfirming] = useState(false);
@@ -156,7 +158,7 @@ function PreviewStep() {
                 className="block flex-1 min-w-0"
               >
                 <div className="text-xs font-medium text-zinc-800 line-clamp-2">
-                  {item.text}
+                  {privacy ? "***" : item.text}
                 </div>
                 <div className="text-[11px] text-zinc-500 mt-0.5">
                   @{item.handle} · {item.author_name}

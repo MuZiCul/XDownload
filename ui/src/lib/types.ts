@@ -269,3 +269,40 @@ export interface BootstrapComplete {
   tool: string;
   success: boolean;
 }
+
+// --- Statistics ---
+
+export interface DownloadStatsHero {
+  total: number;
+  success: number;
+  failed: number;
+  total_size: number;
+  first_at: number;
+  last_at: number;
+  avg_duration: number;
+}
+
+export interface DownloadStatsItem {
+  name: string;
+  count: number;
+}
+
+export interface DownloadStats {
+  ok: boolean;
+  error?: string;
+  hero: DownloadStatsHero;
+  daily: DownloadStatsItem[];
+  sources: DownloadStatsItem[];
+  uploaders: DownloadStatsItem[];
+  handles: DownloadStatsItem[];
+}
+
+// --- Log viewer ---
+
+export interface LogsData {
+  files: string[];
+  file: string;
+  size: number;
+  lines: number;
+  tail: string[];
+}

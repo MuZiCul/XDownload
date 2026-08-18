@@ -5,3 +5,5 @@ pub mod cookies;
 pub mod bootstrap;
 pub mod update;
 pub mod history;
+pub mod stats;
+pub mod logs;

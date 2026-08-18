@@ -13,12 +13,18 @@ import BookmarksSetting from "./BookmarksSetting";
 import HlsSetting from "./HlsSetting";
 import LanguageSetting from "./LanguageSetting";
 import ConfigButtons from "./ConfigButtons";
+import StatisticsPage from "../stats/StatisticsPage";
+import LogViewerPage from "../logs/LogViewerPage";
 import { useI18n } from "../../lib/i18n";
 
 export default function SettingsPage() {
   const { t } = useI18n();
   const [settings, setSettings] = useState<AppSettings>({});
   const [loaded, setLoaded] = useState(false);
+  // 统计页覆盖层开关（设置页「统计」按钮）。
+  const [statsOpen, setStatsOpen] = useState(false);
+  // 应用内日志页覆盖层开关（设置页「软件日志」按钮）。
+  const [logsOpen, setLogsOpen] = useState(false);
   // 展示用的下载目录（绝对路径）：来自后端 get_download_dir（空/相对配置
   // 会归一化为 <root>/downloads 的绝对路径）。仅显示层，配置值本身不改写。
   const [displayDir, setDisplayDir] = useState("");
@@ -41,7 +47,10 @@ export default function SettingsPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          <ConfigButtons />
+          <ConfigButtons
+            onOpenLogs={() => setLogsOpen(true)}
+            onOpenStats={() => setStatsOpen(true)}
+          />
 
           <DirSetting
             dir={displayDir || settings.download_dir || "downloads"}
@@ -95,6 +104,12 @@ export default function SettingsPage() {
 
         </div>
       )}
+
+      {/* 统计页覆盖层（设置页「统计」按钮打开） */}
+      {statsOpen && <StatisticsPage onClose={() => setStatsOpen(false)} />}
+
+      {/* 应用内日志页覆盖层（设置页「软件日志」按钮打开） */}
+      {logsOpen && <LogViewerPage onClose={() => setLogsOpen(false)} />}
     </div>
   );
 }
