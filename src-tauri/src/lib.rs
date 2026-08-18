@@ -300,7 +300,6 @@ pub fn run() {
             commands::bootstrap::get_bin_dir,
             commands::bootstrap::get_root_dir,
             commands::bootstrap::open_root_dir,
-            commands::bootstrap::open_logs_dir,
             commands::bootstrap::open_download_dir,
             commands::bootstrap::open_download_path,
             commands::bootstrap::open_file_path,
@@ -323,6 +322,8 @@ pub fn run() {
             commands::history::delete_download_history,
             commands::history::delete_download_history_file,
             commands::history::clear_download_history,
+            commands::stats::get_download_stats,
+            commands::logs::get_logs,
         ])
         .setup(move |app| {
             // 窗口标题带上版本号（版本号唯一数据源 = Cargo.toml）。

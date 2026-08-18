@@ -39,25 +39,6 @@ pub fn open_root_dir(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| format!("failed to open root dir: {}", e))
 }
 
-/// Open the logs viewer in the default browser.
-///
-/// Starts a minimal local HTTP server (127.0.0.1, random port) that serves a
-/// live log viewer page, then opens it with the system browser. The server is
-/// idempotent: subsequent clicks reuse the already-running instance, and it
-/// dies together with the app process.
-#[tauri::command]
-pub async fn open_logs_dir(app: tauri::AppHandle) -> Result<(), String> {
-    use tauri_plugin_opener::OpenerExt;
-
-    // Make sure the logs folder exists so the viewer has something to show.
-    let _ = crate::utils::app_home::AppHome::ensure_logs_dir();
-    let port = crate::services::log_web::ensure_started().await?;
-    let url = format!("http://127.0.0.1:{}/", port);
-    app.opener()
-        .open_url(&url, None::<&str>)
-        .map_err(|e| format!("failed to open logs viewer: {}", e))
-}
-
 /// Open the download directory in the system file manager.
 /// Uses the configured absolute `download_dir` when present, otherwise the
 /// default `downloads/` folder. Creates the directory if it does not exist.

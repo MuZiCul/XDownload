@@ -11,6 +11,7 @@ import { TaskSource } from "../../lib/types";
 import { toast } from "sonner";
 import { RefreshCw, Download, History, X, UserRound } from "lucide-react";
 import { useI18n } from "../../lib/i18n";
+import { usePrivacyMode } from "../../lib/privacyMode";
 import { runBookmarkSync, useBookmarkSync } from "../../lib/bookmarkSync";
 import SectionTitle from "./SectionTitle";
 
@@ -26,6 +27,7 @@ import SectionTitle from "./SectionTitle";
  */
 export default function BookmarksSetting() {
   const { t } = useI18n();
+  const privacy = usePrivacyMode();
   const { phase } = useBookmarkSync();
   const syncing = phase === "syncing";
   // 已同步书签目录弹窗。
@@ -239,7 +241,7 @@ export default function BookmarksSetting() {
                       className="block flex-1 min-w-0"
                     >
                       <div className="text-xs font-medium text-zinc-800 line-clamp-2">
-                        {item.title || t("bookmarks.noTitle")}
+                        {privacy ? "***" : item.title || t("bookmarks.noTitle")}
                       </div>
                       <div className="text-[11px] text-zinc-500 mt-0.5">
                         @{item.handle} · {item.author_name}

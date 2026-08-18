@@ -20,6 +20,15 @@ select,
   user-select: text;
 }
 
+/* 日志查看器：日志内容可复制，其他界面元素仍禁止选中。
+   user-select 非继承属性，全局 `* { user-select:none }` 直接作用在每个子元素上，
+   必须用更高特异性规则同时覆盖日志容器及其所有子元素。 */
+.log-viewer .log-content,
+.log-viewer .log-content * {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 body {
   font-family: "Inter", -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
   font-size: 13px;

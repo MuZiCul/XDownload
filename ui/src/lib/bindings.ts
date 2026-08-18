@@ -14,6 +14,8 @@ import type {
   BookmarksVideoItem,
   BookmarksConfirmResult,
   BookmarksListItem,
+  DownloadStats,
+  LogsData,
 } from "./types";
 
 // --- Misc helpers ---
@@ -315,10 +317,6 @@ export async function openRootDir(): Promise<void> {
   return invoke("open_root_dir");
 }
 
-export async function openLogsDir(): Promise<void> {
-  return invoke("open_logs_dir");
-}
-
 export async function openDownloadDir(): Promise<void> {
   return invoke("open_download_dir");
 }
@@ -350,6 +348,19 @@ export async function setPrivacyModePersist(enabled: boolean): Promise<void> {
 /** 即时持久化「工具下载默认走代理」开关状态。 */
 export async function setToolsUseProxy(enabled: boolean): Promise<void> {
   return invoke("set_tools_use_proxy", { enabled });
+}
+
+/** 获取下载统计聚合数据（统计页使用）。 */
+export async function getDownloadStats(): Promise<DownloadStats> {
+  return invoke("get_download_stats");
+}
+
+/** 获取日志文件列表 + 指定文件尾部内容（应用内日志页使用）。 */
+export async function getLogs(
+  file?: string | null,
+  lines?: number | null
+): Promise<LogsData> {
+  return invoke("get_logs", { file: file ?? null, lines: lines ?? null });
 }
 
 /** 退出应用。saveProgress=true 时先强制保存队列进度到 queue.json。 */

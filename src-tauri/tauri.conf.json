@@ -41,7 +41,7 @@
         "img-src": "'self' asset: http://asset.localhost data: blob: https:",
         "style-src": "'self' 'unsafe-inline'",
         "font-src": "'self' data:",
-        "script-src": "'self'",
+        "script-src": "'self' https://cdn.bootcdn.net https://cdn.staticfile.org https://cdn.jsdelivr.net",
         "media-src": "'self' asset: blob:"
       }
     }
