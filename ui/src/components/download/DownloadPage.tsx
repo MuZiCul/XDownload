@@ -61,9 +61,13 @@ export default function DownloadPage() {
   const [url, setUrl] = useState("");
 
   // Re-download from the history page: `App` switches to this tab and fires
-  // this event with a DownloadHistoryItem. We parse the URL with yt-dlp for
-  // live data (format list, title, thumbnail, …), then fill the info card and
-  // start the download automatically — history records are not re-used.
+  // this event with a DownloadHistoryItem. History records already carry every
+  // field the info card shows (title / cover / author / duration / views /
+  // likes / url / video_id — written for failures too), so the card is filled
+  // and the task enqueued immediately instead of blocking the user for ~4 s on
+  // a fresh yt-dlp parse. Only legacy records missing the essentials (no title
+  // or no cover) fall back to a background parse — the download is never
+  // delayed by it.
   useEffect(() => {
     const handler = async (e: Event) => {
       const item = (e as CustomEvent<DownloadHistoryItem>).detail;
@@ -71,61 +75,96 @@ export default function DownloadPage() {
         toast.warning(t("history.noUrl"));
         return;
       }
-      toast.loading(t("prog.fetching"), { id: "fetch-video" });
-      try {
-        const ytStatus = await checkYtdlp();
-        if (!ytStatus.available) {
-          throw new Error(t("tools.missing.ytdlp"));
-        }
-        const data = await fetchVideoInfo(item.url);
-        // Fill the info card with the freshly parsed data (incl. formats).
-        setVideoInfo(data);
-        setConfig((c) => ({
-          ...c,
-          url: data.url,
-          video_id: data.id,
-          title: data.title,
-          thumbnail: data.thumbnail,
-          uploader: data.uploader,
-          duration: data.duration,
-          view_count: data.view_count,
-          like_count: data.like_count,
-        }));
-        toast.success(t("url.fetchOk"), { id: "fetch-video" });
+      const url = item.url;
 
-        // Build a fresh config (latest settings) and start downloading.
-        const s = await loadSettings().catch(() => null);
-        const cfg: DownloadConfig = {
-          url: data.url,
-          video_id: data.id,
-          title: data.title,
-          thumbnail: data.thumbnail,
-          uploader: data.uploader,
-          duration: data.duration,
-          view_count: data.view_count,
-          like_count: data.like_count,
-          format_id: "bestvideo+bestaudio/best",
-          output_dir: s?.download_dir ?? "downloads",
-          output_template: "%(title)s.%(ext)s",
-          extract_audio: false,
-          embed_subtitles: false,
-          embed_thumbnail: false,
-          write_thumbnail: false,
-          proxy: null,
-          socket_timeout: 30,
-          download_rate_limit: s?.download_rate_limit ?? null,
-          cookies_from_browser: s?.cookies_from_browser ?? null,
-          max_height: 0,
-          download_archive: null,
-        };
+      // 1) 立即回填（纯本地，不发请求、不 spawn yt-dlp）。
+      setUrl(url);
+      setVideoInfo({
+        id: item.video_id,
+        url,
+        title: item.title,
+        description: null,
+        duration: item.duration,
+        thumbnail: item.thumbnail,
+        uploader: item.uploader,
+        view_count: item.view_count,
+        like_count: item.like_count,
+        webpage_url: url,
+        formats: [],
+        media_count: 1,
+        downloaded: item.file_exists,
+        downloaded_at: item.downloaded_at ?? null,
+        download_path: item.file_path ?? null,
+      });
+      setConfig((c) => ({
+        ...c,
+        url,
+        video_id: item.video_id,
+        title: item.title,
+        thumbnail: item.thumbnail,
+        uploader: item.uploader,
+        duration: item.duration,
+        view_count: item.view_count,
+        like_count: item.like_count,
+      }));
+
+      // 2) 立即入队：video_id 用历史键（推文 status id），重下成功后正好
+      //    替换掉这条记录，不会再多出一条。
+      const s = await loadSettings().catch(() => null);
+      const cfg: DownloadConfig = {
+        url,
+        video_id: item.video_id,
+        title: item.title,
+        thumbnail: item.thumbnail,
+        uploader: item.uploader,
+        duration: item.duration,
+        view_count: item.view_count,
+        like_count: item.like_count,
+        format_id: "bestvideo+bestaudio/best",
+        output_dir: s?.download_dir ?? "downloads",
+        output_template: "%(title)s.%(ext)s",
+        extract_audio: false,
+        embed_subtitles: false,
+        embed_thumbnail: false,
+        write_thumbnail: false,
+        proxy: null,
+        socket_timeout: 30,
+        download_rate_limit: s?.download_rate_limit ?? null,
+        cookies_from_browser: s?.cookies_from_browser ?? null,
+        max_height: 0,
+        download_archive: null,
+      };
+      try {
         await enqueueDownloadGlobal(cfg, {
-          title: data.title ?? item.title,
+          title: item.title,
           source: TaskSource.Single,
         });
+        toast.success(t("queue.added"));
       } catch (err: any) {
-        toast.error(t("url.fetchFail", { err: friendlyErrorMessage(err) }), {
-          id: "fetch-video",
-        });
+        toast.error(friendlyErrorMessage(err));
+        return;
+      }
+
+      // 3) 老记录可能缺标题/封面 → 后台补一次解析（不阻塞下载，失败静默）。
+      if (!item.title || !item.thumbnail) {
+        void (async () => {
+          try {
+            const data = await fetchVideoInfo(url);
+            setVideoInfo(data);
+            setConfig((c) => ({
+              ...c,
+              video_id: data.id,
+              title: data.title,
+              thumbnail: data.thumbnail,
+              uploader: data.uploader,
+              duration: data.duration,
+              view_count: data.view_count,
+              like_count: data.like_count,
+            }));
+          } catch {
+            // 老记录缺字段只是显示不全，不影响已经开始下载的任务。
+          }
+        })();
       }
     };
     window.addEventListener("history-redownload", handler);
