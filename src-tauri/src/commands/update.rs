@@ -1,3 +1,4 @@
+use crate::services::bootstrap::{KEY_FFMPEG_ASSET_ETAG, KEY_FFMPEG_INSTALLED_AT};
 use serde::Deserialize;
 
 /// Response from GitHub Releases API
@@ -18,6 +19,10 @@ struct GithubRelease {
 struct GithubAsset {
     name: String,
     browser_download_url: String,
+    /// 资产最后一次上传时间（ISO 8601 UTC）。BtbN 每次自动构建都会重传同名
+    /// 资产（覆盖式），该时间随之变化 —— 用作"远端内容是否变过"的指纹。
+    #[serde(default)]
+    updated_at: Option<String>,
 }
 
 /// Build a **direct** (no-proxy) reqwest client for update checks. Tried first:
@@ -41,6 +46,129 @@ fn update_client() -> Result<reqwest::Client, reqwest::Error> {
         builder = builder.proxy(proxy);
     }
     builder.build()
+}
+
+/// 关心的 ffmpeg 资产名（必须与 `bootstrap::FFMPEG_URLS` 的下载目标一致）。
+const FFMPEG_ASSET_NAME: &str = "ffmpeg-master-latest-win64-gpl.zip";
+
+/// 没有安装记录时的容差：构建产物打包上传完成后 release 才发布，因此
+/// `published_at` 通常比压缩包内文件时间晚几十分钟。用它兜住这段发布延迟，
+/// 避免把"刚装完同一份构建"误判成有更新（历史上正是该偏差导致永久误报）。
+const RELEASE_LAG_TOLERANCE_SECS: i64 = 6 * 60 * 60;
+
+/// 读取 `config` 表里的一个值。
+fn load_config_value(key: &str) -> Option<String> {
+    let conn = crate::services::db::open().ok()?;
+    conn.query_row(
+        "SELECT value FROM config WHERE key = ?1",
+        rusqlite::params![key],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+}
+
+/// 幂等写入 `config` 表（失败静默：只影响更新判定的精度，不影响功能）。
+fn save_config_value(key: &str, value: &str) {
+    let Ok(conn) = crate::services::db::open() else {
+        return;
+    };
+    let _ = conn.execute(
+        "INSERT INTO config (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        rusqlite::params![key, value],
+    );
+}
+
+/// 更新判定的核心逻辑（纯函数，便于单测）。
+///
+/// 优先级：
+/// 1. **资产 ETag 比对**（最准）：远端资产 ETag ≠ 上次安装的 ETag → 内容变过。
+/// 2. **资产上传时刻 vs 本地安装时刻**：两者都是"发布侧"语义的时间，可直接比较；
+///    没有安装记录（老版本升级上来）时用 `ffmpeg.exe` mtime + 发布延迟容差兜底。
+/// 3. 远端信息拿不到 → 判定无更新（静默，与既有策略一致）。
+fn decide_has_update(
+    remote_etag: Option<&str>,
+    local_etag: Option<&str>,
+    remote_asset_at: Option<i64>,
+    local_installed_at: Option<i64>,
+    local_mtime: Option<i64>,
+) -> bool {
+    if let (Some(remote), Some(local)) = (remote_etag, local_etag) {
+        return remote != local;
+    }
+    if let Some(remote) = remote_asset_at {
+        let base = local_installed_at
+            .or_else(|| local_mtime.map(|m| m + RELEASE_LAG_TOLERANCE_SECS));
+        return matches!(base, Some(b) if remote > b);
+    }
+    false
+}
+
+/// 探测远端资产的 ETag / Last-Modified：发一次 GET 但**不读 body**（只取响应头，
+/// 不会下载整个 zip），直连优先、失败回退代理。任何失败返回 `None`，调用方
+/// 自动回退到资产指纹（API）判定。
+async fn probe_ffmpeg_asset_fingerprint() -> Option<(String, Option<String>)> {
+    let url = format!(
+        "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/{}",
+        FFMPEG_ASSET_NAME
+    );
+    let clients = [
+        ("direct", direct_update_client().ok()),
+        ("proxy", update_client().ok()),
+    ];
+    for (label, client) in clients.iter() {
+        let Some(client) = client else { continue };
+        match client.get(&url).send().await {
+            Ok(resp) => {
+                if !resp.status().is_success() {
+                    tracing::warn!(
+                        "[XDownload] ffmpeg asset fingerprint ({label}): HTTP {}",
+                        resp.status().as_u16()
+                    );
+                    continue;
+                }
+                let etag = resp
+                    .headers()
+                    .get("etag")
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.to_string());
+                let last_modified = resp
+                    .headers()
+                    .get("last-modified")
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.to_string());
+                // 只读响应头即返回：resp 未读 body，drop 会直接关闭连接。
+                drop(resp);
+                if let Some(etag) = etag {
+                    tracing::info!(
+                        "[XDownload] ffmpeg asset fingerprint ({label}): etag={etag}, last_modified={last_modified:?}"
+                    );
+                    return Some((etag, last_modified));
+                }
+                tracing::warn!(
+                    "[XDownload] ffmpeg asset fingerprint ({label}): 响应头没有 ETag"
+                );
+            }
+            Err(e) => {
+                tracing::warn!("[XDownload] ffmpeg asset fingerprint ({label}) 失败: {e}");
+            }
+        }
+    }
+    None
+}
+
+/// HTTP 日期（`Mon, 21 Sep 2026 14:12:41 GMT`）→ RFC3339（用于缓存）。
+fn http_date_to_rfc3339(s: &str) -> Option<String> {
+    chrono::DateTime::parse_from_rfc2822(s)
+        .ok()
+        .map(|dt| dt.with_timezone(&chrono::Utc).to_rfc3339())
+}
+
+/// RFC3339 时间串 → `YYYY-MM-DD`（前端展示"最新版本日期"用）。
+fn rfc3339_to_day(s: &str) -> Option<String> {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|dt| dt.format("%Y-%m-%d").to_string())
 }
 
 /// Fetch the latest `GithubRelease` via the GitHub API using `client`.
@@ -299,156 +427,175 @@ pub async fn check_ffmpeg_update(force_refresh: Option<bool>) -> serde_json::Val
     check_ffmpeg_master_update(&local_version, force_refresh.unwrap_or(false)).await
 }
 
-/// ffmpeg 更新检测（唯一入口，适用于所有本地 ffmpeg 构建，含旧版数字
-/// 版本）：GitHub 上最新 BtbN master 构建的发布时间（UTC）与本地
-/// `ffmpeg.exe` 文件 mtime（解压时已恢复为 zip 内构建打包时刻）对比，
-/// 远端发布时间更新 → 有新构建。
+/// ffmpeg 更新检测（唯一入口，适用于所有本地 ffmpeg 构建，含旧版数字版本）。
 ///
-/// 数据源优先级：API（`published_at`）→ Web（releases/tag/latest 页面的
-/// `<relative-time datetime>`）。API 未认证限流 60 次/h，故远端发布时间做
-/// **跨进程持久化缓存（24h TTL）**，存 `config/data.db` 的 `config` 表；
-/// 24h 内重复检查（含重启后）直接读缓存不再打 API。`force_refresh` 时
-/// 绕过缓存强制刷新并回写缓存。全部不可达时静默返回"无更新"。
+/// 判定优先级：
+/// 1. **远端资产 ETag vs 本地记录的 ETag**（最准）：远端只取响应头（不下载
+///    body），ETag 不同即说明资产内容变过。
+/// 2. **远端资产上传时刻 vs 本地安装时刻**：远端取该资产的 `updated_at`
+///    （API `assets[]`，Web 兜底用 release 发布时间），本地取上次成功安装的
+///    时刻 —— 两者都是"发布侧"语义，可直接比较。老版本升级上来没有安装记录
+///    时，用 `ffmpeg.exe` mtime + [`RELEASE_LAG_TOLERANCE_SECS`] 容差兜底。
+///
+/// ⚠️ **不要**拿 `release.published_at` 直接和 zip 内文件 mtime 比较：构建产物
+/// 打包上传完成后 release 才发布，`published_at` 恒晚于 zip 内文件时间，会导致
+/// "装了最新版也永远提示有更新"（v2.9.10 及以前的实际缺陷）。
+///
+/// 远端信息做**跨进程持久化缓存（24h TTL）**（API 未认证限流 60 次/h），
+/// `force_refresh` 时绕过缓存强制刷新并回写。全部不可达时静默返回"无更新"
+/// （`up_to_date=false`，与"确认已是最新"区分开）。
 async fn check_ffmpeg_master_update(local_version: &str, force_refresh: bool) -> serde_json::Value {
-    /// 远端发布时间缓存 TTL：固定 24 小时（BtbN master 每天多次构建）。
+    /// 远端信息缓存 TTL：固定 24 小时（BtbN master 每天多次构建）。
     const CACHE_TTL_SECS: i64 = 24 * 60 * 60;
-    const KEY_PUBLISHED_AT: &str = "ffmpeg_remote_published_at";
+    /// 远端资产上传时刻（RFC3339）；沿用旧 key，值语义由"release 发布时间"
+    /// 升级为"目标资产的上传时刻"。
+    const KEY_REMOTE_AT: &str = "ffmpeg_remote_published_at";
+    /// 远端目标资产的 ETag。
+    const KEY_REMOTE_ETAG: &str = "ffmpeg_remote_asset_etag";
+    /// 上次联网成功刷新的时刻（unix 秒）。
     const KEY_FETCHED_AT: &str = "ffmpeg_remote_fetched_at";
+    const RELEASE_PAGE_URL: &str = "https://github.com/BtbN/FFmpeg-Builds/releases/tag/latest";
 
-    let no_update = || {
+    // 统一结果：`up_to_date` 明确区分"确认已是最新"与"没检查成功"，
+    // 前端据此在下载前做二次校验（避免白下 ~195MB）。
+    let result = |has_update: bool, up_to_date: bool, latest: Option<String>| {
         serde_json::json!({
-            "has_update": false,
+            "has_update": has_update,
+            "up_to_date": up_to_date,
             "local_version": local_version,
-            "latest_version": Option::<String>::None,
-            "url": "https://github.com/BtbN/FFmpeg-Builds/releases/tag/latest",
+            "latest_version": latest,
+            "url": RELEASE_PAGE_URL,
         })
     };
 
-    // 跨进程缓存命中（24h 内）→ 复用远端时间，不再请求网络。
-    // force_refresh 时忽略缓存直接联网刷新。
-    let cached_remote = if !force_refresh {
-        load_ffmpeg_remote_cache(KEY_PUBLISHED_AT, KEY_FETCHED_AT, CACHE_TTL_SECS)
-    } else {
-        tracing::info!("[XDownload] check ffmpeg: force_refresh — bypassing 24h cache");
-        None
-    };
-
-    // 缓存是否来自网络（非命中）：网络来源才在解析成功后回写缓存。
-    let from_network = cached_remote.is_none();
-
-    let remote_at = match cached_remote {
-        Some(ts) => {
-            tracing::info!(
-                "[XDownload] check ffmpeg: 命中 24h 缓存，不联网 (remote_published_at={})",
-                ts
-            );
-            ts
-        }
-        None => {
-            // 数据源 1：GitHub API。
-            let mut remote_ts: Option<String> = None;
-            if let Ok(client) = update_client() {
-                if let Some(release) =
-                    fetch_latest_release_api(&client, "BtbN", "FFmpeg-Builds").await
-                {
-                    if let Some(published) = release.published_at {
-                        remote_ts = Some(published);
-                    }
-                }
-            }
-            // 数据源 2：Web（API 限流/失败时兜底）——解析 releases 页面 HTML。
-            if remote_ts.is_none() {
-                remote_ts = fetch_ffmpeg_latest_published_via_web().await;
-            }
-            let Some(ts) = remote_ts else {
-                return no_update();
-            };
-            ts
-        }
-    };
-
-    // 解析失败说明远端返回的不是合法时间戳（API/Web 数据异常）——不落盘坏值，
-    // 避免污染 24h 缓存；直接返回无更新，下次检查重新请求。
-    let Ok(remote) = chrono::DateTime::parse_from_rfc3339(&remote_at) else {
-        tracing::warn!(
-            "[XDownload] check ffmpeg: 远端发布时间格式异常，不更新缓存: {}",
-            remote_at
-        );
-        return no_update();
-    };
-
-    // 仅在拿到合法时间戳后落盘缓存（fetched_at 为当前时刻）。
-    // 网络来源（缓存未命中或强制刷新）才写缓存；缓存命中路径不重复写。
-    if from_network {
-        save_ffmpeg_remote_cache(KEY_PUBLISHED_AT, KEY_FETCHED_AT, &remote_at);
-    }
-    let date = remote.format("%Y-%m-%d").to_string();
-    let remote: std::time::SystemTime = remote.with_timezone(&chrono::Utc).into();
-
-    // 本地基准：ffmpeg.exe 文件 mtime（下载/解压时刻），作为"本地构建时间"。
-    let local = crate::utils::process::find_ffmpeg()
+    // 本地基准：已装内容的 ETag / 安装时刻 / ffmpeg.exe mtime（老版本无前两者）。
+    let local_etag = load_config_value(KEY_FFMPEG_ASSET_ETAG).filter(|s| !s.is_empty());
+    let local_installed_at =
+        load_config_value(KEY_FFMPEG_INSTALLED_AT).and_then(|v| v.parse::<i64>().ok());
+    let local_mtime = crate::utils::process::find_ffmpeg()
         .metadata()
         .ok()
-        .and_then(|m| m.modified().ok());
-    let has_update = matches!(local, Some(local_time) if remote > local_time);
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64);
 
-    // 仅在有更新时返回发布时间日期：前端 `latest !== local` 才渲染琥珀色
-    // "最新版本"，无更新时置空以免与绿色"已是最新"状态矛盾。
-    let latest_version = has_update.then(|| date);
-    serde_json::json!({
-        "has_update": has_update,
-        "local_version": local_version,
-        "latest_version": latest_version,
-        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/tag/latest",
-    })
-}
-
-/// 读取 ffmpeg 远端发布时间跨进程缓存（`config/data.db` 的 `config` 表）。
-/// 命中条件：published_at 与 fetched_at 都存在，且 `now - fetched_at < ttl`。
-fn load_ffmpeg_remote_cache(
-    key_published: &str,
-    key_fetched: &str,
-    ttl_secs: i64,
-) -> Option<String> {
-    let conn = crate::services::db::open().ok()?;
-    let read = |key: &str| -> Option<String> {
-        conn.query_row(
-            "SELECT value FROM config WHERE key = ?1",
-            rusqlite::params![key],
-            |row| row.get::<_, String>(0),
-        )
-        .ok()
-    };
-    let fetched_at: i64 = read(key_fetched)?.parse().ok()?;
-    let published_at = read(key_published)?;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    if now - fetched_at < ttl_secs {
-        Some(published_at)
-    } else {
-        None
-    }
-}
-
-/// 持久化 ffmpeg 远端发布时间缓存（`config/data.db` 的 `config` 表）。
-/// 幂等 upsert；DB 失败时静默忽略（仅失去缓存，下次检查重新请求）。
-fn save_ffmpeg_remote_cache(key_published: &str, key_fetched: &str, published_at: &str) {
-    let Ok(conn) = crate::services::db::open() else {
-        return;
-    };
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    for (key, value) in [(key_fetched, now.to_string()), (key_published, published_at.to_string())] {
-        let _ = conn.execute(
-            "INSERT INTO config (key, value) VALUES (?1, ?2)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            rusqlite::params![key, value],
+    // 远端信息：24h 缓存命中则不联网；否则先探 ETag（只读响应头），
+    // 拿不到再走 API/Web 取资产时间。
+    let cache_fresh = !force_refresh && ffmpeg_remote_cache_fresh(KEY_FETCHED_AT, CACHE_TTL_SECS);
+    let empty = String::new();
+    let (remote_at, remote_etag) = if cache_fresh {
+        let at = load_config_value(KEY_REMOTE_AT);
+        let etag = load_config_value(KEY_REMOTE_ETAG).filter(|s| !s.is_empty());
+        tracing::info!(
+            "[XDownload] check ffmpeg: 命中 24h 缓存，不联网 (asset_at={at:?}, etag={etag:?})"
         );
+        (at, etag)
+    } else {
+        if force_refresh {
+            tracing::info!("[XDownload] check ffmpeg: force_refresh — bypassing 24h cache");
+        }
+        let probed = probe_ffmpeg_asset_fingerprint().await;
+        let mut etag: Option<String> = None;
+        let mut at: Option<String> = None;
+        if let Some((e, last_modified)) = probed {
+            etag = Some(e);
+            at = last_modified.as_deref().and_then(http_date_to_rfc3339);
+        }
+        if at.is_none() {
+            at = fetch_ffmpeg_remote_asset_time().await;
+        }
+        // 两者都拿不到 → 不写缓存（下次检查重新联网）。
+        if at.is_some() || etag.is_some() {
+            save_ffmpeg_remote_cache(KEY_REMOTE_AT, KEY_FETCHED_AT, at.as_deref());
+            save_config_value(KEY_REMOTE_ETAG, etag.as_deref().unwrap_or(&empty));
+        }
+        (at, etag)
+    };
+
+    // 1) ETag 比对（双方都有才有意义）。
+    if let (Some(remote), Some(local)) = (remote_etag.as_deref(), local_etag.as_deref()) {
+        let has_update = decide_has_update(Some(remote), Some(local), None, None, None);
+        tracing::info!(
+            "[XDownload] check ffmpeg: ETag 比对 local={local} remote={remote} -> has_update={has_update}"
+        );
+        let latest = has_update
+            .then(|| remote_at.as_deref().and_then(rfc3339_to_day))
+            .flatten();
+        return result(has_update, !has_update, latest);
     }
+
+    // 2) 资产上传时刻 vs 本地安装时刻（老版本无安装记录 → mtime + 容差）。
+    let remote_ts = remote_at
+        .as_deref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.timestamp());
+    let has_update = decide_has_update(
+        None,
+        None,
+        remote_ts,
+        local_installed_at,
+        local_mtime,
+    );
+    tracing::info!(
+        "[XDownload] check ffmpeg: asset_at={remote_at:?}, installed_at={local_installed_at:?}, mtime={local_mtime:?} -> has_update={has_update}"
+    );
+
+    // 仅在有更新时返回日期：前端 `latest !== local` 才渲染琥珀色"最新版本"，
+    // 无更新时置空以免与绿色"已是最新"状态矛盾。
+    let latest = has_update
+        .then(|| remote_at.as_deref().and_then(rfc3339_to_day))
+        .flatten();
+    result(has_update, remote_ts.is_some() && !has_update, latest)
+}
+
+/// 取远端资产的"内容时间"：优先目标资产的 `updated_at`（API `assets[]`），
+/// 退回 release `published_at`，再退回 releases 页面的 `<relative-time>`。
+async fn fetch_ffmpeg_remote_asset_time() -> Option<String> {
+    if let Ok(client) = update_client() {
+        if let Some(release) = fetch_latest_release_api(&client, "BtbN", "FFmpeg-Builds").await {
+            if let Some(ts) = release
+                .assets
+                .iter()
+                .find(|a| a.name == FFMPEG_ASSET_NAME)
+                .and_then(|a| a.updated_at.clone())
+            {
+                tracing::info!("[XDownload] ffmpeg remote asset updated_at = {ts}");
+                return Some(ts);
+            }
+            if let Some(published) = release.published_at {
+                tracing::info!(
+                    "[XDownload] ffmpeg: 未找到资产 {}，退回 release published_at = {published}",
+                    FFMPEG_ASSET_NAME
+                );
+                return Some(published);
+            }
+        }
+    }
+    fetch_ffmpeg_latest_published_via_web().await
+}
+
+/// 远端信息缓存是否仍在 TTL 内（`now - fetched_at < ttl`）。
+fn ffmpeg_remote_cache_fresh(key_fetched: &str, ttl_secs: i64) -> bool {
+    let Some(fetched_at) = load_config_value(key_fetched).and_then(|v| v.parse::<i64>().ok())
+    else {
+        return false;
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    now - fetched_at < ttl_secs
+}
+
+/// 持久化 ffmpeg 远端信息缓存（`config/data.db` 的 `config` 表）：
+/// 资产上传时刻（可能拿不到，写空串）+ 本次联网刷新的时刻（决定 24h TTL）。
+fn save_ffmpeg_remote_cache(key_at: &str, key_fetched: &str, at: Option<&str>) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    save_config_value(key_fetched, &now.to_string());
+    save_config_value(key_at, at.unwrap_or(""));
 }
 
 /// Web fallback：请求 BtbN releases/tag/latest 页面，从 HTML 中提取
@@ -606,6 +753,95 @@ pub fn cleanup_updater_temp() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- ffmpeg 更新判定（v2.9.11：修复"装了最新版仍提示更新"）----
+
+    /// 本次修复的真实案例：资产上传于 14:12，zip 内文件构建于 13:23（早 49 分钟），
+    /// 用户在发布之后才安装 → 不该提示更新。
+    /// （旧逻辑拿 release `published_at` 直接与 mtime 比，恒判"有更新"。）
+    #[test]
+    fn decide_no_update_when_installed_after_release() {
+        let asset_at = 1_789_999_961; // 2026-09-21T14:12:41Z
+        let stale_mtime = asset_at - 2_947; // 13:23:34Z（差 49 分 7 秒，zip 内构建时间）
+        let installed_at = asset_at + 15_000; // 发布之后才安装
+        assert!(!decide_has_update(
+            None,
+            None,
+            Some(asset_at),
+            Some(installed_at),
+            Some(stale_mtime)
+        ));
+    }
+
+    /// 老版本升级上来（无安装记录）：mtime 只比资产时间早几十分钟（发布延迟），
+    /// 落在容差内 → 判定"无更新"，存量用户升级后立刻不再误报。
+    #[test]
+    fn decide_no_update_within_release_lag_tolerance() {
+        let asset_at = 1_789_999_961;
+        let mtime = asset_at - 2_947;
+        assert!(!decide_has_update(
+            None,
+            None,
+            Some(asset_at),
+            None,
+            Some(mtime)
+        ));
+    }
+
+    /// 无安装记录且本地确实很旧（超出容差）→ 提示有更新。
+    #[test]
+    fn decide_update_when_local_is_old() {
+        let asset_at = 1_789_999_961;
+        let mtime = asset_at - RELEASE_LAG_TOLERANCE_SECS - 60;
+        assert!(decide_has_update(
+            None,
+            None,
+            Some(asset_at),
+            None,
+            Some(mtime)
+        ));
+    }
+
+    /// ETag 一致 → 内容没变；不一致 → 有更新（最精确的路径）。
+    #[test]
+    fn decide_by_etag() {
+        assert!(!decide_has_update(
+            Some("W/\"abc\""),
+            Some("W/\"abc\""),
+            None,
+            None,
+            None
+        ));
+        assert!(decide_has_update(
+            Some("W/\"def\""),
+            Some("W/\"abc\""),
+            None,
+            None,
+            None
+        ));
+    }
+
+    /// 远端信息拿不到 → 静默"无更新"（不误报）；本地有 ETag 但远端探测失败
+    /// 时退回时间判定，两者都无 → false。
+    #[test]
+    fn decide_no_update_without_remote_info() {
+        assert!(!decide_has_update(None, None, None, Some(1), Some(2)));
+        assert!(!decide_has_update(None, Some("W/\"abc\""), None, None, None));
+    }
+
+    #[test]
+    fn test_http_date_helpers() {
+        assert_eq!(
+            http_date_to_rfc3339("Mon, 21 Sep 2026 14:12:41 GMT").as_deref(),
+            Some("2026-09-21T14:12:41+00:00")
+        );
+        assert_eq!(
+            rfc3339_to_day("2026-09-21T14:12:41+00:00").as_deref(),
+            Some("2026-09-21")
+        );
+        assert_eq!(http_date_to_rfc3339("not a date"), None);
+        assert_eq!(rfc3339_to_day("not a date"), None);
+    }
 
     #[test]
     fn test_parse_ffmpeg_version() {

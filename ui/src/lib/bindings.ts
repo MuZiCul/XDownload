@@ -410,6 +410,8 @@ export async function checkYtdlpUpdate(
 
 export interface FfmpegUpdateResult {
   has_update: boolean;
+  /** 后端已确认"本地就是最新"（区别于"检查没成功"，后者为 false）。 */
+  up_to_date?: boolean;
   not_installed?: boolean;
   local_version: string | null;
   latest_version: string | null;

@@ -161,6 +161,19 @@ export default function ToolsSetting({
       return;
     }
 
+    // --- Phase 1.5: 下载前二次校验（仅 ffmpeg）---
+    // 界面上的更新提示可能来自较早的检查结果；后端判定"已是最新"时就不下载，
+    // 避免白下 ~195MB（历史上曾因判定缺陷反复提示更新）。
+    if (tool === "ffmpeg") {
+      const fresh = await refresh(true).catch(() => null);
+      if (fresh) setUpdateResult({ yt: fresh.ytUp, ff: fresh.ffUp });
+      if (fresh?.ffUp?.up_to_date === true) {
+        toast.success(t("tools.latest"));
+        setPhase(null);
+        return;
+      }
+    }
+
     // --- Phase 2: Download ---
     await startDownload(tool);
   };

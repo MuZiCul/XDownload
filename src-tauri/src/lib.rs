@@ -492,7 +492,7 @@ async fn process_deep_link_batch(handle: &tauri::AppHandle, targets: &[String]) 
         async move {
             // 从 status URL 提取 id 填入 video_id：历史记录以 video_id 为键，
             // 缺失会导致下载完成后不写下载历史。
-            let video_id = commands::download::extract_status_id(target);
+            let video_id = utils::url::extract_status_id(target);
             // fetch 失败仍入队（不带 info，下载照常，yt-dlp 下载时会自行解析）。
             let fetch = downloader.fetch_video_info(target).await;
             let (title, info) = match fetch {

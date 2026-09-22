@@ -593,8 +593,15 @@ impl DownloadQueue {
 
         // Record history (only real outcomes; user-cancelled tasks are not
         // written to history).
+        // 历史键统一为推文 status id（见 utils::url::history_key）：yt-dlp 的
+        // info.id 偶尔与推文 id 不同，直接用它会让同一条视频留下两条记录
+        // （失败的 + 成功的），重下永远替换不掉失败的那条。
         if !cancelled {
-            if let Some(video_id) = task.config.video_id.as_deref() {
+            let history_id = crate::utils::url::history_key(
+                &task.config.url,
+                task.config.video_id.as_deref(),
+            );
+            if let Some(video_id) = history_id.as_deref() {
                 // 主路径 = 第一个文件（兼容历史页「打开文件位置」/ is_downloaded）。
                 let main_path = saved_paths.first().cloned();
                 if let Some(path) = main_path {
