@@ -42,7 +42,7 @@ Powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp) + ffmpeg, wrapped in a cle
 - **Proxy support** — HTTP or SOCKS5, with automatic system proxy detection; settings are saved & applied instantly (no manual "apply"), the proxy download toggle syncs automatically with the proxy state, and invalid port/host input is rejected at the source
 - **Cookies** — import from your browser to access restricted content; the bookmarks page shows the logged-in user name (fetched once and cached by cookie fingerprint, re-fetched only when the browser source changes)
 - **Built-in tools** — download yt-dlp + ffmpeg right from the settings page, with live direct/proxy mode display, a "download via proxy" toggle (disabled until a proxy is configured), a slow-download reminder with a manual-download fallback link, and a retryable error dialog
-- **Update alerts** — startup checks for new versions of XDownload / yt-dlp / ffmpeg
+- **Update alerts** — startup checks for new versions of XDownload / yt-dlp / ffmpeg; ffmpeg is compared by **content fingerprint**, so a freshly updated build never keeps nagging (and the update button re-checks before downloading, so you never re-download ~195MB for nothing)
 - **Bookmarks sync** — manual one-click sync of your X bookmarks with a preview dialog: every video bookmark (downloaded or not, color-coded) with per-item checkboxes for batch or single enqueue; already-downloaded ones can be re-downloaded. The download history acts as the cursor, so skipped/deleted tasks show up again on the next sync
 - **Bookmark catalogue** — every synced bookmark (video and non-video) is persisted locally in SQLite; browse them offline in a modal and download / re-download any of them
 - **Browser extension** — an MV3 companion extension adds a download button right on X posts; one click deep-links the video into the desktop app; v1.3.0 auto-captures and pushes the latest queryId for bookmarks sync
@@ -64,7 +64,7 @@ Powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp) + ffmpeg, wrapped in a cle
 
 Grab the latest installer from [Releases](https://github.com/MuZiCul/XDownload/releases).
 
-- **Windows**: `XDownload_2.9.10_x64-setup.exe` (NSIS) / `.msi`
+- **Windows**: `XDownload_2.10.0_x64-setup.exe` (NSIS) / `.msi`
 
 First launch downloads yt-dlp + ffmpeg automatically — or drop them into `bin/` yourself.
 

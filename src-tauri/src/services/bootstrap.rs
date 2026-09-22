@@ -42,6 +42,12 @@ const FFMPEG_URLS: &[&str] = &[
     "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip",
 ];
 
+/// ffmpeg 更新检测写入 `config` 表的 key：上次成功安装的时刻（unix 秒，UTC）。
+/// 与 [`KEY_FFMPEG_ASSET_ETAG`] 一起构成"本地已装内容"的指纹。
+pub const KEY_FFMPEG_INSTALLED_AT: &str = "ffmpeg_installed_at";
+/// ffmpeg 更新检测写入 `config` 表的 key：上次安装的资产 ETag（下载响应头）。
+pub const KEY_FFMPEG_ASSET_ETAG: &str = "ffmpeg_asset_etag";
+
 impl Bootstrap {
     /// Build a direct (no-proxy) client with a fast-failing connect timeout
     /// (8s) so a blocked local network fails quickly before falling back to
@@ -95,13 +101,15 @@ impl Bootstrap {
     ///
     /// `mode_cb` is invoked with `"direct"` / `"proxy"` each time the active
     /// network path changes, so the UI can show the current mode in real time.
+    /// 返回服务端响应头的 ETag（若提供），供调用方记录"已下载内容"的指纹
+    /// （ffmpeg 更新检测用）；失败返回 `Err`。
     pub async fn download_with_fallback(
         url: &str,
         dest: &Path,
         progress_cb: &impl Fn(u32),
         mode_cb: &impl Fn(&str),
         force_mode: Option<&str>,
-    ) -> Result<()> {
+    ) -> Result<Option<String>> {
         match force_mode {
             Some("proxy") => {
                 // 强制代理：直接走代理，不再尝试直连。
@@ -125,7 +133,7 @@ impl Bootstrap {
         let direct = Self::build_direct_client()?;
         mode_cb("direct");
         match Self::download_to_file(&direct, url, dest, progress_cb).await {
-            Ok(()) => return Ok(()),
+            Ok(etag) => return Ok(etag),
             Err(direct_err) => {
                 // 用户取消 → 直接透传，不再尝试代理（避免多余的代理请求，
                 // 也保证前端能识别"下载已取消"而静默关闭而非弹下载失败）。
@@ -262,13 +270,16 @@ impl Bootstrap {
             match Self::download_with_fallback(url, &temp_zip, &progress_cb, mode_cb, force_mode)
                 .await
             {
-                Ok(_) => {
+                Ok(etag) => {
                     if let Some(cb) = on_extracting.take() {
                         cb();
                     }
                     match Self::extract_ffmpeg(&temp_zip, &bin_dir) {
                         Ok(ffmpeg_path) => {
                             let _ = std::fs::remove_file(&temp_zip);
+                            // 记下"已装内容"的指纹（安装时刻 + 资产 ETag），供更新
+                            // 检测判断本地是否已是最新，避免反复误报"有更新"。
+                            Self::record_ffmpeg_install(etag.as_deref());
                             return Ok(ffmpeg_path);
                         }
                         Err(e) => {
@@ -287,6 +298,33 @@ impl Bootstrap {
         }
 
         Err(last_error.unwrap_or_else(|| anyhow!("no ffmpeg download sources configured")))
+    }
+
+    /// 记录本次 ffmpeg 安装：安装时刻（unix 秒，UTC）+ 下载响应的资产 ETag。
+    /// 写入失败只告警——更新检测会退回按 `ffmpeg.exe` mtime 判定，不影响下载。
+    fn record_ffmpeg_install(etag: Option<&str>) {
+        let Ok(conn) = crate::services::db::open() else {
+            tracing::warn!("ffmpeg install: 无法打开数据库，安装指纹未记录");
+            return;
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
+        let mut pairs: Vec<(&str, String)> =
+            vec![(KEY_FFMPEG_INSTALLED_AT, now.to_string())];
+        if let Some(etag) = etag.filter(|s| !s.is_empty()) {
+            pairs.push((KEY_FFMPEG_ASSET_ETAG, etag.to_string()));
+        }
+        for (key, value) in pairs {
+            let _ = conn.execute(
+                "INSERT INTO config (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                rusqlite::params![key, value],
+            );
+        }
+        tracing::info!("ffmpeg install recorded: installed_at={now}, etag={etag:?}");
     }
 
     /// Extract ffmpeg.exe, ffprobe.exe, ffplay.exe from a zip archive into the target dir.
@@ -374,12 +412,20 @@ fn extract_ffmpeg(zip_path: &Path, dest_dir: &Path) -> Result<PathBuf> {
         url: &str,
         dest: &Path,
         progress_cb: &impl Fn(u32),
-    ) -> Result<()> {
+    ) -> Result<Option<String>> {
         let response = client
             .get(url)
             .send()
             .await
             .with_context(|| format!("GET {} failed", url))?;
+
+        // 顺手记录响应 ETag：ffmpeg 更新检测用它作为"本地已装内容"的指纹，
+        // 与远端同一资产的 ETag 比对即可判断内容是否变过（见 commands::update）。
+        let etag = response
+            .headers()
+            .get("etag")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
 
         let status = response.status();
         if !status.is_success() && status.as_u16() != 302 && status.as_u16() != 301 {
@@ -458,6 +504,6 @@ fn extract_ffmpeg(zip_path: &Path, dest_dir: &Path) -> Result<PathBuf> {
         // Report 100% on completion
         progress_cb(100);
 
-        Ok(())
+        Ok(etag)
     }
 }
