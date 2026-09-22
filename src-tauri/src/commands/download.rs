@@ -4,6 +4,7 @@ use crate::downloader::ytdlp::YtDlpDownloader;
 use crate::models::config::DownloadConfig;
 use crate::models::video_info::VideoInfo;
 use crate::services::download_history::DownloadHistory;
+use crate::utils::url::extract_status_id;
 use std::sync::Arc;
 
 /// State container for the downloader and the multi-task queue.
@@ -45,11 +46,22 @@ const VIDEO_EXTS: &[&str] = &[
 /// 2. No record (e.g. record deleted but file left on disk) → look for a file
 ///    in the download directory whose name starts with the (sanitized) title.
 fn attach_download_status(info: &mut VideoInfo) {
-    if info.id.is_empty() {
+    // 历史键统一为推文 status id（见 utils::url::history_key）：查库用它，末尾
+    // 也把它回写给前端的 `info.id`，保证同一条视频只对应一条历史记录。
+    let status_id = extract_status_id(&info.url);
+    let raw_id = std::mem::take(&mut info.id);
+    if status_id.is_none() && raw_id.is_empty() {
         return;
     }
-    // 1) 先按 yt-dlp 解析出的 media id 查询（单任务路径的记录键）。
-    if let Some(rec) = DownloadHistory::get(&info.id) {
+
+    // 1) 先按规范键（推文 status id）查。
+    // 2) 查不到再按 yt-dlp 原始 id 查（兼容尚未迁移的旧记录）。
+    let mut found = status_id.as_deref().and_then(DownloadHistory::get);
+    if found.is_none() && !raw_id.is_empty() {
+        found = DownloadHistory::get(&raw_id);
+    }
+
+    if let Some(rec) = found {
         let path = rec.file_path.as_deref().map(abs_history_path);
         let exists = path
             .as_ref()
@@ -58,36 +70,17 @@ fn attach_download_status(info: &mut VideoInfo) {
         info.downloaded = exists;
         info.downloaded_at = Some(rec.downloaded_at);
         info.download_path = path;
-        return;
-    }
-    // 2) 查不到时再从输入 URL 提取 status id 兜底查询（批量/历史回填记录的键）。
-    if let Some(status_id) = extract_status_id(info.url.as_str()) {
-        if let Some(rec) = DownloadHistory::get(&status_id) {
-            let path = rec.file_path.as_deref().map(abs_history_path);
-            let exists = path
-                .as_ref()
-                .map(|p| std::path::Path::new(p).exists())
-                .unwrap_or(false);
-            info.downloaded = exists;
-            info.downloaded_at = Some(rec.downloaded_at);
-            info.download_path = path;
-            return;
-        }
-    }
-    // 3) 无记录（记录被删但文件在盘）→ 按净化标题找文件。
-    if let Some(title) = info.title.as_deref() {
+    } else if let Some(title) = info.title.as_deref() {
+        // 3) 无记录（记录被删但文件在盘）→ 按净化标题找文件。
         if let Some(path) = find_file_by_title(title) {
             info.downloaded = true;
             info.download_path = Some(path);
         }
     }
-}
 
-/// Extract the status (tweet) id from an x.com/twitter.com URL like
-/// "https://x.com/user/status/1234567890123456789/video/1".
-pub(crate) fn extract_status_id(url: &str) -> Option<String> {
-    let re = regex::Regex::new(r"/status/(\d+)").ok()?;
-    re.captures(url).and_then(|c| c.get(1)).map(|m| m.as_str().to_string())
+    // 回写规范键：前端拿到的 id 会作为 video_id 入队 / 查历史
+    //（check_video_downloaded、open_download_path），与历史键保持一致。
+    info.id = status_id.unwrap_or(raw_id);
 }
 
 /// Search the download directory for a file whose name starts with the
@@ -205,7 +198,7 @@ pub fn check_video_downloaded(video_id: String) -> serde_json::Value {
 /// (batch mode); true → the queue starts draining immediately.
 #[tauri::command]
 pub fn enqueue_download(
-    config: DownloadConfig,
+    mut config: DownloadConfig,
     title: Option<String>,
     auto_start: bool,
     info: Option<serde_json::Value>,
@@ -214,6 +207,12 @@ pub fn enqueue_download(
 ) -> Result<String, String> {
     if !is_supported_url(&config.url) {
         return Err("仅支持 X/Twitter 视频链接".to_string());
+    }
+    // 历史键统一为推文 status id（见 utils::url::history_key）：前端可能把
+    // yt-dlp 的 media id 当作 video_id 传来，入队前归一化，避免同一条视频
+    // 因两个不同的键而留下两条历史记录。
+    if let Some(status_id) = extract_status_id(&config.url) {
+        config.video_id = Some(status_id);
     }
     // 缺省按「单链」处理（兼容旧调用方/旧前端）。字符串 → 数值由后端判断。
     let source = crate::services::download_history::source_code(source.as_deref().unwrap_or(""));

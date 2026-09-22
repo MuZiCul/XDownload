@@ -12,6 +12,7 @@
 use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use tracing::{info, warn};
 
@@ -199,9 +200,116 @@ impl DownloadHistory {
     /// use. Call once at application startup. Failures are logged but never
     /// panic — history degrades to empty.
     pub fn init() {
-        if let Err(e) = crate::services::db::open() {
-            warn!("failed to initialize database: {e:#}");
+        match crate::services::db::open() {
+            Ok(conn) => {
+                // 一次性迁移：把历史键统一为推文 status id，并合并同一条视频的
+                // 多条记录（保留最新一条）。幂等，失败只告警，不阻塞启动。
+                if let Err(e) = Self::migrate_history_keys_in(&conn) {
+                    warn!("failed to migrate download history keys: {e:#}");
+                }
+            }
+            Err(e) => warn!("failed to initialize database: {e:#}"),
         }
+    }
+
+    /// Marker key in the `config` table — the key migration runs once per database.
+    const KEY_HISTORY_KEY_MIGRATION: &'static str = "history_key_migration_v1";
+
+    /// Whether the one-shot history-key migration already ran.
+    fn migration_done_in(conn: &Connection) -> rusqlite::Result<bool> {
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM config WHERE key = ?1",
+            params![Self::KEY_HISTORY_KEY_MIGRATION],
+            |r| r.get(0),
+        )?;
+        Ok(n > 0)
+    }
+
+    fn mark_migration_done_in(conn: &Connection) -> rusqlite::Result<()> {
+        conn.execute(
+            "INSERT INTO config (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![
+                Self::KEY_HISTORY_KEY_MIGRATION,
+                chrono::Utc::now().timestamp().to_string()
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// One-shot migration (v2.9.10): normalize every record key to the tweet
+    /// status id carried by its URL, and merge the rows describing the same
+    /// tweet (the newest `downloaded_at` wins).
+    ///
+    /// Before this, the write path could key one video twice — by the tweet id
+    /// (batch / bookmark / deep-link entry points) and by the yt-dlp media id
+    /// (single link / re-download) — so a failed row could never be replaced by
+    /// a later successful download: both stayed in the history forever.
+    ///
+    /// Idempotent: guarded by [`Self::KEY_HISTORY_KEY_MIGRATION`] and safe to
+    /// replay (a crash before the marker is written simply runs it again).
+    fn migrate_history_keys_in(conn: &Connection) -> rusqlite::Result<()> {
+        if Self::migration_done_in(conn)? {
+            return Ok(());
+        }
+        // 1) 读全表（只取迁移需要的列）。
+        let rows = {
+            let mut stmt =
+                conn.prepare("SELECT id, video_id, url, downloaded_at FROM downloads")?;
+            let collected = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, i64>("id")?,
+                        row.get::<_, String>("video_id")?,
+                        row.get::<_, Option<String>>("url")?,
+                        row.get::<_, i64>("downloaded_at")?,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            collected
+        };
+
+        // 2) 按「规范键」分组：URL 能提取 status id 的用它，否则保持原键。
+        let mut groups: HashMap<String, Vec<(i64, String, i64)>> = HashMap::new();
+        for (id, video_id, url, downloaded_at) in rows {
+            let key = url
+                .as_deref()
+                .and_then(crate::utils::url::extract_status_id)
+                .unwrap_or_else(|| video_id.clone());
+            groups
+                .entry(key)
+                .or_default()
+                .push((id, video_id, downloaded_at));
+        }
+
+        // 3) 每组只保留 downloaded_at 最新的一条（并列取 id 最大），再把保留行
+        //    的键改成规范键。先删后改，避免撞 video_id 的 UNIQUE 约束。
+        let mut dropped = 0usize;
+        for (key, mut items) in groups {
+            items.sort_by(|a, b| b.2.cmp(&a.2).then(b.0.cmp(&a.0)));
+            let (keep_id, keep_video_id, _) = &items[0];
+            for (id, video_id, _) in items.iter().skip(1) {
+                conn.execute("DELETE FROM downloads WHERE id = ?1", params![id])?;
+                dropped += 1;
+                info!(
+                    "history key migration: dropped duplicate row id={id} video_id={video_id}"
+                );
+            }
+            if keep_video_id != &key {
+                conn.execute(
+                    "UPDATE downloads SET video_id = ?1 WHERE id = ?2",
+                    params![key, keep_id],
+                )?;
+                info!(
+                    "history key migration: rekeyed row id={keep_id} {keep_video_id} -> {key}"
+                );
+            }
+        }
+        if dropped > 0 {
+            info!("history key migration: merged {dropped} duplicate row(s)");
+        }
+        Self::mark_migration_done_in(conn)?;
+        Ok(())
     }
 
     /// Look up a download record by video id (does not check the file exists).
@@ -743,6 +851,138 @@ mod tests {
         assert_eq!(got.status, DownloadStatus::Failed);
         assert_eq!(got.error.as_deref(), Some("err"));
         assert_eq!(got.attempts, 3);
+    }
+
+    // ---- History key migration (v2.9.10) ----
+
+    #[test]
+    fn migration_merges_same_tweet_and_rekeys() {
+        let conn = mem_conn();
+        // 失败行：键 = 推文 status id（批量入队路径写入），时间较早。
+        record_in(
+            &conn,
+            "900",
+            Some("t".into()),
+            None,
+            Some("https://x.com/a/status/900".into()),
+            None,
+            0,
+            0,
+            0,
+            None,
+            vec![],
+            None,
+            100,
+            DownloadStatus::Failed,
+            Some("boom".into()),
+            1,
+            source::BATCH,
+        )
+        .unwrap();
+        // 成功行：键 = yt-dlp media id（单链 / 重下路径写入），时间较新 → 保留它。
+        record_in(
+            &conn,
+            "700",
+            Some("t".into()),
+            None,
+            Some("https://x.com/a/status/900".into()),
+            None,
+            0,
+            0,
+            0,
+            Some(r"D:\Downloads\t.mp4".into()),
+            vec![r"D:\Downloads\t.mp4".into()],
+            Some(10),
+            200,
+            DownloadStatus::Success,
+            None,
+            1,
+            source::SINGLE,
+        )
+        .unwrap();
+
+        DownloadHistory::migrate_history_keys_in(&conn).unwrap();
+
+        let list = DownloadHistory::list_in(&conn).unwrap();
+        assert_eq!(list.len(), 1);
+        // 键统一为推文 status id，保留的是最新的成功记录。
+        assert_eq!(list[0].video_id, "900");
+        assert_eq!(list[0].status, DownloadStatus::Success);
+        assert_eq!(list[0].downloaded_at, 200);
+        assert_eq!(list[0].file_size, Some(10));
+    }
+
+    #[test]
+    fn migration_keeps_newest_row_and_is_idempotent() {
+        let conn = mem_conn();
+        record_in(
+            &conn,
+            "900",
+            None,
+            None,
+            Some("https://x.com/a/status/900".into()),
+            None,
+            0,
+            0,
+            0,
+            None,
+            vec![],
+            None,
+            100,
+            DownloadStatus::Failed,
+            Some("old".into()),
+            1,
+            source::BATCH,
+        )
+        .unwrap();
+        record_in(
+            &conn,
+            "800",
+            None,
+            None,
+            Some("https://x.com/a/status/900".into()),
+            None,
+            0,
+            0,
+            0,
+            None,
+            vec![],
+            None,
+            300,
+            DownloadStatus::Failed,
+            Some("new".into()),
+            2,
+            source::SINGLE,
+        )
+        .unwrap();
+
+        DownloadHistory::migrate_history_keys_in(&conn).unwrap();
+        // 第二次调用：marker 已写 → 直接返回，结果不变。
+        DownloadHistory::migrate_history_keys_in(&conn).unwrap();
+
+        let list = DownloadHistory::list_in(&conn).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].video_id, "900");
+        assert_eq!(list[0].error.as_deref(), Some("new"));
+    }
+
+    #[test]
+    fn migration_keeps_unrelated_rows() {
+        let conn = mem_conn();
+        record_in(&conn, "1", None, None, Some("https://x.com/a/status/1".into()), None, 0, 0, 0, None, vec![], None, 10, DownloadStatus::Success, None, 1, source::SINGLE).unwrap();
+        record_in(&conn, "2", None, None, Some("https://x.com/b/status/2".into()), None, 0, 0, 0, None, vec![], None, 20, DownloadStatus::Success, None, 1, source::SINGLE).unwrap();
+        // 没有 status id 的 URL → 保持自己的键，不与他人合并。
+        record_in(&conn, "3", None, None, Some("https://x.com/home".into()), None, 0, 0, 0, None, vec![], None, 30, DownloadStatus::Success, None, 1, source::SINGLE).unwrap();
+
+        DownloadHistory::migrate_history_keys_in(&conn).unwrap();
+
+        let mut ids: Vec<String> = DownloadHistory::list_in(&conn)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.video_id)
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec!["1", "2", "3"]);
     }
 
     // ---- Legacy JSON migration ----

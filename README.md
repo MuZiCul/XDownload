@@ -36,7 +36,7 @@ Powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp) + ffmpeg, wrapped in a cle
 - **Speed control** — per-task download rate limit, plus configurable HLS fragment concurrency & retries to dramatically speed up X's fragmented audio/video streams
 - **Multi-media tweets** — downloads every video / image in a multi-media tweet
 - **Atomic downloads** — files only appear in your download folder after a successful (merged) finish; interrupted / cancelled downloads leave no partial files behind
-- **Download history** — cover, author, duration, views, likes, download time; instant search & filter; time-based badges (last 5 minutes → 10 years); delete with confirmation (optionally remove the file from disk too); re-download (re-parses the link), open file location, clear records
+- **Download history** — cover, author, duration, views, likes, download time; instant search & filter; time-based badges (last 5 minutes → 10 years); delete with confirmation (optionally remove the file from disk too); re-download (re-parses the link), open file location, clear records; **one video keeps a single, newest record** — a re-download replaces the previous failed/successful entry instead of leaving both behind
 - **In-app updates** — download and install new versions right from the app (direct first, proxy fallback)
 - **System notifications** — get notified when a download finishes or fails, even when minimized to tray
 - **Proxy support** — HTTP or SOCKS5, with automatic system proxy detection; settings are saved & applied instantly (no manual "apply"), the proxy download toggle syncs automatically with the proxy state, and invalid port/host input is rejected at the source
@@ -64,7 +64,7 @@ Powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp) + ffmpeg, wrapped in a cle
 
 Grab the latest installer from [Releases](https://github.com/MuZiCul/XDownload/releases).
 
-- **Windows**: `XDownload_2.9.9_x64-setup.exe` (NSIS) / `.msi`
+- **Windows**: `XDownload_2.9.10_x64-setup.exe` (NSIS) / `.msi`
 
 First launch downloads yt-dlp + ffmpeg automatically — or drop them into `bin/` yourself.
 
