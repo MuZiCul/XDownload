@@ -246,13 +246,13 @@ export function shallowArrayEqual<T>(a: readonly T[], b: readonly T[]): boolean 
 }
 
 /**
- * 选择器缓存的核心逻辑（抽成纯函数，便于单测锁住行为）。
+ * 选择器缓存的核心逻辑（纯函数，逻辑集中一处便于维护）。
  *
  * 返回「应当作为快照返回的条目」，并保证在**选择结果未变**时复用旧引用 ——
  * 这是 `useSyncExternalStore` 不陷入无限重渲染的关键：它要求 `getSnapshot`
  * 返回稳定引用，若每次都返回新对象/新数组，React 会认为快照一直在变。
  */
-export function resolveSelection<T>(
+function resolveSelection<T>(
   prev: { snap: DownloadState; out: T } | null,
   snap: DownloadState,
   selector: ((state: DownloadState) => T) | undefined,

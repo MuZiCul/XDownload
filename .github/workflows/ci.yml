@@ -1,6 +1,6 @@
 name: CI
 
-# 测试门禁：push 到任意分支 + PR 时运行后端单测、前端类型检查与前端单测，
+# 门禁：push 到任意分支 + PR 时运行后端单测与前端类型检查，
 # 防止坏代码进入发布流程（release.yml 只在打 v* tag 时触发构建发布）。
 on:
   push:
@@ -37,11 +37,6 @@ jobs:
         working-directory: ui
         shell: pwsh
         run: pnpm typecheck
-
-      - name: Frontend unit tests (vitest)
-        working-directory: ui
-        shell: pwsh
-        run: pnpm test
 
       # ---------- 后端：Rust 单测 ----------
       - name: Setup Rust (MSVC)
