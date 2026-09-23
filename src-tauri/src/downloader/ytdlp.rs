@@ -11,6 +11,63 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+/// 进度事件最小发送间隔：yt-dlp 以 `--newline` 逐行输出进度，实测约
+/// **40–55 行/秒**（见日志 `download progress lines parsed`），原样转发会让
+/// 前端每秒触发上百次全局状态更新（历史页整页重渲染 + 卡片动画），是体感卡顿
+/// 的主要来源。100ms 间隔人眼无差别（进度条仍每 0.1s 刷新一次）。
+const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(100);
+
+/// 进度事件节流器（每个下载任务一个；stdout / stderr 两条管道共享同一个实例）。
+///
+/// 规则：
+/// - **状态跃迁立即放行**：`status`（`downloading` → `moving`）或 `stage`
+///   （`video` → `audio` → 合并）发生变化时不受间隔限制，避免 UI 停在旧阶段；
+/// - 其余纯进度按 [`PROGRESS_EMIT_INTERVAL`] 节流；
+/// - 被丢弃的那条记在 `pending`，下载结束时由 [`Self::flush`] 补发，
+///   保证最后一条真实进度不丢（进度条不会停在倒数第二格）。
+struct ProgressThrottle {
+    last_emit: Option<Instant>,
+    last_status: String,
+    last_stage: String,
+    pending: Option<DownloadProgress>,
+}
+
+impl ProgressThrottle {
+    fn new() -> Self {
+        Self {
+            last_emit: None,
+            last_status: String::new(),
+            last_stage: String::new(),
+            pending: None,
+        }
+    }
+
+    /// 判定这条进度是否应当立即转发；被节流时返回 `None` 并暂存到 `pending`。
+    /// `now` 由调用方注入，便于单测（无需真的 sleep）。
+    fn accept(&mut self, p: DownloadProgress, now: Instant) -> Option<DownloadProgress> {
+        let transition = p.status != self.last_status || p.stage != self.last_stage;
+        let due = match self.last_emit {
+            None => true,
+            Some(last) => now.duration_since(last) >= PROGRESS_EMIT_INTERVAL,
+        };
+        if transition || due {
+            self.last_status = p.status.clone();
+            self.last_stage = p.stage.clone();
+            self.last_emit = Some(now);
+            self.pending = None;
+            return Some(p);
+        }
+        self.pending = Some(p);
+        None
+    }
+
+    /// 取出最后一条被节流丢弃的进度（若有），供下载结束时补发。
+    fn flush(&mut self) -> Option<DownloadProgress> {
+        self.pending.take()
+    }
+}
 
 /// Validate a yt-dlp `--limit-rate` value: a number (with optional decimal)
 /// followed by an optional unit suffix (K/M/G, case-insensitive), e.g. "500K",
@@ -436,6 +493,10 @@ impl YtDlpDownloader {
         let progress_cb = Arc::new(Mutex::new(progress_cb));
         let stdout_progress = progress_cb.clone();
         let stderr_progress = progress_cb.clone();
+        // stdout / stderr 两条管道共享同一个节流器（各自计时会让实际频率翻倍）。
+        let throttle = Arc::new(Mutex::new(ProgressThrottle::new()));
+        let throttle_stdout = throttle.clone();
+        let throttle_stderr = throttle.clone();
         let progress_count = Arc::new(AtomicUsize::new(0));
         let progress_count_stdout = progress_count.clone();
         let progress_count_stderr = progress_count.clone();
@@ -450,8 +511,16 @@ impl YtDlpDownloader {
                     return;
                 }
                 if let Some(progress) = parse_progress_line(&line) {
-                    if let Ok(guard) = stdout_progress.lock() {
-                        guard(progress);
+                    // 先过节流器（锁在 `and_then` 闭包内即释放），再取进度回调锁，
+                    // 避免同时持有两把锁。
+                    let accepted = throttle_stdout
+                        .lock()
+                        .ok()
+                        .and_then(|mut t| t.accept(progress, Instant::now()));
+                    if let Some(p) = accepted {
+                        if let Ok(guard) = stdout_progress.lock() {
+                            guard(p);
+                        }
                     }
                     progress_count_stdout.fetch_add(1, Ordering::SeqCst);
                 }
@@ -474,8 +543,15 @@ impl YtDlpDownloader {
                     return;
                 }
                 if let Some(progress) = parse_progress_line(&line) {
-                    if let Ok(guard) = stderr_progress.lock() {
-                        guard(progress);
+                    // 与 stdout 共用同一个节流器（见 `throttle` 的定义）。
+                    let accepted = throttle_stderr
+                        .lock()
+                        .ok()
+                        .and_then(|mut t| t.accept(progress, Instant::now()));
+                    if let Some(p) = accepted {
+                        if let Ok(guard) = stderr_progress.lock() {
+                            guard(p);
+                        }
                     }
                     progress_count_stderr.fetch_add(1, Ordering::SeqCst);
                 }
@@ -495,6 +571,12 @@ impl YtDlpDownloader {
             "download progress lines parsed: {}",
             progress_count.load(Ordering::SeqCst)
         );
+
+        // 补发被节流丢弃的最后一条真实进度：否则进度条可能停在倒数第二格
+        //（成功路径随后还会发一条 `moving`/100%，失败路径则靠这次补发收尾）。
+        if let Some(p) = throttle.lock().ok().and_then(|mut t| t.flush()) {
+            (progress_cb.lock().unwrap())(p);
+        }
 
         if !result.is_success() {
             // Failure or cancellation — the staged `.part` is intentionally
@@ -792,6 +874,68 @@ impl Default for YtDlpDownloader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- 进度事件节流（v2.10.2：降低前端重渲染频率）----
+
+    fn progress(status: &str, stage: &str, percent: &str) -> DownloadProgress {
+        DownloadProgress {
+            status: status.to_string(),
+            stage: stage.to_string(),
+            percent: percent.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn throttle_emits_first_and_drops_within_interval() {
+        let mut t = ProgressThrottle::new();
+        let t0 = Instant::now();
+        // 首条一定放行。
+        assert!(t.accept(progress("downloading", "video", "1%"), t0).is_some());
+        // 间隔内 → 丢弃（并暂存 pending）。
+        assert!(t
+            .accept(progress("downloading", "video", "2%"), t0 + Duration::from_millis(30))
+            .is_none());
+        assert!(t
+            .accept(progress("downloading", "video", "3%"), t0 + Duration::from_millis(60))
+            .is_none());
+        // 超过间隔 → 放行，pending 被清空（不重复补发）。
+        assert!(t
+            .accept(progress("downloading", "video", "4%"), t0 + Duration::from_millis(120))
+            .is_some());
+        assert!(t.flush().is_none());
+    }
+
+    #[test]
+    fn throttle_lets_stage_and_status_transitions_through_immediately() {
+        let mut t = ProgressThrottle::new();
+        let t0 = Instant::now();
+        assert!(t.accept(progress("downloading", "video", "50%"), t0).is_some());
+        // 30ms 后 stage 变化（video → audio）：立即放行，不受间隔限制。
+        let p = t.accept(
+            progress("downloading", "audio", "0%"),
+            t0 + Duration::from_millis(30),
+        );
+        assert_eq!(p.expect("阶段变化必须立即放行").stage, "audio");
+        // status 变化（downloading → moving）同样立即放行。
+        let p = t.accept(progress("moving", "", "100%"), t0 + Duration::from_millis(40));
+        assert_eq!(p.expect("状态变化必须立即放行").status, "moving");
+    }
+
+    #[test]
+    fn throttle_flush_returns_last_dropped_progress_once() {
+        let mut t = ProgressThrottle::new();
+        let t0 = Instant::now();
+        assert!(t.accept(progress("downloading", "video", "1%"), t0).is_some());
+        let dropped = progress("downloading", "video", "99%");
+        assert!(t
+            .accept(dropped, t0 + Duration::from_millis(10))
+            .is_none());
+        let flushed = t.flush().expect("被节流的最后一条应能补发");
+        assert_eq!(flushed.percent, "99%");
+        // flush 之后无残留（不会重复补发）。
+        assert!(t.flush().is_none());
+    }
 
     fn cfg(url: &str) -> DownloadConfig {
         let mut c = DownloadConfig::new(url.to_string());

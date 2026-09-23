@@ -15,7 +15,13 @@ import { toast } from "sonner";
 import UrlBar from "./UrlBar";
 import VideoInfoCard from "./VideoInfoCard";
 import FormatTable from "./FormatTable";
-import { useDownloadStore, enqueueDownloadGlobal } from "../../lib/downloadStore";
+import {
+  useDownloadStore,
+  getDownloadState,
+  shallowArrayEqual,
+  enqueueDownloadGlobal,
+  type DownloadState,
+} from "../../lib/downloadStore";
 import { mergeSettingsIntoConfig } from "../../lib/buildConfig";
 import { friendlyErrorMessage } from "../../lib/errorMessages";
 import { useI18n } from "../../lib/i18n";
@@ -47,6 +53,19 @@ function defaultConfig(): DownloadConfig {
   };
 }
 
+/** 是否有排队 / 下载中的任务（用于"全部结束"后刷新已下载状态）。 */
+function selectHasActiveTask(s: DownloadState): boolean {
+  return s.queueTasks.some(
+    (t) => t.status === "queued" || t.status === "downloading"
+  );
+}
+
+/** 队列中所有任务的 URL。配合 `shallowArrayEqual` 使用：只有 URL 集合变化时
+ *  才让订阅者重渲染（进度 tick 只改 percent/speed，不影响该切片）。 */
+function selectQueueUrls(s: DownloadState): string[] {
+  return s.queueTasks.map((t) => t.url ?? "");
+}
+
 export default function DownloadPage() {
   const { t } = useI18n();
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
@@ -56,7 +75,10 @@ export default function DownloadPage() {
   // confirms a download, so it also uses the latest settings).
   const [pendingCfg, setPendingCfg] = useState<DownloadConfig | null>(null);
   // Global download state — survives tab switches / page unmounts.
-  const { queueTasks } = useDownloadStore();
+  // 只订阅两个**切片**：下载进度每秒更新多次（实测 40–55 行/秒），若订阅整个
+  // queueTasks，本页（常驻挂载，切到别的 tab 也不卸载）会跟着每次 tick 整页重渲染。
+  const hasActiveTasks = useDownloadStore(selectHasActiveTask);
+  const queueUrls = useDownloadStore(selectQueueUrls, shallowArrayEqual);
   // URL 输入（受控）。
   const [url, setUrl] = useState("");
 
@@ -175,9 +197,7 @@ export default function DownloadPage() {
   // status so the info card refreshes (badge + "重新下载") in real time.
   const hadActiveTasks = useRef(false);
   useEffect(() => {
-    const hasActive = queueTasks.some(
-      (t) => t.status === "queued" || t.status === "downloading"
-    );
+    const hasActive = hasActiveTasks;
     if (hadActiveTasks.current && !hasActive && videoInfo?.id) {
       checkVideoDownloaded(videoInfo.id)
         .then((s) => {
@@ -197,7 +217,7 @@ export default function DownloadPage() {
         .catch(() => {});
     }
     hadActiveTasks.current = hasActive;
-  }, [queueTasks, videoInfo?.id]);
+  }, [hasActiveTasks, videoInfo?.id]);
 
   // Load saved settings into download config on mount and when config is applied
   const reloadConfigFromSettings = () => {
@@ -320,7 +340,8 @@ export default function DownloadPage() {
     setPendingCfg(latest);
 
     // 1. 已在下载队列中（排队/下载中/暂停）→ 弹窗抉择。
-    if (queueTasks.some((task) => task.url === latest.url)) {
+    //    读瞬时快照而不是渲染期的订阅值，避免用到过期队列。
+    if (getDownloadState().queueTasks.some((task) => task.url === latest.url)) {
       setConfirmKind("inQueue");
       return;
     }
@@ -363,9 +384,8 @@ export default function DownloadPage() {
   };
 
   // 当前视频已在队列中（排队/下载中/暂停）→ 按钮禁用并显示「下载中...」。
-  const inQueue =
-    !!videoInfo &&
-    queueTasks.some((task) => !!task.url && task.url === videoInfo.url);
+  // 基于浅比较过的 URL 切片计算：进度 tick 不会让它重算。
+  const inQueue = !!videoInfo?.url && queueUrls.includes(videoInfo.url);
 
   return (
     <div className="p-3 max-w-[900px] mx-auto">

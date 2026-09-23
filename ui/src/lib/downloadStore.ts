@@ -1,4 +1,9 @@
-import { useSyncExternalStore, createElement } from "react";
+import {
+  useSyncExternalStore,
+  useCallback,
+  useRef,
+  createElement,
+} from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   isPermissionGranted,
@@ -222,9 +227,88 @@ function resumeInfoFetch() {
   runInfoFetch();
 }
 
-/** Subscribe a component to the global download state. */
-export function useDownloadStore(): DownloadState {
-  return useSyncExternalStore(subscribe, getSnapshot);
+/**
+ * 读取队列状态的**瞬时快照**（不订阅、不触发重渲染）。
+ * 供事件处理函数读取"最新值"，避免闭包捕获过期状态。
+ */
+export function getDownloadState(): DownloadState {
+  return state;
+}
+
+/** 数组浅比较（长度 + 逐项 Object.is），给返回数组切片的 selector 用。 */
+export function shallowArrayEqual<T>(a: readonly T[], b: readonly T[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (!Object.is(a[i], b[i])) return false;
+  }
+  return true;
+}
+
+/**
+ * 选择器缓存的核心逻辑（抽成纯函数，便于单测锁住行为）。
+ *
+ * 返回「应当作为快照返回的条目」，并保证在**选择结果未变**时复用旧引用 ——
+ * 这是 `useSyncExternalStore` 不陷入无限重渲染的关键：它要求 `getSnapshot`
+ * 返回稳定引用，若每次都返回新对象/新数组，React 会认为快照一直在变。
+ */
+export function resolveSelection<T>(
+  prev: { snap: DownloadState; out: T } | null,
+  snap: DownloadState,
+  selector: ((state: DownloadState) => T) | undefined,
+  isEqual: (a: T, b: T) => boolean
+): { snap: DownloadState; out: T } {
+  if (!selector) {
+    // 无选择器 → 直接暴露整个 state（引用天然稳定）。
+    return { snap, out: snap as unknown as T };
+  }
+  // 快照引用未变 → 直接复用（最常见的进度 tick 之外的情况）。
+  if (prev && prev.snap === snap) return prev;
+  const next = selector(snap);
+  if (prev && isEqual(prev.out, next)) {
+    // 选择结果等价（如 URL 列表未变）→ 复用上一个结果引用。
+    return { snap, out: prev.out };
+  }
+  return { snap, out: next };
+}
+
+/**
+ * Subscribe a component to the global download state.
+ *
+ * 可选 `selector`：仅在**选择结果**变化时重渲染（默认 `Object.is`，可传
+ * `isEqual` 做浅比较）。下载进度每秒会更新多次，只关心"是否有活跃任务"、
+ * "当前视频是否在队列里"这类布尔值的组件（例如常驻挂载的下载页）因此不再
+ * 跟着每次进度 tick 重渲染。
+ *
+ * 实现要点（`useSyncExternalStore` 的经典坑）：
+ * - `getSnapshot` 必须返回**稳定引用**，否则 React 会认为快照一直在变而无限
+ *   重渲染。这里用 ref 缓存「上次快照 + 上次结果」：快照引用未变直接复用；
+ *   选择结果相等（`isEqual`）时**复用上一个结果引用**。
+ * - `selector` / `isEqual` 存进 ref，调用方每次渲染传新函数也不会改变
+ *   `getSnapshot` 的稳定性。
+ */
+export function useDownloadStore<T = DownloadState>(
+  selector?: (state: DownloadState) => T,
+  isEqual: (a: T, b: T) => boolean = Object.is
+): T {
+  const selectorRef = useRef(selector);
+  const isEqualRef = useRef(isEqual);
+  selectorRef.current = selector;
+  isEqualRef.current = isEqual;
+  const cache = useRef<{ snap: DownloadState; out: T } | null>(null);
+
+  const getSelected = useCallback(() => {
+    const entry = resolveSelection(
+      cache.current,
+      getSnapshot(),
+      selectorRef.current,
+      isEqualRef.current
+    );
+    cache.current = entry;
+    return entry.out;
+  }, []);
+
+  return useSyncExternalStore(subscribe, getSelected);
 }
 
 // Re-exported from buildConfig.ts (pure, unit-tested). Kept here so existing
