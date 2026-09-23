@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   FolderOpen,
@@ -35,6 +35,7 @@ import type { DownloadHistoryItem } from "../../lib/types";
 import { TaskSource, taskSourceKey } from "../../lib/types";
 import {
   useDownloadStore,
+  getDownloadState,
   enqueueDownloadGlobal,
   pauseQueueTaskGlobal,
   resumeQueueTaskGlobal,
@@ -75,13 +76,24 @@ export default function HistoryPage({ onRedownload }: Props) {
   const { queueTasks } = useDownloadStore();
   // 活跃任务数（进行中 + 排队 + 暂停）≥ 2 时任务区与历史区 5/5 分栏，
   // 否则（0~1 个）3/7 分栏，给历史区更多空间。
-  const activeCount = queueTasks.filter(
-    (t) => t.status === "downloading" || t.status === "queued" || t.status === "paused"
-  ).length;
+  const activeCount = useMemo(
+    () =>
+      queueTasks.filter(
+        (t) =>
+          t.status === "downloading" ||
+          t.status === "queued" ||
+          t.status === "paused"
+      ).length,
+    [queueTasks]
+  );
   // 排队 + 暂停任务可被重排（置顶/上移）。sortableIds 保持显示顺序。
-  const sortableIds = queueTasks
-    .filter((t) => t.status === "queued" || t.status === "paused")
-    .map((t) => t.id);
+  const sortableIds = useMemo(
+    () =>
+      queueTasks
+        .filter((t) => t.status === "queued" || t.status === "paused")
+        .map((t) => t.id),
+    [queueTasks]
+  );
   const firstSortableId = sortableIds[0];
   const [items, setItems] = useState<DownloadHistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -122,29 +134,57 @@ export default function HistoryPage({ onRedownload }: Props) {
   } | null>(null);
 
   // 标题右键：复制下载链接 / 在浏览器打开。
-  const openTitleMenu = (
-    e: React.MouseEvent,
-    url: string | null,
-    hasLink: boolean
-  ) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!url) return;
-    const items: ContextMenuItem[] = [];
-    if (hasLink)
-      items.push(
-        copyLinkItem(
-          t("tasks.copyLink"),
-          url,
-          () => toast.success(t("tasks.copyLinkDone")),
-          () => toast.error(t("tasks.copyLinkFail"))
-        )
-      );
-    if (hasLink) items.push(openLinkItem(t("video.openInBrowser"), url));
-    if (items.length === 0) return;
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    setCtx({ x: e.clientX, y: rect.bottom + 4, items });
-  };
+  // useCallback 保持引用稳定 —— TaskCard 用 memo 化，回调用不稳定的函数会
+  // 让 memo 完全失效（每次进度 tick 仍然重渲染所有卡片）。
+  const openTitleMenu = useCallback(
+    (e: React.MouseEvent, url: string | null, hasLink: boolean) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!url) return;
+      const items: ContextMenuItem[] = [];
+      if (hasLink)
+        items.push(
+          copyLinkItem(
+            t("tasks.copyLink"),
+            url,
+            () => toast.success(t("tasks.copyLinkDone")),
+            () => toast.error(t("tasks.copyLinkFail"))
+          )
+        );
+      if (hasLink) items.push(openLinkItem(t("video.openInBrowser"), url));
+      if (items.length === 0) return;
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      setCtx({ x: e.clientX, y: rect.bottom + 4, items });
+    },
+    [t]
+  );
+
+  // 任务排序回调：参数为任务 id，内部用 getDownloadState() 读**最新**队列，
+  // 而不是闭包里的 queueTasks —— 既让引用稳定（TaskCard memo 生效），
+  // 也避免操作到过期状态。
+  const handleMoveUpTask = useCallback((taskId: string) => {
+    const list = getDownloadState().queueTasks;
+    const target = list.find((t) => t.id === taskId);
+    if (!target) return;
+    // 按任务自身所在列表（暂停区/排队区各自内部）计算索引，与后端
+    // reorder_queue 的单列表语义一致，避免混合索引错位。
+    const sameListIds = list
+      .filter((t) => t.status === target.status && !t.infoFailed)
+      .map((t) => t.id);
+    const idx = sameListIds.indexOf(taskId);
+    if (idx > 0) reorderQueueTaskGlobal(taskId, idx - 1);
+  }, []);
+
+  const handleMoveTopTask = useCallback((taskId: string) => {
+    reorderQueueTaskGlobal(taskId, 0);
+  }, []);
+
+  const handleTitleMenu = useCallback(
+    (e: React.MouseEvent, url: string | null, hasLink: boolean) => {
+      openTitleMenu(e, url, hasLink);
+    },
+    [openTitleMenu]
+  );
 
   const load = () => {
     setLoading(true);
@@ -156,16 +196,22 @@ export default function HistoryPage({ onRedownload }: Props) {
 
   // 下载完成板块排序。
   // 先按搜索词过滤（标题/作者/链接/ID，不区分大小写），再应用排序，二者联动。
-  const filteredItems = searchInput
-    ? items.filter((item) => {
-        const q = searchInput.toLowerCase();
-        return [item.title, item.uploader, item.url, item.video_id].some(
-          (v) => v != null && v.toLowerCase().includes(q)
-        );
-      })
-    : items;
+  // 两者都 memo 化：下载进度每秒会更新多次 queueTasks，若不 memo，历史列表
+  // 会跟着每次 tick 全量过滤 + 全量重排。
+  const filteredItems = useMemo(
+    () =>
+      searchInput
+        ? items.filter((item) => {
+            const q = searchInput.toLowerCase();
+            return [item.title, item.uploader, item.url, item.video_id].some(
+              (v) => v != null && v.toLowerCase().includes(q)
+            );
+          })
+        : items,
+    [items, searchInput]
+  );
 
-  const sortedItems = [...filteredItems].sort((a, b) => {
+  const sortedItems = useMemo(() => [...filteredItems].sort((a, b) => {
     switch (sort) {
       case "size":
         return (b.file_size ?? 0) - (a.file_size ?? 0);
@@ -193,7 +239,7 @@ export default function HistoryPage({ onRedownload }: Props) {
         // 下载时间（默认，降序）
         return b.downloaded_at - a.downloaded_at;
     }
-  });
+  }), [filteredItems, sort]);
 
   // 「下载完成」列表虚拟滚动：只渲染可视区域的行，数据量大时 DOM 恒定。
   // 行高动态测量（measureElement + ResizeObserver），失败卡片展开错误详情时自动适配。
@@ -427,21 +473,9 @@ export default function HistoryPage({ onRedownload }: Props) {
                 key={task.id}
                 task={task}
                 isFirst={firstSortableId === task.id}
-                onMoveUp={() => {
-                  // 按任务自身所在列表（暂停区/排队区各自内部）计算索引，
-                  // 与后端 reorder_queue 的单列表语义一致，避免混合索引错位。
-                  const sameListIds = queueTasks
-                    .filter(
-                      (t) => t.status === task.status && !t.infoFailed
-                    )
-                    .map((t) => t.id);
-                  const idx = sameListIds.indexOf(task.id);
-                  if (idx > 0) reorderQueueTaskGlobal(task.id, idx - 1);
-                }}
-                onMoveTop={() => reorderQueueTaskGlobal(task.id, 0)}
-                onTitleMenu={(e, url, hasLink) =>
-                  openTitleMenu(e, url, hasLink)
-                }
+                onMoveUp={handleMoveUpTask}
+                onMoveTop={handleMoveTopTask}
+                onTitleMenu={handleTitleMenu}
               />
             ))}
           </div>
@@ -800,8 +834,14 @@ function getRecentBucket(
   return bucket ? { key: bucket.key, cls: bucket.cls } : null;
 }
 
-/** 正在下载的任务卡片 —— 布局与下载完成卡片一致，额外显示进度与控制。 */
-function TaskCard({
+/** 正在下载的任务卡片 —— 布局与下载完成卡片一致，额外显示进度与控制。
+ *
+ *  memo 化：`patchTask` 只替换被更新的那个任务对象，其余任务保持同一引用，
+ *  因此一次进度 tick 只会重渲染真正变化的那张卡片。配套要求：父组件传入的
+ *  回调必须引用稳定（见 `handleMoveUpTask` / `handleMoveTopTask` /
+ *  `handleTitleMenu`），否则 memo 会完全失效。
+ */
+const TaskCard = memo(function TaskCard({
   task,
   isFirst,
   onMoveUp,
@@ -811,8 +851,10 @@ function TaskCard({
   task: DownloadTask;
   /** 该任务是否为可排序列表（queued+paused）中的第一个。 */
   isFirst?: boolean;
-  onMoveUp?: () => void;
-  onMoveTop?: () => void;
+  /** 上移一位（参数为任务 id）。 */
+  onMoveUp?: (taskId: string) => void;
+  /** 置顶（参数为任务 id）。 */
+  onMoveTop?: (taskId: string) => void;
   onTitleMenu: (
     e: React.MouseEvent,
     url: string | null,
@@ -978,14 +1020,14 @@ function TaskCard({
               <>
                 <button
                   className="p-1 rounded hover:bg-zinc-100 text-zinc-400 hover:text-blue-600"
-                  onClick={onMoveUp}
+                  onClick={() => onMoveUp?.(task.id)}
                   title={t("tasks.moveUp")}
                 >
                   <ChevronUp size={13} />
                 </button>
                 <button
                   className="p-1 rounded hover:bg-zinc-100 text-zinc-400 hover:text-blue-600"
-                  onClick={onMoveTop}
+                  onClick={() => onMoveTop?.(task.id)}
                   title={t("tasks.moveTop")}
                 >
                   <ArrowUpToLine size={13} />
@@ -1048,7 +1090,7 @@ function TaskCard({
       </div>
     </div>
   );
-}
+});
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
